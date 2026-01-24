@@ -124,7 +124,7 @@ def duration_loss(
     Returns:
         Scalar duration loss.
     """
-    log_duration_target = torch.log(duration_target.float() + 1e-6)
+    log_duration_target = torch.log(duration_target.float().squeeze(1) + 1e-6)
     loss = F.mse_loss(log_duration_pred.squeeze(1), log_duration_target, reduction="none")
     loss = torch.sum(loss * x_mask.squeeze(1)) / torch.sum(x_mask)
     return loss
