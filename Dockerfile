@@ -53,7 +53,7 @@ WORKDIR ${WORKSPACE}
 
 # Copy project files
 COPY pyproject.toml README.md LICENSE ./
-COPY src/ ./src/
+COPY orontts/ ./orontts/
 COPY configs/ ./configs/
 COPY scripts/ ./scripts/
 

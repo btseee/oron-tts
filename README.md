@@ -1,6 +1,6 @@
 # OronTTS
 
-[![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
 
@@ -21,7 +21,7 @@ OronTTS is a high-quality, end-to-end neural TTS system designed specifically fo
 
 ### Prerequisites
 
-- Python 3.12+
+- Python 3.11+
 - espeak-ng (build from source for Mongolian support)
 - CUDA 12.x (for GPU training)
 
@@ -56,7 +56,7 @@ sudo apt-get install -y libsndfile1 ffmpeg
 
 ```
 oron-tts/
-├── src/orontts/
+├── orontts/
 │   ├── preprocessing/     # Audio cleaning, text normalization
 │   ├── dataset/           # HuggingFace integration, data loading
 │   ├── model/             # VITS2 architecture

@@ -184,7 +184,7 @@ Mongolian (Khalkha) Text-to-Speech model using VITS2 architecture.
 ## Usage
 
 ```python
-from orontts.inference import Synthesizer
+from inference import Synthesizer
 
 synth = Synthesizer.from_pretrained("{repo_id}")
 audio = synth.synthesize("Сайн байна уу")

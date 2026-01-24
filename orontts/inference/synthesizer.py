@@ -174,7 +174,7 @@ class Synthesizer:
                 phoneme_ids = text_to_phoneme_ids(text)
             else:
                 # Assume text is already phoneme string
-                from orontts.constants import PHONEME_TO_ID
+                from constants import PHONEME_TO_ID
                 phoneme_ids = [PHONEME_TO_ID.get(c, 0) for c in text]
 
             # Prepare tensors
