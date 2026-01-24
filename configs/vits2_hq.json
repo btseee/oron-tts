@@ -1,6 +1,6 @@
 {
   "model_name": "vits2_mongolian_hq",
-  "n_speakers": 2,
+  "n_speakers": 482,
   "speaker_embedding_dim": 256,
   "audio": {
     "sample_rate": 22050,
