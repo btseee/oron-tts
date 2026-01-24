@@ -1,6 +1,6 @@
 {
   "model_name": "vits2_mongolian_light",
-  "n_speakers": 2,
+  "n_speakers": 1000,
   "speaker_embedding_dim": 128,
   "audio": {
     "sample_rate": 22050,

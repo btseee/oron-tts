@@ -175,8 +175,13 @@ class VITS2(nn.Module):
         duration_target = attn.sum(dim=2)
 
         # Expand text encoder output
-        x_m_expanded = torch.matmul(attn.squeeze(1).transpose(1, 2), x_m_proj.transpose(1, 2)).transpose(1, 2)
-        x_logs_expanded = torch.matmul(attn.squeeze(1).transpose(1, 2), x_logs_proj.transpose(1, 2)).transpose(1, 2)
+        # attn is [B, 1, mel_len, text_len], squeeze to [B, mel_len, text_len]
+        # x_m_proj is [B, hidden, text_len], transpose to [B, text_len, hidden]
+        # matmul: [B, mel_len, text_len] @ [B, text_len, hidden] -> [B, mel_len, hidden]
+        # then transpose back to [B, hidden, mel_len]
+        attn_squeezed = attn.squeeze(1)  # [B, mel_len, text_len]
+        x_m_expanded = torch.matmul(attn_squeezed, x_m_proj.transpose(1, 2)).transpose(1, 2)
+        x_logs_expanded = torch.matmul(attn_squeezed, x_logs_proj.transpose(1, 2)).transpose(1, 2)
 
         # Flow
         z_p = self.flow(z, z_mask, g)

@@ -53,7 +53,8 @@ def create_trainer(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     max_epochs = max_epochs or config.training.epochs
-    gradient_clip_val = gradient_clip_val or config.training.grad_clip
+    # Note: gradient clipping is handled manually in VITS2LightningModule
+    # since we use manual optimization for GAN training
 
     # Callbacks
     callbacks = [
@@ -82,6 +83,7 @@ def create_trainer(
     )
 
     # Trainer
+    # Note: gradient_clip_val not used - we handle clipping manually for GAN training
     trainer = L.Trainer(
         accelerator="auto",
         devices=devices,
@@ -90,7 +92,6 @@ def create_trainer(
         accumulate_grad_batches=accumulate_grad_batches,
         val_check_interval=val_check_interval,
         log_every_n_steps=log_every_n_steps,
-        gradient_clip_val=gradient_clip_val,
         callbacks=callbacks,
         logger=logger,
         enable_progress_bar=enable_progress_bar,

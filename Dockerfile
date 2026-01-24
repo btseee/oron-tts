@@ -62,8 +62,8 @@ RUN pip install --upgrade pip setuptools wheel && \
     pip install -e ".[dev,cleaning]" && \
     pip install \
         tensorboard \
-        wandb \
-        torchcodec
+        wandb && \
+    pip uninstall -y torchcodec || true
 
 # Verify installations
 RUN python -c "import torch; print(f'PyTorch: {torch.__version__}, CUDA: {torch.cuda.is_available()}')" && \
