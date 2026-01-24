@@ -1,0 +1,373 @@
+"""VITS2 main model implementation."""
+
+import math
+from typing import Any
+
+import torch
+import torch.nn as nn
+
+from orontts.model.config import VITS2Config
+from orontts.model.modules import (
+    DurationPredictor,
+    Generator,
+    MultiPeriodDiscriminator,
+    PosteriorEncoder,
+    ResidualCouplingBlock,
+    TextEncoder,
+)
+
+
+class VITS2(nn.Module):
+    """VITS2: Variational Inference with adversarial learning for end-to-end TTS.
+
+    This implementation includes:
+    - Text encoder with transformer
+    - Posterior encoder (VAE)
+    - Normalizing flow
+    - Duration predictor with MAS
+    - HiFi-GAN generator
+    - Multi-period discriminator
+
+    Attributes:
+        config: Model configuration.
+    """
+
+    def __init__(self, config: VITS2Config) -> None:
+        """Initialize VITS2 model.
+
+        Args:
+            config: Complete model configuration.
+        """
+        super().__init__()
+        self.config = config
+
+        # Calculate gin_channels for speaker conditioning
+        gin_channels = config.speaker_embedding_dim if config.n_speakers > 1 else 0
+
+        # Text encoder
+        self.text_encoder = TextEncoder(
+            n_vocab=config.text_encoder.n_vocab,
+            hidden_channels=config.text_encoder.hidden_channels,
+            filter_channels=config.text_encoder.filter_channels,
+            n_heads=config.text_encoder.n_heads,
+            n_layers=config.text_encoder.n_layers,
+            kernel_size=config.text_encoder.kernel_size,
+            dropout=config.text_encoder.dropout,
+        )
+
+        # Posterior encoder
+        self.posterior_encoder = PosteriorEncoder(
+            in_channels=config.audio.n_mels,
+            hidden_channels=config.posterior_encoder.hidden_channels,
+            out_channels=config.posterior_encoder.out_channels,
+            kernel_size=config.posterior_encoder.kernel_size,
+            dilation_rate=config.posterior_encoder.dilation_rate,
+            n_layers=config.posterior_encoder.n_layers,
+            gin_channels=gin_channels,
+        )
+
+        # Normalizing flow
+        self.flow = ResidualCouplingBlock(
+            channels=config.flow.hidden_channels,
+            hidden_channels=config.flow.hidden_channels,
+            kernel_size=config.flow.kernel_size,
+            dilation_rate=config.flow.dilation_rate,
+            n_layers=config.flow.n_layers,
+            n_flows=config.flow.n_flows,
+            gin_channels=gin_channels,
+        )
+
+        # Duration predictor
+        self.duration_predictor = DurationPredictor(
+            in_channels=config.text_encoder.hidden_channels,
+            hidden_channels=config.duration_predictor.hidden_channels,
+            kernel_size=config.duration_predictor.kernel_size,
+            dropout=config.duration_predictor.dropout,
+        )
+
+        # Generator (HiFi-GAN)
+        self.generator = Generator(
+            initial_channel=config.generator.initial_channel,
+            resblock_type=config.generator.resblock_type,
+            resblock_kernel_sizes=config.generator.resblock_kernel_sizes,
+            resblock_dilation_sizes=config.generator.resblock_dilation_sizes,
+            upsample_rates=config.generator.upsample_rates,
+            upsample_initial_channel=config.generator.upsample_initial_channel,
+            upsample_kernel_sizes=config.generator.upsample_kernel_sizes,
+            gin_channels=gin_channels,
+        )
+
+        # Speaker embedding
+        if config.n_speakers > 1:
+            self.speaker_embedding = nn.Embedding(
+                config.n_speakers, config.speaker_embedding_dim
+            )
+        else:
+            self.speaker_embedding = None
+
+        # Projection for latent matching
+        self.proj_m = nn.Conv1d(
+            config.text_encoder.hidden_channels,
+            config.posterior_encoder.out_channels,
+            1,
+        )
+        self.proj_s = nn.Conv1d(
+            config.text_encoder.hidden_channels,
+            config.posterior_encoder.out_channels,
+            1,
+        )
+
+    def forward(
+        self,
+        phoneme_ids: torch.Tensor,
+        phoneme_lengths: torch.Tensor,
+        mel: torch.Tensor,
+        mel_lengths: torch.Tensor,
+        speaker_ids: torch.Tensor | None = None,
+    ) -> dict[str, torch.Tensor]:
+        """Forward pass for training.
+
+        Args:
+            phoneme_ids: Phoneme ID tensor [B, T_text]
+            phoneme_lengths: Text lengths [B]
+            mel: Mel spectrogram [B, M, T_mel]
+            mel_lengths: Mel lengths [B]
+            speaker_ids: Speaker IDs [B] (optional)
+
+        Returns:
+            Dictionary with all outputs needed for loss computation.
+        """
+        # Get speaker embedding
+        g = None
+        if self.speaker_embedding is not None and speaker_ids is not None:
+            g = self.speaker_embedding(speaker_ids).unsqueeze(-1)  # [B, G, 1]
+
+        # Text encoding
+        x, x_m, x_logs, x_mask = self.text_encoder(phoneme_ids, phoneme_lengths)
+
+        # Posterior encoding
+        z, z_m, z_logs, z_mask = self.posterior_encoder(mel, mel_lengths, g)
+
+        # Project text encoder output
+        x_m_proj = self.proj_m(x) * x_mask
+        x_logs_proj = self.proj_s(x) * x_mask
+
+        # Duration prediction
+        log_duration_pred = self.duration_predictor(x.detach(), x_mask)
+
+        # Compute alignment with MAS (monotonic alignment search)
+        with torch.no_grad():
+            # Simplified alignment - in practice use proper MAS
+            attn_mask = x_mask.unsqueeze(2) * z_mask.unsqueeze(-1)
+            s_p_sq_r = torch.exp(-2 * x_logs_proj)
+            neg_cent1 = torch.sum(-0.5 * math.log(2 * math.pi) - x_logs_proj, dim=1, keepdim=True)
+            neg_cent2 = torch.matmul(
+                -0.5 * (z**2).transpose(1, 2), s_p_sq_r
+            )
+            neg_cent3 = torch.matmul(z.transpose(1, 2), x_m_proj * s_p_sq_r)
+            neg_cent4 = torch.sum(-0.5 * (x_m_proj**2) * s_p_sq_r, dim=1, keepdim=True)
+            neg_cent = neg_cent1 + neg_cent2 + neg_cent3 + neg_cent4
+
+            attn = self._monotonic_align(neg_cent, attn_mask.squeeze(1))
+            attn = attn.unsqueeze(1).detach()
+
+        # Duration targets
+        duration_target = attn.sum(dim=2)
+
+        # Expand text encoder output
+        x_m_expanded = torch.matmul(attn.squeeze(1).transpose(1, 2), x_m_proj.transpose(1, 2)).transpose(1, 2)
+        x_logs_expanded = torch.matmul(attn.squeeze(1).transpose(1, 2), x_logs_proj.transpose(1, 2)).transpose(1, 2)
+
+        # Flow
+        z_p = self.flow(z, z_mask, g)
+
+        # Random slice for efficient training
+        z_slice, ids_slice = self._rand_slice_segments(
+            z, mel_lengths, self.config.training.segment_size // self.config.audio.hop_length
+        )
+
+        # Generate audio
+        audio = self.generator(z_slice, g)
+
+        return {
+            "audio": audio,
+            "z": z,
+            "z_p": z_p,
+            "z_m": z_m,
+            "z_logs": z_logs,
+            "x_m": x_m_expanded,
+            "x_logs": x_logs_expanded,
+            "z_mask": z_mask,
+            "x_mask": x_mask,
+            "log_duration_pred": log_duration_pred,
+            "duration_target": duration_target,
+            "attn": attn,
+            "ids_slice": ids_slice,
+        }
+
+    @torch.inference_mode()
+    def infer(
+        self,
+        phoneme_ids: torch.Tensor,
+        phoneme_lengths: torch.Tensor,
+        speaker_ids: torch.Tensor | None = None,
+        noise_scale: float = 0.667,
+        length_scale: float = 1.0,
+        noise_scale_w: float = 0.8,
+    ) -> torch.Tensor:
+        """Inference for synthesis.
+
+        Args:
+            phoneme_ids: Phoneme ID tensor [B, T]
+            phoneme_lengths: Sequence lengths [B]
+            speaker_ids: Speaker IDs [B] (optional)
+            noise_scale: Noise scale for sampling
+            length_scale: Duration scaling factor
+            noise_scale_w: Noise scale for duration
+
+        Returns:
+            Generated audio waveform [B, 1, T]
+        """
+        # Get speaker embedding
+        g = None
+        if self.speaker_embedding is not None and speaker_ids is not None:
+            g = self.speaker_embedding(speaker_ids).unsqueeze(-1)
+
+        # Text encoding
+        x, x_m, x_logs, x_mask = self.text_encoder(phoneme_ids, phoneme_lengths)
+
+        # Duration prediction
+        log_duration = self.duration_predictor(x, x_mask)
+        duration = torch.exp(log_duration) * x_mask * length_scale
+        duration = torch.ceil(duration).long().squeeze(1)
+
+        # Generate alignment from duration
+        y_lengths = duration.sum(dim=1)
+        y_mask = self._sequence_mask(y_lengths).unsqueeze(1).to(x.dtype)
+
+        # Expand with duration
+        attn = self._generate_path(duration, x_mask.squeeze(1))
+
+        # Project and expand
+        x_m_proj = self.proj_m(x) * x_mask
+        x_logs_proj = self.proj_s(x) * x_mask
+
+        x_m_expanded = torch.matmul(attn.transpose(1, 2), x_m_proj.transpose(1, 2)).transpose(1, 2)
+        x_logs_expanded = torch.matmul(attn.transpose(1, 2), x_logs_proj.transpose(1, 2)).transpose(1, 2)
+
+        # Sample from prior
+        z_p = x_m_expanded + torch.randn_like(x_m_expanded) * torch.exp(x_logs_expanded) * noise_scale
+
+        # Inverse flow
+        z = self.flow(z_p, y_mask, g, reverse=True)
+
+        # Generate audio
+        audio = self.generator(z * y_mask, g)
+
+        return audio
+
+    def _monotonic_align(
+        self,
+        neg_cent: torch.Tensor,
+        attn_mask: torch.Tensor,
+    ) -> torch.Tensor:
+        """Compute monotonic alignment using dynamic programming.
+
+        This is a simplified version. For production, use the C++ implementation.
+        """
+        device = neg_cent.device
+        dtype = neg_cent.dtype
+        batch_size, t_t, t_s = neg_cent.shape
+
+        attn = torch.zeros(batch_size, t_t, t_s, device=device, dtype=dtype)
+
+        for b in range(batch_size):
+            # Simple left-to-right assignment (placeholder)
+            # In practice, use proper MAS implementation
+            path = torch.zeros(t_t, t_s, device=device)
+            for i in range(min(t_t, t_s)):
+                path[i, i] = 1.0
+            attn[b] = path
+
+        return attn * attn_mask
+
+    def _rand_slice_segments(
+        self,
+        x: torch.Tensor,
+        x_lengths: torch.Tensor,
+        segment_size: int,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Randomly slice segments for efficient training."""
+        batch_size, channels, max_len = x.shape
+
+        ids_start = torch.zeros(batch_size, device=x.device, dtype=torch.long)
+        for i in range(batch_size):
+            max_start = max(0, x_lengths[i].item() - segment_size)
+            ids_start[i] = torch.randint(0, max_start + 1, (1,), device=x.device)
+
+        ids_end = ids_start + segment_size
+
+        # Gather slices
+        segments = torch.zeros(batch_size, channels, segment_size, device=x.device, dtype=x.dtype)
+        for i in range(batch_size):
+            start = ids_start[i].item()
+            end = min(start + segment_size, x.shape[2])
+            length = end - start
+            segments[i, :, :length] = x[i, :, start:end]
+
+        return segments, ids_start
+
+    @staticmethod
+    def _sequence_mask(lengths: torch.Tensor, max_len: int | None = None) -> torch.Tensor:
+        max_len = max_len or lengths.max().item()
+        ids = torch.arange(0, max_len, device=lengths.device)
+        return ids < lengths.unsqueeze(1)
+
+    @staticmethod
+    def _generate_path(
+        duration: torch.Tensor,
+        mask: torch.Tensor,
+    ) -> torch.Tensor:
+        """Generate alignment path from duration."""
+        device = duration.device
+        batch_size, t_x = duration.shape
+        t_y = duration.sum(dim=1).max().item()
+
+        path = torch.zeros(batch_size, t_x, int(t_y), device=device)
+
+        for b in range(batch_size):
+            col = 0
+            for i in range(t_x):
+                dur = duration[b, i].item()
+                if dur > 0 and col < t_y:
+                    path[b, i, col : col + int(dur)] = 1.0
+                    col += int(dur)
+
+        return path
+
+    def remove_weight_norm(self) -> None:
+        """Remove weight normalization for inference optimization."""
+        self.generator.remove_weight_norm()
+
+
+class VITS2Discriminator(nn.Module):
+    """Discriminator wrapper for VITS2 training."""
+
+    def __init__(self, config: VITS2Config) -> None:
+        super().__init__()
+        self.discriminator = MultiPeriodDiscriminator(
+            periods=config.discriminator.periods,
+            use_spectral_norm=config.discriminator.use_spectral_norm,
+        )
+
+    def forward(
+        self,
+        y: torch.Tensor,
+        y_hat: torch.Tensor,
+    ) -> tuple[
+        list[torch.Tensor],
+        list[torch.Tensor],
+        list[list[torch.Tensor]],
+        list[list[torch.Tensor]],
+    ]:
+        return self.discriminator(y, y_hat)

@@ -1,0 +1,63 @@
+# Docker Compose for local testing (mimics Runpod environment)
+# Usage: docker compose up --build
+
+services:
+  orontts:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: orontts-dev
+    
+    # GPU support
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    
+    # Environment variables
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - HF_TOKEN=${HF_TOKEN:-}
+      - WANDB_API_KEY=${WANDB_API_KEY:-}
+      - CUDA_VISIBLE_DEVICES=0
+    
+    # Mount volumes for persistence
+    volumes:
+      # Source code (for development)
+      - ./src:/workspace/src:ro
+      - ./configs:/workspace/configs:ro
+      - ./scripts:/workspace/scripts:ro
+      # Data persistence
+      - ./data:/workspace/data
+      - ./checkpoints:/workspace/checkpoints
+      - ./logs:/workspace/logs
+      # Cache
+      - orontts-cache:/workspace/.cache
+    
+    # Ports
+    ports:
+      - "6006:6006"  # TensorBoard
+      - "8888:8888"  # Jupyter
+    
+    # Keep container running
+    stdin_open: true
+    tty: true
+    
+    # Working directory
+    working_dir: /workspace
+    
+    # Shared memory for PyTorch DataLoader
+    shm_size: "16gb"
+    
+    # Healthcheck
+    healthcheck:
+      test: ["CMD", "python", "-c", "import torch; assert torch.cuda.is_available()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  orontts-cache:

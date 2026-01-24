@@ -1,0 +1,55 @@
+# Docker ignore file
+# Exclude files not needed in the Docker image
+
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv
+venv
+ENV
+.eggs
+*.egg-info
+.pytest_cache
+.mypy_cache
+.ruff_cache
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+
+# Data (mount as volume instead)
+data/
+*.wav
+*.mp3
+*.flac
+
+# Checkpoints (mount as volume)
+checkpoints/
+*.ckpt
+*.pt
+*.pth
+
+# Logs
+logs/
+*.log
+tensorboard/
+
+# Build
+build/
+dist/
+*.egg
+
+# Misc
+.DS_Store
+Thumbs.db
+*.tar.gz
+*.zip
