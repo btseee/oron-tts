@@ -28,8 +28,10 @@ log_error() {
 
 # Check if running on Runpod
 if [[ -d "/workspace" ]]; then
-    WORKSPACE="/workspace"
-    log_info "Detected Runpod environment. Using /workspace"
+    # Use the script's location to find the project root
+    SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
+    WORKSPACE="$(dirname "$SCRIPT_DIR")"
+    log_info "Detected Runpod environment. Project root: $WORKSPACE"
 else
     WORKSPACE="$HOME/orontts"
     log_warn "Not on Runpod. Using $WORKSPACE"
