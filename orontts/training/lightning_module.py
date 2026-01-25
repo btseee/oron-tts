@@ -253,40 +253,40 @@ class VITS2LightningModule(L.LightningModule):
                 )
                 
                 # Optional: Log Mel Spectrograms
-                    try:
-                        import matplotlib.pyplot as plt
-                        
-                        # Helper to plot
-                        def plot_mel(mel_data):
-                            fig, ax = plt.subplots(figsize=(10, 4))
-                            im = ax.imshow(mel_data.cpu().numpy(), aspect='auto', origin='lower')
-                            fig.colorbar(im)
-                            fig.canvas.draw()
-                            data = torch.from_numpy(np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8))
-                            data = data.reshape(fig.canvas.get_width_height()[::-1] + (3,))
-                            plt.close(fig)
-                            return data.permute(2, 0, 1)
+                try:
+                    import matplotlib.pyplot as plt
+                    
+                    # Helper to plot
+                    def plot_mel(mel_data):
+                        fig, ax = plt.subplots(figsize=(10, 4))
+                        im = ax.imshow(mel_data.cpu().numpy(), aspect='auto', origin='lower')
+                        fig.colorbar(im)
+                        fig.canvas.draw()
+                        data = torch.from_numpy(np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8))
+                        data = data.reshape(fig.canvas.get_width_height()[::-1] + (3,))
+                        plt.close(fig)
+                        return data.permute(2, 0, 1)
 
-                        # We need numpy
-                        import numpy as np
-                        
-                        # Generate mel from generated audio for comparison
-                        gen_mel = self.mel_loss.mel_spectrogram(gen_audio)
-                        
-                        self.logger.experiment.add_image(
-                            "val/mel_gen",
-                            plot_mel(gen_mel[0]),
-                            self.global_step,
-                        )
-                        self.logger.experiment.add_image(
-                            "val/mel_real",
-                            plot_mel(mel[0]),
-                            self.global_step,
-                        )
-                    except ImportError:
-                        pass
-                    except Exception as e:
-                        print(f"Failed to log images: {e}")
+                    # We need numpy
+                    import numpy as np
+                    
+                    # Generate mel from generated audio for comparison
+                    gen_mel = self.mel_loss.mel_spectrogram(gen_audio)
+                    
+                    self.logger.experiment.add_image(
+                        "val/mel_gen",
+                        plot_mel(gen_mel[0]),
+                        self.global_step,
+                    )
+                    self.logger.experiment.add_image(
+                        "val/mel_real",
+                        plot_mel(mel[0]),
+                        self.global_step,
+                    )
+                except ImportError:
+                    pass
+                except Exception as e:
+                    print(f"Failed to log images: {e}")
         return {"loss_mel": loss_mel, "loss_kl": loss_kl}
 
     def configure_optimizers(self) -> tuple[list, list]:
