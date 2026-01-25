@@ -231,65 +231,7 @@ class VITS2(nn.Module):
             attn_mask = attn_mask.squeeze(1)  # [B, T_y, T_x]
             
             # Run MAS
-            attn = maximum_path(neg_cent, attn_mask).unsqueeze(1).detach() 
-
-        # Duration targets
-        duration_target = attn.sum(dim=2)
-
-        # Expand text encoder output
-            # resulting [B, 1, T_x, T_y].
-            
-            # We need to match neg_cent [B, T_y, T_x].
-            # So we need [B, 1, T_y, T_x].
-            # z_mask: [B, 1, T_y] -> unsqueeze(-1) -> [B, 1, T_y, 1]
-            # x_mask: [B, 1, T_x] -> unsqueeze(2) -> [B, 1, 1, T_x]
-            # Product: [B, 1, T_y, T_x].
-            
-            attn_mask = z_mask.unsqueeze(-1) * x_mask.unsqueeze(2)
-            attn_mask = attn_mask.squeeze(1) # [B, T_y, T_x]
-            
-            # Run MAS
-            # Note: maximum_path implementation usually expects [B, T_text, T_audio] or [B, T_audio, T_text]?
-            # The one I added loops over 'x' then 'y'.
-            # If we pass [B, T_y, T_x], it aligns Audio (x) to Text (y).
-            # This allows multiple audio frames per text phoneme. This makes sense.
-            # Text is "slower" (fewer items), Audio is "faster".
-            # Alignment path is monotonic.
-            
-            attn = maximum_path(neg_cent, attn_mask).unsqueeze(1).detach() 
-            # attn: [B, 1, T_y, T_x]
-            
-            # If neg_cent is [B, T_y, T_x], attn is [B, 1, T_y, T_x].
-            
-            # Leter: 
-            # duration_target = attn.sum(dim=2)
-            # dim 2 is T_x (Text).
-            # Summing over T_x (Text) gives duration for each Audio frame??
-            # No. Duration of a Phoneme = Number of Audio frames assigned to it.
-            # So we sum over Audio frames (T_y).
-            
-            # If attn is [B, 1, T_y, T_x].
-            # Sum over dim=2 (T_y)? No, T_y is dim 2 (indices 0, 1, 2, 3).
-            # Indices: B=0, 1=1, Ty=2, Tx=3.
-            # Sum over dim=2 (Ty) gives [B, 1, Tx]. This is duration per phoneme. Correct.
-            
-            # So attn must be [B, 1, Ty, Tx] ?
-            
-            # Let's check original code:
-            # attn_squeezed = attn.squeeze(1) # [B, T_y, T_x]
-            # x_m_expanded = torch.matmul(attn_squeezed, x_m_proj.transpose(1, 2)).transpose(1, 2)
-            # x_m_proj.transpose(1, 2) -> [B, T_x, hidden].
-            # [B, T_y, T_x] @ [B, T_x, hidden] -> [B, T_y, hidden]. 
-            # Transpose(1,2) -> [B, hidden, T_y].
-            # This matches z (Audio) shape. Correct.
-            
-            # So attn MUST be [B, 1, T_y, T_x]. (Audio, Text).
-
-            # So my attn_mask calculation:
-            # attn_mask = z_mask.unsqueeze(-1) * x_mask.unsqueeze(2)
-            # z_mask [B, 1, T_y] -> [B, 1, T_y, 1]
-            # x_mask [B, 1, T_x] -> [B, 1, 1, T_x]
-            # Result [B, 1, T_y, T_x]. Correct.
+            attn = maximum_path(neg_cent, attn_mask).unsqueeze(1).detach()
 
 
         # Duration targets
