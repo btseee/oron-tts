@@ -144,18 +144,29 @@ class MelSpectrogramLoss(nn.Module):
         f_max: float = 8000.0,
     ) -> None:
         super().__init__()
-        self.mel_spec = torch.nn.Sequential(
-            # Will use torchaudio transforms
+        import torchaudio
+
+        self.mel_transform = torchaudio.transforms.MelSpectrogram(
+            sample_rate=sample_rate,
+            n_fft=n_fft,
+            win_length=win_length,
+            hop_length=hop_length,
+            n_mels=n_mels,
+            f_min=f_min,
+            f_max=f_max,
+            power=1.0,
+            norm="slaney",
+            mel_scale="slaney",
         )
 
-        # Store config for later use
-        self.sample_rate = sample_rate
-        self.n_fft = n_fft
-        self.hop_length = hop_length
-        self.win_length = win_length
-        self.n_mels = n_mels
-        self.f_min = f_min
-        self.f_max = f_max
+    def mel_spectrogram(self, y: torch.Tensor) -> torch.Tensor:
+        """Compute mel spectrogram."""
+        # Ensure transform is on correct device
+        if self.mel_transform.spectrogram.window.device != y.device:
+             self.mel_transform = self.mel_transform.to(y.device)
+
+        mel = self.mel_transform(y.squeeze(1))
+        return torch.log(torch.clamp(mel, min=1e-5))
 
     def forward(
         self,
@@ -171,25 +182,7 @@ class MelSpectrogramLoss(nn.Module):
         Returns:
             Scalar mel loss.
         """
-        import torchaudio
-
-        mel_transform = torchaudio.transforms.MelSpectrogram(
-            sample_rate=self.sample_rate,
-            n_fft=self.n_fft,
-            win_length=self.win_length,
-            hop_length=self.hop_length,
-            n_mels=self.n_mels,
-            f_min=self.f_min,
-            f_max=self.f_max,
-            power=1.0,
-            norm="slaney",
-            mel_scale="slaney",
-        ).to(y.device)
-
-        mel_y = mel_transform(y.squeeze(1))
-        mel_y_hat = mel_transform(y_hat.squeeze(1))
-
-        mel_y = torch.log(torch.clamp(mel_y, min=1e-5))
-        mel_y_hat = torch.log(torch.clamp(mel_y_hat, min=1e-5))
+        mel_y = self.mel_spectrogram(y)
+        mel_y_hat = self.mel_spectrogram(y_hat)
 
         return F.l1_loss(mel_y_hat, mel_y)

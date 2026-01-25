@@ -59,7 +59,7 @@
     "eps": 1e-9,
     "lr_decay": 0.999875,
     "segment_size": 16384,
-    "batch_size": 8,
+    "batch_size": 32,
     "epochs": 1000,
     "seed": 42,
     "fp16": true,

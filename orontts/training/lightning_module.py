@@ -8,6 +8,7 @@ import torch.nn.functional as F
 
 from orontts.model.config import VITS2Config
 from orontts.model.vits2 import VITS2, VITS2Discriminator
+from orontts.utils import slice_segments
 from orontts.training.losses import (
     MelSpectrogramLoss,
     discriminator_loss,
@@ -228,6 +229,64 @@ class VITS2LightningModule(L.LightningModule):
             sync_dist=True,
         )
 
+        # Log audio samples (first batch only)
+        if batch_idx == 0 and hasattr(self.logger, "experiment") and hasattr(self.logger.experiment, "add_audio"):
+            # Run inference on first sample
+            with torch.no_grad():
+                gen_audio = self.generator.infer(
+                    phoneme_ids[:1],
+                    phoneme_lengths[:1],
+                    speaker_ids=speaker_ids[:1] if speaker_ids is not None else None,
+                )
+                
+                self.logger.experiment.add_audio(
+                    "val/audio_gen",
+                    gen_audio[0],
+                    self.global_step,
+                    sample_rate=self.config.audio.sample_rate,
+                )
+                self.logger.experiment.add_audio(
+                    "val/audio_real",
+                    audio[:1],
+                    self.global_step,
+                    sample_rate=self.config.audio.sample_rate,
+                )
+                
+                # Optional: Log Mel Spectrograms
+                    try:
+                        import matplotlib.pyplot as plt
+                        
+                        # Helper to plot
+                        def plot_mel(mel_data):
+                            fig, ax = plt.subplots(figsize=(10, 4))
+                            im = ax.imshow(mel_data.cpu().numpy(), aspect='auto', origin='lower')
+                            fig.colorbar(im)
+                            fig.canvas.draw()
+                            data = torch.from_numpy(np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8))
+                            data = data.reshape(fig.canvas.get_width_height()[::-1] + (3,))
+                            plt.close(fig)
+                            return data.permute(2, 0, 1)
+
+                        # We need numpy
+                        import numpy as np
+                        
+                        # Generate mel from generated audio for comparison
+                        gen_mel = self.mel_loss.mel_spectrogram(gen_audio)
+                        
+                        self.logger.experiment.add_image(
+                            "val/mel_gen",
+                            plot_mel(gen_mel[0]),
+                            self.global_step,
+                        )
+                        self.logger.experiment.add_image(
+                            "val/mel_real",
+                            plot_mel(mel[0]),
+                            self.global_step,
+                        )
+                    except ImportError:
+                        pass
+                    except Exception as e:
+                        print(f"Failed to log images: {e}")
         return {"loss_mel": loss_mel, "loss_kl": loss_kl}
 
     def configure_optimizers(self) -> tuple[list, list]:
@@ -261,20 +320,15 @@ class VITS2LightningModule(L.LightningModule):
         segment_size: int,
     ) -> torch.Tensor:
         """Slice audio segments to match generator output."""
-        batch_size = audio.shape[0]
-        hop_length = self.config.audio.hop_length
-
         # Convert mel frame indices to audio sample indices
-        ids_start_audio = ids_start * hop_length
-
-        segments = torch.zeros(batch_size, segment_size, device=audio.device, dtype=audio.dtype)
-        for i in range(batch_size):
-            start = ids_start_audio[i].item()
-            end = min(start + segment_size, audio.shape[1])
-            length = end - start
-            segments[i, :length] = audio[i, start:end]
-
-        return segments
+        ids_start_audio = ids_start * self.config.audio.hop_length
+        
+        # Audio is [B, T], need [B, 1, T] for slice_segments
+        audio_unsqueezed = audio.unsqueeze(1)
+        sliced = slice_segments(audio_unsqueezed, ids_start_audio, segment_size)
+        
+        # Return [B, segment_size]
+        return sliced.squeeze(1)
 
     def on_save_checkpoint(self, checkpoint: dict) -> None:
         """Add config to checkpoint."""

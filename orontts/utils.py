@@ -49,21 +49,23 @@ def slice_segments(
     Returns:
         Sliced segments [B, C, segment_size].
     """
-    batch_size = x.shape[0]
-    channels = x.shape[1]
+    batch_size, channels, _ = x.shape
+    device = x.device
 
-    segments = torch.zeros(
-        batch_size, channels, segment_size,
-        device=x.device, dtype=x.dtype
-    )
-
-    for i in range(batch_size):
-        start = int(ids_start[i].item())
-        end = min(start + segment_size, x.shape[2])
-        length = end - start
-        segments[i, :, :length] = x[i, :, start:end]
-
-    return segments
+    # Create grid for gathering [B, 1, segment_size]
+    # Expand to [B, 1, segment_size]
+    arange = torch.arange(segment_size, device=device).reshape(1, 1, -1)
+    
+    # [B, 1, 1]
+    starts = ids_start.reshape(batch_size, 1, 1)
+    
+    # Broadcast to [B, C, segment_size]
+    # We want indices: [B, segment_size] broadcasted to [B, C, segment_size]
+    indices = arange + starts
+    indices = indices.expand(batch_size, channels, -1)
+    
+    # Gather
+    return torch.gather(x, 2, indices)
 
 
 def rand_slice_segments(
@@ -82,12 +84,13 @@ def rand_slice_segments(
         Tuple of (segments [B, C, segment_size], start_indices [B]).
     """
     batch_size = x.shape[0]
-
-    ids_start = torch.zeros(batch_size, device=x.device, dtype=torch.long)
-    for i in range(batch_size):
-        max_start = max(0, int(x_lengths[i].item()) - segment_size)
-        ids_start[i] = torch.randint(0, max_start + 1, (1,), device=x.device)
-
+    
+    # Calculate max starting point for each batch item [B]
+    max_starts = (x_lengths - segment_size).clamp(min=0)
+    
+    # Sample start indices [B]
+    ids_start = (torch.rand(batch_size, device=x.device) * (max_starts + 1)).long()
+    
     segments = slice_segments(x, ids_start, segment_size)
     return segments, ids_start
 

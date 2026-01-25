@@ -15,6 +15,64 @@ from orontts.model.modules import (
     ResidualCouplingBlock,
     TextEncoder,
 )
+from orontts.utils import rand_slice_segments
+
+
+@torch.jit.script
+def maximum_path(value: torch.Tensor, mask: torch.Tensor, max_neg_val: float = -1e9) -> torch.Tensor:
+    """Monotonic alignment search (JIT optimized).
+    
+    Args:
+        value: Log probabilities [B, T_x, T_y]
+        mask: Mask [B, T_x, T_y]
+        max_neg_val: Value for invalid transitions
+
+    Returns:
+        One-hot alignment path [B, T_x, T_y]
+    """
+    value = value * mask
+    device = value.device
+    dtype = value.dtype
+    b, t_x, t_y = value.shape
+
+    direction = torch.zeros(b, t_x, t_y, dtype=torch.long, device=device)
+    v = torch.zeros(b, t_x, t_y, dtype=dtype, device=device)
+
+    # Initialize
+    for i in range(b):
+        v[i, 0, 0] = value[i, 0, 0]
+        for y in range(1, t_y):
+            v[i, 0, y] = max_neg_val
+
+    # DP
+    for x in range(1, t_x):
+        for i in range(b):
+            for y in range(t_y):
+                current_val = value[i, x, y]
+                v_prev = v[i, x - 1, y]
+                
+                if y > 0:
+                    v_prev_diag = v[i, x - 1, y - 1]
+                    if v_prev >= v_prev_diag:
+                        v[i, x, y] = v_prev + current_val
+                        direction[i, x, y] = 0
+                    else:
+                        v[i, x, y] = v_prev_diag + current_val
+                        direction[i, x, y] = 1
+                else:
+                    v[i, x, y] = v_prev + current_val
+                    direction[i, x, y] = 0
+
+    # Backtrack
+    path = torch.zeros(b, t_x, t_y, dtype=dtype, device=device)
+    for i in range(b):
+        index = t_y - 1
+        for x in range(t_x - 1, -1, -1):
+            path[i, x, index] = 1
+            if index > 0 and direction[i, x, index] == 1:
+                index -= 1
+                
+    return path * mask
 
 
 class VITS2(nn.Module):
@@ -168,8 +226,71 @@ class VITS2(nn.Module):
             neg_cent4 = torch.sum(-0.5 * (x_m_proj**2) * s_p_sq_r, dim=1, keepdim=True)
             neg_cent = neg_cent1 + neg_cent2 + neg_cent3 + neg_cent4
 
-            attn = self._monotonic_align(neg_cent, attn_mask.squeeze(1))
-            attn = attn.unsqueeze(1).detach()
+            # Monotonic Alignment Search
+            attn_mask = z_mask.unsqueeze(-1) * x_mask.unsqueeze(2)
+            attn_mask = attn_mask.squeeze(1)  # [B, T_y, T_x]
+            
+            # Run MAS
+            attn = maximum_path(neg_cent, attn_mask).unsqueeze(1).detach() 
+
+        # Duration targets
+        duration_target = attn.sum(dim=2)
+
+        # Expand text encoder output
+            # resulting [B, 1, T_x, T_y].
+            
+            # We need to match neg_cent [B, T_y, T_x].
+            # So we need [B, 1, T_y, T_x].
+            # z_mask: [B, 1, T_y] -> unsqueeze(-1) -> [B, 1, T_y, 1]
+            # x_mask: [B, 1, T_x] -> unsqueeze(2) -> [B, 1, 1, T_x]
+            # Product: [B, 1, T_y, T_x].
+            
+            attn_mask = z_mask.unsqueeze(-1) * x_mask.unsqueeze(2)
+            attn_mask = attn_mask.squeeze(1) # [B, T_y, T_x]
+            
+            # Run MAS
+            # Note: maximum_path implementation usually expects [B, T_text, T_audio] or [B, T_audio, T_text]?
+            # The one I added loops over 'x' then 'y'.
+            # If we pass [B, T_y, T_x], it aligns Audio (x) to Text (y).
+            # This allows multiple audio frames per text phoneme. This makes sense.
+            # Text is "slower" (fewer items), Audio is "faster".
+            # Alignment path is monotonic.
+            
+            attn = maximum_path(neg_cent, attn_mask).unsqueeze(1).detach() 
+            # attn: [B, 1, T_y, T_x]
+            
+            # If neg_cent is [B, T_y, T_x], attn is [B, 1, T_y, T_x].
+            
+            # Leter: 
+            # duration_target = attn.sum(dim=2)
+            # dim 2 is T_x (Text).
+            # Summing over T_x (Text) gives duration for each Audio frame??
+            # No. Duration of a Phoneme = Number of Audio frames assigned to it.
+            # So we sum over Audio frames (T_y).
+            
+            # If attn is [B, 1, T_y, T_x].
+            # Sum over dim=2 (T_y)? No, T_y is dim 2 (indices 0, 1, 2, 3).
+            # Indices: B=0, 1=1, Ty=2, Tx=3.
+            # Sum over dim=2 (Ty) gives [B, 1, Tx]. This is duration per phoneme. Correct.
+            
+            # So attn must be [B, 1, Ty, Tx] ?
+            
+            # Let's check original code:
+            # attn_squeezed = attn.squeeze(1) # [B, T_y, T_x]
+            # x_m_expanded = torch.matmul(attn_squeezed, x_m_proj.transpose(1, 2)).transpose(1, 2)
+            # x_m_proj.transpose(1, 2) -> [B, T_x, hidden].
+            # [B, T_y, T_x] @ [B, T_x, hidden] -> [B, T_y, hidden]. 
+            # Transpose(1,2) -> [B, hidden, T_y].
+            # This matches z (Audio) shape. Correct.
+            
+            # So attn MUST be [B, 1, T_y, T_x]. (Audio, Text).
+
+            # So my attn_mask calculation:
+            # attn_mask = z_mask.unsqueeze(-1) * x_mask.unsqueeze(2)
+            # z_mask [B, 1, T_y] -> [B, 1, T_y, 1]
+            # x_mask [B, 1, T_x] -> [B, 1, 1, T_x]
+            # Result [B, 1, T_y, T_x]. Correct.
+
 
         # Duration targets
         duration_target = attn.sum(dim=2)
@@ -187,7 +308,7 @@ class VITS2(nn.Module):
         z_p = self.flow(z, z_mask, g)
 
         # Random slice for efficient training
-        z_slice, ids_slice = self._rand_slice_segments(
+        z_slice, ids_slice = rand_slice_segments(
             z, mel_lengths, self.config.training.segment_size // self.config.audio.hop_length
         )
 
@@ -270,57 +391,6 @@ class VITS2(nn.Module):
         audio = self.generator(z * y_mask, g)
 
         return audio
-
-    def _monotonic_align(
-        self,
-        neg_cent: torch.Tensor,
-        attn_mask: torch.Tensor,
-    ) -> torch.Tensor:
-        """Compute monotonic alignment using dynamic programming.
-
-        This is a simplified version. For production, use the C++ implementation.
-        """
-        device = neg_cent.device
-        dtype = neg_cent.dtype
-        batch_size, t_t, t_s = neg_cent.shape
-
-        attn = torch.zeros(batch_size, t_t, t_s, device=device, dtype=dtype)
-
-        for b in range(batch_size):
-            # Simple left-to-right assignment (placeholder)
-            # In practice, use proper MAS implementation
-            path = torch.zeros(t_t, t_s, device=device)
-            for i in range(min(t_t, t_s)):
-                path[i, i] = 1.0
-            attn[b] = path
-
-        return attn * attn_mask
-
-    def _rand_slice_segments(
-        self,
-        x: torch.Tensor,
-        x_lengths: torch.Tensor,
-        segment_size: int,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        """Randomly slice segments for efficient training."""
-        batch_size, channels, max_len = x.shape
-
-        ids_start = torch.zeros(batch_size, device=x.device, dtype=torch.long)
-        for i in range(batch_size):
-            max_start = max(0, x_lengths[i].item() - segment_size)
-            ids_start[i] = torch.randint(0, max_start + 1, (1,), device=x.device)
-
-        ids_end = ids_start + segment_size
-
-        # Gather slices
-        segments = torch.zeros(batch_size, channels, segment_size, device=x.device, dtype=x.dtype)
-        for i in range(batch_size):
-            start = ids_start[i].item()
-            end = min(start + segment_size, x.shape[2])
-            length = end - start
-            segments[i, :, :length] = x[i, :, start:end]
-
-        return segments, ids_start
 
     @staticmethod
     def _sequence_mask(lengths: torch.Tensor, max_len: int | None = None) -> torch.Tensor:
