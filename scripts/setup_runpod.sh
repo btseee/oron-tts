@@ -29,7 +29,7 @@ log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 # =============================================================================
 PYTHON_VERSION="3.11"
 CUDA_VERSION="12.4"
-ORON_TTS_REPO="${ORON_TTS_REPO:-https://github.com/your-username/oron-tts.git}"
+ORON_TTS_REPO="${ORON_TTS_REPO:-https://github.com/btseee/oron-tts.git}"
 WORKSPACE_DIR="${WORKSPACE_DIR:-/workspace}"
 PROJECT_DIR="${WORKSPACE_DIR}/oron-tts"
 
