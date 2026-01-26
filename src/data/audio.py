@@ -191,6 +191,55 @@ class AudioProcessor:
 
         return mel
 
+    def process_array(
+        self,
+        audio_array: Any,
+        sample_rate: int,
+        denoise: bool | None = None,
+    ) -> Tensor:
+        """Process audio from numpy array (for HuggingFace datasets).
+
+        Args:
+            audio_array: Audio as numpy array or similar.
+            sample_rate: Sample rate of the audio.
+            denoise: Override config denoise setting.
+
+        Returns:
+            Log mel-spectrogram. Shape: (T, n_mels).
+        """
+        import numpy as np
+        
+        # Convert to tensor
+        if isinstance(audio_array, np.ndarray):
+            waveform = torch.from_numpy(audio_array).float()
+        else:
+            waveform = torch.tensor(audio_array, dtype=torch.float32)
+        
+        # Ensure 1D
+        if waveform.dim() == 0:
+            waveform = waveform.unsqueeze(0)
+        
+        # Resample if necessary
+        if sample_rate != self.config.sample_rate:
+            waveform = torchaudio.functional.resample(
+                waveform,
+                orig_freq=sample_rate,
+                new_freq=self.config.sample_rate,
+            )
+        
+        # Normalize
+        if self.config.normalize_audio:
+            waveform = self._normalize_audio(waveform)
+        
+        # Denoise if requested
+        should_denoise = denoise if denoise is not None else self.config.denoise
+        if should_denoise:
+            waveform = self.denoise_audio(waveform)
+        
+        # Extract mel
+        mel = self.extract_mel(waveform)
+        return mel
+
     def process(
         self,
         path: str | Path,

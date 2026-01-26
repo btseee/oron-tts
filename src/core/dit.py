@@ -227,6 +227,18 @@ class DiTBackbone(nn.Module):
         mel_emb = self.mel_proj(x_t)
         phoneme_emb = self.phoneme_embed(phonemes)
 
+        # Upsample phoneme embeddings to match mel length
+        mel_len = mel_emb.size(1)
+        phoneme_len = phoneme_emb.size(1)
+        if phoneme_len != mel_len:
+            # Simple linear interpolation upsampling
+            phoneme_emb = F.interpolate(
+                phoneme_emb.transpose(1, 2),  # (B, dim, T_phone)
+                size=mel_len,
+                mode='linear',
+                align_corners=False,
+            ).transpose(1, 2)  # (B, T_mel, dim)
+
         # Combine mel and phoneme (F5-TTS style concatenation)
         x = mel_emb + phoneme_emb
 

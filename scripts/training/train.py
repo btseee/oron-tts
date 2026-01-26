@@ -195,10 +195,12 @@ def train_step(
     accelerator: Accelerator,
 ) -> dict[str, float]:
     """Perform a single training step."""
-    mel = batch.mel
-    phonemes = batch.phonemes
-    speaker_ids = batch.speaker_ids
-    mask = batch.mask
+    # Move batch to device explicitly
+    device = accelerator.device
+    mel = batch.mel.to(device)
+    phonemes = batch.phonemes.to(device)
+    speaker_ids = batch.speaker_ids.to(device)
+    mask = batch.mask.to(device)
     
     # Forward pass
     losses = model.compute_loss(
@@ -257,14 +259,14 @@ def main() -> None:
     if accelerator.is_main_process:
         logger.log_model_summary(model.num_parameters)
     
+    # Compile model if requested (BEFORE accelerator.prepare)
+    # if config["model"].get("compile_model", False):
+    #     model = torch.compile(model, mode=config.get("advanced", {}).get("compile_mode", "default"))
+    
     # Prepare with accelerator
     model, optimizer, train_loader, scheduler = accelerator.prepare(
         model, optimizer, train_loader, scheduler
     )
-    
-    # Compile model if requested
-    if config["model"].get("compile_model", False):
-        model = torch.compile(model, mode=config.get("advanced", {}).get("compile_mode", "default"))
     
     # Checkpoint management
     ckpt_manager = AccelerateCheckpointManager(

@@ -27,10 +27,10 @@ apt-get update && apt-get install -y --no-install-recommends \
     libsndfile1-dev sox ffmpeg \
     autoconf automake libtool pkg-config
 
-# Build espeak-ng from source
+# Build espeak-ng from source (main branch for Mongolian support)
 log_info "Building espeak-ng with Mongolian support..."
 cd /tmp
-git clone --depth 1 --branch 1.51.1 https://github.com/espeak-ng/espeak-ng.git
+git clone --depth 1 https://github.com/espeak-ng/espeak-ng.git
 cd espeak-ng
 ./autogen.sh
 ./configure --prefix=/usr/local

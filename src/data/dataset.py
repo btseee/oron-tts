@@ -11,6 +11,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Iterator
 
+import datasets
 import torch
 from torch import Tensor
 from torch.utils.data import Dataset, IterableDataset
@@ -50,6 +51,8 @@ class Sample:
     duration_sec: float | None = None
     mel: Tensor | None = None
     phonemes: Tensor | None = None
+    audio_array: Any | None = None  # For HF datasets
+    sample_rate: int | None = None
 
 
 @dataclass
@@ -124,18 +127,35 @@ class OronDataset(Dataset):
     def _load_from_huggingface(self) -> None:
         """Load dataset from HuggingFace Hub."""
         from datasets import load_dataset
+        
+        # Use soundfile for audio decoding instead of torchcodec
+        datasets.config.AUDIO_DECODE_BACKENDS = ["soundfile"]
 
         dataset = load_dataset(
             self.hf_dataset_name,
             split=self.hf_split,
-            trust_remote_code=True,
+        )
+        
+        # Cast audio to avoid automatic resampling - we'll handle it in process_array
+        dataset = dataset.cast_column(
+            "audio", 
+            datasets.Audio(sampling_rate=None, mono=True, decode=True)
         )
 
         speaker_map: dict[str, int] = {}
 
         for idx, item in enumerate(dataset):
-            # Extract fields (adapt to your dataset schema)
-            audio_path = item.get("audio", {}).get("path", "")
+            # Extract audio data - HF datasets return decoded audio as dict
+            audio_data = item.get("audio", {})
+            # Get the audio bytes/array directly instead of path
+            audio_array = audio_data.get("array", None)
+            audio_path = audio_data.get("path", f"sample_{idx}")
+            
+            # If we have the audio array, we need to save or cache it
+            # For now, skip if no path and rely on in-memory processing
+            if audio_array is None:
+                continue
+                
             text = item.get("text", item.get("sentence", ""))
             speaker_name = item.get("speaker", item.get("client_id", f"speaker_{idx}"))
             gender_str = item.get("gender", "unknown")
@@ -164,6 +184,7 @@ class OronDataset(Dataset):
             if self.filter_gender is not None and gender != self.filter_gender:
                 continue
 
+            # Store audio array with sample
             self.samples.append(
                 Sample(
                     audio_path=audio_path,
@@ -171,6 +192,8 @@ class OronDataset(Dataset):
                     speaker_id=speaker_id,
                     gender=gender,
                     duration_sec=duration,
+                    audio_array=audio_array,  # Store the decoded audio
+                    sample_rate=audio_data.get("sampling_rate", self.audio_processor.config.sample_rate),
                 )
             )
 
@@ -226,8 +249,14 @@ class OronDataset(Dataset):
         """
         sample = self.samples[idx]
 
-        # Process audio
-        mel = self.audio_processor.process(sample.audio_path)
+        # Process audio - use array if available, otherwise load from path
+        if sample.audio_array is not None:
+            mel = self.audio_processor.process_array(
+                sample.audio_array, 
+                sample.sample_rate or self.audio_cfg.sample_rate
+            )
+        else:
+            mel = self.audio_processor.process(sample.audio_path)
 
         # Process text
         text_clean = self.text_cleaner(sample.text)
