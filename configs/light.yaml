@@ -1,0 +1,111 @@
+# OronTTS Lightweight Model Configuration
+# Optimized for faster inference with reduced parameters
+
+# Model Architecture
+model:
+  name: "oron-tts-light"
+  type: "f5-tts"
+  
+  # Reduced DiT dimensions
+  dim: 512
+  depth: 12
+  num_heads: 8
+  ff_mult: 2.0
+  dropout: 0.0
+  
+  # Mel-spectrogram
+  mel_dim: 100
+  
+  # Text/Phoneme
+  phoneme_vocab_size: 256
+  max_seq_len: 4096
+  
+  # Multi-speaker
+  num_speakers: 32
+  speaker_dim: 128
+  
+  # CFM
+  sigma_min: 1.0e-4
+  
+  # Inference optimization
+  use_flash_attn: true
+  compile_model: true
+
+# Audio Processing
+audio:
+  sample_rate: 24000
+  n_fft: 1024
+  hop_length: 256
+  win_length: 1024
+  n_mels: 100
+  fmin: 0.0
+  fmax: null  # Nyquist
+  
+  # DeepFilterNet (disabled for clean data)
+  denoise: false
+  
+  # Normalization
+  normalize_audio: true
+  normalize_mel: true
+  mel_mean: -4.0
+  mel_std: 4.0
+
+# Training
+training:
+  # Batch sizes
+  batch_size: 32
+  gradient_accumulation_steps: 1
+  
+  # Optimizer
+  optimizer: "adamw"
+  learning_rate: 1.0e-4
+  weight_decay: 0.01
+  betas: [0.9, 0.999]
+  eps: 1.0e-8
+  
+  # Scheduler
+  scheduler: "cosine"
+  warmup_steps: 1000
+  max_steps: 200000
+  
+  # Gradient clipping
+  max_grad_norm: 1.0
+  
+  # Mixed precision
+  mixed_precision: "bf16"
+  
+  # Checkpointing
+  save_steps: 5000
+  eval_steps: 2500
+  max_checkpoints: 3
+  
+  # Logging
+  log_steps: 100
+  use_wandb: true
+  wandb_project: "oron-tts"
+
+# Inference
+inference:
+  cfg_scale: 2.0
+  num_steps: 16  # Fewer steps for speed
+  method: "euler"
+  
+# Data
+data:
+  train_manifest: null  # Set via CLI
+  val_manifest: null
+  hf_dataset: null
+  max_duration_sec: 20.0
+  min_duration_sec: 0.5
+  num_workers: 4
+  pin_memory: true
+
+# HuggingFace Hub
+hub:
+  repo_id: null  # Set via CLI
+  private: true
+  sync_checkpoints: true
+
+hub:
+  repo_id: "btseee/oron-tts"
+

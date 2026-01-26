@@ -1,0 +1,79 @@
+# OronTTS Base Configuration
+# Shared defaults for all model variants
+
+# Model Architecture (base values)
+model:
+  name: "oron-tts"
+  type: "f5-tts"
+  dim: 768
+  depth: 16
+  num_heads: 12
+  ff_mult: 4.0
+  dropout: 0.1
+  mel_dim: 100
+  phoneme_vocab_size: 256
+  max_seq_len: 4096
+  num_speakers: 64
+  speaker_dim: 192
+  sigma_min: 1.0e-4
+  use_flash_attn: true
+  compile_model: false
+
+# Audio Processing
+audio:
+  sample_rate: 24000
+  n_fft: 1024
+  hop_length: 256
+  win_length: 1024
+  n_mels: 100
+  fmin: 0.0
+  fmax: null
+  denoise: true
+  denoise_atten_lim: 100.0
+  normalize_audio: true
+  normalize_mel: true
+  mel_mean: -4.0
+  mel_std: 4.0
+
+# Training
+training:
+  batch_size: 24
+  gradient_accumulation_steps: 2
+  optimizer: "adamw"
+  learning_rate: 7.5e-5
+  weight_decay: 0.01
+  betas: [0.9, 0.98]
+  eps: 1.0e-8
+  scheduler: "cosine"
+  warmup_steps: 1500
+  max_steps: 300000
+  max_grad_norm: 1.0
+  mixed_precision: "bf16"
+  save_steps: 5000
+  eval_steps: 2500
+  max_checkpoints: 5
+  log_steps: 100
+  use_wandb: true
+  wandb_project: "oron-tts"
+
+# Inference
+inference:
+  cfg_scale: 2.0
+  num_steps: 24
+  method: "euler"
+
+# Data
+data:
+  train_manifest: null
+  val_manifest: null
+  hf_dataset: null
+  max_duration_sec: 25.0
+  min_duration_sec: 0.5
+  num_workers: 4
+  pin_memory: true
+
+# HuggingFace Hub
+hub:
+  repo_id: null
+  private: true
+  sync_checkpoints: true
