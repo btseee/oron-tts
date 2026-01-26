@@ -161,13 +161,32 @@ install_oron_tts() {
     pip install torch==2.4.0 torchaudio==2.4.0 --index-url https://download.pytorch.org/whl/cu124
     
     # Install project dependencies
-    pip install -e ".[dev]" 2>/dev/null || pip install -e . 2>/dev/null || {
-        log_warning "Installing dependencies manually..."
+    if [ -f "pyproject.toml" ]; then
+        pip install -e ".[dev]" 2>/dev/null || pip install -e . 2>/dev/null || {
+            log_warning "Installing dependencies manually..."
+            pip install \
+                accelerate>=0.33.0 \
+                transformers>=4.44.0 \
+                datasets>=2.20.0 \
+                huggingface-hub[cli]>=0.24.0 \
+                einops>=0.8.0 \
+                torchdiffeq>=0.2.4 \
+                librosa>=0.10.2 \
+                soundfile>=0.12.1 \
+                deepfilternet>=0.5.6 \
+                phonemizer>=3.3.0 \
+                pyyaml>=6.0.1 \
+                rich>=13.7.0 \
+                wandb>=0.17.0 \
+                python-dotenv
+        }
+    else
+        log_warning "No pyproject.toml found, installing core dependencies..."
         pip install \
             accelerate>=0.33.0 \
             transformers>=4.44.0 \
             datasets>=2.20.0 \
-            huggingface-hub>=0.24.0 \
+            huggingface-hub[cli]>=0.24.0 \
             einops>=0.8.0 \
             torchdiffeq>=0.2.4 \
             librosa>=0.10.2 \
@@ -176,8 +195,9 @@ install_oron_tts() {
             phonemizer>=3.3.0 \
             pyyaml>=6.0.1 \
             rich>=13.7.0 \
-            wandb>=0.17.0
-    }
+            wandb>=0.17.0 \
+            python-dotenv
+    fi
     
     # Install Flash Attention 2
     log_info "Installing Flash Attention 2..."
@@ -194,12 +214,16 @@ setup_huggingface() {
     
     source ${WORKSPACE_DIR}/venv/bin/activate
     
+    # Ensure huggingface-hub is installed
+    pip install --upgrade huggingface-hub[cli] > /dev/null 2>&1
+    
     # Initialize git-lfs
     git lfs install
     
     # Check for HF token
     if [ -n "${HF_TOKEN:-}" ]; then
         log_info "Logging into HuggingFace Hub..."
+        python -c "from huggingface_hub import login; login('${HF_TOKEN}')" 2>/dev/null || \
         huggingface-cli login --token ${HF_TOKEN} --add-to-git-credential
         log_success "HuggingFace authenticated"
     else
@@ -215,6 +239,9 @@ setup_wandb() {
     log_info "Setting up Weights & Biases..."
     
     source ${WORKSPACE_DIR}/venv/bin/activate
+    
+    # Ensure wandb is installed
+    pip install --upgrade wandb > /dev/null 2>&1
     
     if [ -n "${WANDB_API_KEY:-}" ]; then
         wandb login ${WANDB_API_KEY}
@@ -240,7 +267,7 @@ verify_installation() {
     
     # Python
     echo -n "Python: "
-    python --version
+    cd ${PROJECT_DIR} 2>/dev/null && python --version
     
     # PyTorch
     echo -n "PyTorch: "
@@ -286,20 +313,17 @@ echo "Run: python scripts/train.py --config configs/light.yaml"
 EOF
     chmod +x ${WORKSPACE_DIR}/activate.sh
     
-    # Training launcher
+    # Training launcher (foreground)
     cat > ${WORKSPACE_DIR}/train.sh << 'EOF'
 #!/bin/bash
 source /workspace/venv/bin/activate
 cd /workspace/oron-tts
 
 CONFIG="${1:-configs/light.yaml}"
-HUB_REPO="${HUB_REPO:-}"
+HUB_REPO="${HUB_REPO:-btsee/oron-tts}"
+DATASET="${DATASET:-btsee/common-voices-24-mn}"
 
-ARGS="--config ${CONFIG} --output-dir outputs"
-
-if [ -n "${HUB_REPO}" ]; then
-    ARGS="${ARGS} --hub-repo ${HUB_REPO}"
-fi
+ARGS="--config ${CONFIG} --output-dir outputs --hub-repo ${HUB_REPO} --hf-dataset ${DATASET}"
 
 if [ "${RESUME:-false}" = "true" ]; then
     ARGS="${ARGS} --resume"
@@ -309,9 +333,56 @@ accelerate launch scripts/train.py ${ARGS}
 EOF
     chmod +x ${WORKSPACE_DIR}/train.sh
     
+    # Background training with tmux
+    cat > ${WORKSPACE_DIR}/train_bg.sh << 'EOF'
+#!/bin/bash
+SESSION="${1:-oron-train}"
+CONFIG="${2:-configs/light.yaml}"
+
+if tmux has-session -t ${SESSION} 2>/dev/null; then
+    echo "Error: Session '${SESSION}' already running"
+    echo "Attach: tmux attach -t ${SESSION}"
+    echo "Kill: tmux kill-session -t ${SESSION}"
+    exit 1
+fi
+
+tmux new-session -d -s ${SESSION} bash -c "
+    source /workspace/venv/bin/activate
+    cd /workspace/oron-tts
+    export HF_TOKEN=${HF_TOKEN}
+    export WANDB_API_KEY=${WANDB_API_KEY:-}
+    HUB_REPO=btsee/oron-tts DATASET=btsee/common-voices-24-mn /workspace/train.sh ${CONFIG}
+    echo 'Training finished. Press Enter to close.'
+    read
+"
+
+echo "✓ Started: tmux attach -t ${SESSION}"
+echo "✓ Detach: Ctrl+B then D"
+EOF
+    chmod +x ${WORKSPACE_DIR}/train_bg.sh
+    
+    # Background training with nohup
+    cat > ${WORKSPACE_DIR}/train_nohup.sh << 'EOF'
+#!/bin/bash
+CONFIG="${1:-configs/light.yaml}"
+LOG="${2:-/workspace/training.log}"
+
+source /workspace/venv/bin/activate
+cd /workspace/oron-tts
+
+nohup bash -c "export HF_TOKEN=${HF_TOKEN}; export WANDB_API_KEY=${WANDB_API_KEY:-}; HUB_REPO=btsee/oron-tts DATASET=btsee/common-voices-24-mn /workspace/train.sh ${CONFIG}" > ${LOG} 2>&1 &
+
+echo $! > /workspace/training.pid
+echo "✓ PID: $(cat /workspace/training.pid)"
+echo "✓ Logs: tail -f ${LOG}"
+EOF
+    chmod +x ${WORKSPACE_DIR}/train_nohup.sh
+    
     log_success "Helper scripts created"
     log_info "  - ${WORKSPACE_DIR}/activate.sh: Activate environment"
-    log_info "  - ${WORKSPACE_DIR}/train.sh: Launch training"
+    log_info "  - ${WORKSPACE_DIR}/train.sh: Foreground training"
+    log_info "  - ${WORKSPACE_DIR}/train_bg.sh: Background (tmux)"
+    log_info "  - ${WORKSPACE_DIR}/train_nohup.sh: Background (nohup)"
 }
 
 # =============================================================================
@@ -337,9 +408,18 @@ main() {
     
     log_success "Setup complete!"
     echo ""
-    echo "Next steps:"
-    echo "  1. source ${WORKSPACE_DIR}/activate.sh"
-    echo "  2. python scripts/train.py --config configs/light.yaml"
+    echo "========================================"
+    echo "Background Training (Recommended):"
+    echo "  /workspace/train_bg.sh oron-train configs/light.yaml"
+    echo ""
+    echo "Attach to session:"
+    echo "  tmux attach -t oron-train"
+    echo "  (Detach: Ctrl+B then D)"
+    echo ""
+    echo "Alternative (nohup):"
+    echo "  /workspace/train_nohup.sh configs/light.yaml"
+    echo "  tail -f /workspace/training.log"
+    echo "========================================"
     echo ""
 }
 
