@@ -160,6 +160,9 @@ install_oron_tts() {
     # Install PyTorch with CUDA
     pip install torch==2.4.0 torchaudio==2.4.0 --index-url https://download.pytorch.org/whl/cu124
     
+    # Fix packaging version for deepfilternet compatibility
+    pip install "packaging>=23.0,<24.0"
+    
     # Install project dependencies
     if [ -f "pyproject.toml" ]; then
         pip install -e ".[dev]" 2>/dev/null || pip install -e . 2>/dev/null || {
