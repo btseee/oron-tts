@@ -231,15 +231,12 @@ def main() -> None:
     accelerator = Accelerator(
         gradient_accumulation_steps=train_cfg.get("gradient_accumulation_steps", 1),
         mixed_precision=train_cfg.get("mixed_precision", "bf16"),
-        log_with="wandb" if train_cfg.get("use_wandb", False) else None,
     )
     
     # Setup logging
     output_dir = Path(args.output_dir)
     logger = TrainingLogger(
         log_dir=output_dir / "logs",
-        use_wandb=train_cfg.get("use_wandb", False) and accelerator.is_main_process,
-        wandb_project=train_cfg.get("wandb_project", "oron-tts"),
     )
     
     if accelerator.is_main_process:

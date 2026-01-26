@@ -1,0 +1,35 @@
+version: '3.8'
+
+services:
+  oron-tts:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: oron-tts:latest
+    container_name: oron-tts
+    
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    
+    environment:
+      - HF_TOKEN=${HF_TOKEN}
+      - NVIDIA_VISIBLE_DEVICES=all
+    
+    volumes:
+      - ./outputs:/workspace/oron-tts/outputs
+      - ./logs:/workspace/oron-tts/logs
+      - ~/.cache/huggingface:/root/.cache/huggingface
+    
+    working_dir: /workspace/oron-tts
+    
+    stdin_open: true
+    tty: true
+    
+    command: /bin/bash
+    
+    restart: unless-stopped

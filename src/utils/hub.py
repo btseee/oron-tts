@@ -10,7 +10,6 @@ from typing import Any, Iterator
 
 from huggingface_hub import (
     HfApi,
-    Repository,
     create_repo,
     hf_hub_download,
     snapshot_download,

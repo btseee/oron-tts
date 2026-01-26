@@ -103,18 +103,12 @@ class TrainingLogger:
         self,
         name: str = "oron.train",
         log_dir: str | Path | None = None,
-        use_wandb: bool = False,
-        wandb_project: str = "oron-tts",
-        wandb_run_name: str | None = None,
     ) -> None:
         """Initialize training logger.
 
         Args:
             name: Logger name.
             log_dir: Directory for log files.
-            use_wandb: Enable Weights & Biases logging.
-            wandb_project: W&B project name.
-            wandb_run_name: W&B run name.
         """
         self.log_dir = Path(log_dir) if log_dir else Path("logs")
         self.log_dir.mkdir(parents=True, exist_ok=True)
@@ -123,27 +117,6 @@ class TrainingLogger:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         log_file = self.log_dir / f"train_{timestamp}.log"
         self.logger = setup_logger(name, log_file=log_file)
-
-        # W&B integration
-        self.use_wandb = use_wandb
-        self._wandb_run = None
-
-        if use_wandb:
-            self._init_wandb(wandb_project, wandb_run_name)
-
-    def _init_wandb(self, project: str, run_name: str | None) -> None:
-        """Initialize Weights & Biases."""
-        try:
-            import wandb
-
-            self._wandb_run = wandb.init(
-                project=project,
-                name=run_name,
-                dir=str(self.log_dir),
-            )
-        except ImportError:
-            self.logger.warning("wandb not installed, disabling W&B logging")
-            self.use_wandb = False
 
     def log_metrics(
         self,
@@ -162,25 +135,11 @@ class TrainingLogger:
         metrics_str = " | ".join(f"{k}: {v:.4f}" for k, v in metrics.items())
         self.logger.info(f"[Step {step}] {prefix} | {metrics_str}")
 
-        # Log to W&B
-        if self.use_wandb and self._wandb_run is not None:
-            import wandb
-
-            wandb.log(
-                {f"{prefix}/{k}": v for k, v in metrics.items()},
-                step=step,
-            )
-
     def log_hyperparameters(self, config: dict) -> None:
         """Log hyperparameters at start of training."""
         self.logger.info("Hyperparameters:")
         for key, value in config.items():
             self.logger.info(f"  {key}: {value}")
-
-        if self.use_wandb and self._wandb_run is not None:
-            import wandb
-
-            wandb.config.update(config)
 
     def log_model_summary(self, num_params: int, model_name: str = "F5-TTS") -> None:
         """Log model parameter count."""
@@ -189,7 +148,4 @@ class TrainingLogger:
 
     def finish(self) -> None:
         """Finalize logging session."""
-        if self.use_wandb and self._wandb_run is not None:
-            import wandb
-
-            wandb.finish()
+        pass

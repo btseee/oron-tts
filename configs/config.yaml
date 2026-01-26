@@ -1,12 +1,12 @@
-# OronTTS High-Quality Model Configuration
-# Maximum quality with full DiT parameters
+# OronTTS Model Configuration
+# High-quality F5-TTS for Mongolian Khalkha Dialect
 
 # Model Architecture
 model:
-  name: "oron-tts-hq"
+  name: "oron-tts"
   type: "f5-tts"
   
-  # Full DiT dimensions
+  # DiT dimensions
   dim: 1024
   depth: 22
   num_heads: 16
@@ -82,8 +82,6 @@ training:
   
   # Logging
   log_steps: 50
-  use_wandb: true
-  wandb_project: "oron-tts"
   
   # EMA (Exponential Moving Average)
   use_ema: true
