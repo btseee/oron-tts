@@ -34,7 +34,7 @@ local = [
     "phonemizer>=3.3.0",
     "librosa>=0.10.2",
     "soundfile>=0.12.1",
-    "datasets>=2.20.0",
+    "datasets>=2.20.0,<4.0",  # datasets 4.x requires torchcodec which needs FFmpeg 5+
 ]
 # Development tools
 dev = [

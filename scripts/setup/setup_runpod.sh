@@ -49,6 +49,11 @@ log_info "Installing F5-TTS..."
 pip install --no-cache-dir --upgrade pip setuptools wheel
 pip install --no-cache-dir -e third_party/F5-TTS
 
+# Pin datasets version to avoid torchcodec/FFmpeg compatibility issues
+# datasets 4.x requires torchcodec which needs FFmpeg 5+ (Ubuntu 22.04 has FFmpeg 4.4)
+log_info "Pinning datasets version for audio compatibility..."
+pip install --no-cache-dir 'datasets>=3.0,<4.0'
+
 # Install OronTTS wrapper (minimal deps)
 log_info "Installing OronTTS..."
 pip install --no-cache-dir -e .
