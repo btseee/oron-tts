@@ -42,21 +42,30 @@ python scripts/inference/infer.py \
 ### Training
 
 ```bash
-# Interactive training (finetune from pretrained)
+# Background training (RTX 4090 optimized, from scratch)
+./scripts/training/train_background.sh
+
+# Or with custom dataset
+./scripts/training/train_background.sh btsee/common-voices-24-mn
+
+# Interactive training
 python scripts/training/train.py \
-    --dataset-name oron_mn \
+    --dataset-name btsee/common-voices-24-mn \
+    --epochs 500 \
+    --batch-size 1800
+
+# Finetune from pretrained (faster convergence)
+python scripts/training/train.py \
+    --dataset-name btsee/common-voices-24-mn \
     --finetune \
     --epochs 100 \
-    --batch-size 3200
-
-# Background training on RunPod (recommended)
-./scripts/training/train_background.sh oron_mn
+    --batch-size 1800
 
 # View training logs
-tail -f logs/train_oron_mn_*.log
+tail -f logs/train_common-voices-24-mn_*.log
 
-# Check training status
-cat logs/train_oron_mn.pid | xargs ps -p
+# TensorBoard
+tensorboard --logdir ckpts/ --bind_all
 ```
 
 ### Batch Synthesis

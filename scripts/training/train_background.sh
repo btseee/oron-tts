@@ -22,7 +22,7 @@ log_error() { echo -e "${RED}[✗]${NC} $1"; }
 WORKSPACE_DIR="${WORKSPACE_DIR:-/workspace}"
 PROJECT_DIR="${PROJECT_DIR:-${WORKSPACE_DIR}/oron-tts}"
 LOG_DIR="${LOG_DIR:-${PROJECT_DIR}/logs}"
-DATASET_NAME="${1:-oron_mn}"
+DATASET_NAME="${1:-btsee/common-voices-24-mn}"
 EXTRA_ARGS="${@:2}"
 
 # Create log directory
@@ -30,8 +30,9 @@ mkdir -p "${LOG_DIR}"
 
 # Generate log filename with timestamp
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
-LOG_FILE="${LOG_DIR}/train_${DATASET_NAME}_${TIMESTAMP}.log"
-PID_FILE="${LOG_DIR}/train_${DATASET_NAME}.pid"
+DATASET_SHORT=$(echo "${DATASET_NAME}" | sed 's/.*\///')
+LOG_FILE="${LOG_DIR}/train_${DATASET_SHORT}_${TIMESTAMP}.log"
+PID_FILE="${LOG_DIR}/train_${DATASET_SHORT}.pid"
 
 # Check if training is already running
 if [ -f "${PID_FILE}" ]; then
@@ -39,7 +40,7 @@ if [ -f "${PID_FILE}" ]; then
     if ps -p "${OLD_PID}" > /dev/null 2>&1; then
         log_error "Training already running with PID ${OLD_PID}"
         log_info "To stop: kill ${OLD_PID}"
-        log_info "To view logs: tail -f ${LOG_DIR}/train_${DATASET_NAME}_*.log"
+        log_info "To view logs: tail -f ${LOG_FILE}"
         exit 1
     else
         log_warn "Stale PID file found, removing..."
@@ -55,24 +56,26 @@ if [ -f ".venv/bin/activate" ]; then
     source .venv/bin/activate
 fi
 
-# Build training command
+# RTX 4090 optimized training command (from scratch)
 TRAIN_CMD="python scripts/training/train.py \
     --dataset-name ${DATASET_NAME} \
-    --finetune \
-    --epochs 100 \
-    --batch-size 3200 \
-    --learning-rate 1e-5 \
-    --warmup-updates 2000 \
-    --save-per-updates 10000 \
-    --last-per-updates 1000 \
+    --epochs 500 \
+    --batch-size 1800 \
+    --learning-rate 7.5e-5 \
+    --warmup-updates 1000 \
+    --save-per-updates 5000 \
+    --last-per-updates 500 \
     --keep-checkpoints 5 \
-    --tokenizer char \
-    --log-samples \
+    --grad-accumulation 2 \
+    --max-samples 32 \
+    --num-workers 4 \
+    --logger tensorboard \
     ${EXTRA_ARGS}"
 
 log_info "Starting background training..."
 log_info "Dataset: ${DATASET_NAME}"
 log_info "Log file: ${LOG_FILE}"
+log_info "Mode: Training from scratch (RTX 4090 optimized)"
 echo ""
 log_info "Command: ${TRAIN_CMD}"
 echo ""
@@ -86,10 +89,19 @@ echo "${TRAIN_PID}" > "${PID_FILE}"
 
 log_success "Training started with PID: ${TRAIN_PID}"
 echo ""
+echo -e "${BLUE}═══════════════════════════════════════════════════════════${NC}"
+echo -e "${BLUE}  RTX 4090 Configuration:${NC}"
+echo -e "${BLUE}═══════════════════════════════════════════════════════════${NC}"
+echo "  Batch Size:      1800 frames"
+echo "  Learning Rate:   7.5e-5"
+echo "  Grad Accum:      2 (effective batch: 3600)"
+echo "  Max Samples:     32"
+echo ""
 echo -e "${BLUE}Useful commands:${NC}"
-echo "  View logs:      tail -f ${LOG_FILE}"
-echo "  Check status:   ps -p ${TRAIN_PID}"
-echo "  Stop training:  kill ${TRAIN_PID}"
-echo "  GPU usage:      watch -n 1 nvidia-smi"
+echo "  View logs:       tail -f ${LOG_FILE}"
+echo "  Check status:    ps -p ${TRAIN_PID}"
+echo "  Stop training:   kill ${TRAIN_PID}"
+echo "  GPU usage:       watch -n 1 nvidia-smi"
+echo "  TensorBoard:     tensorboard --logdir ckpts/"
 echo ""
 echo -e "${GREEN}Training is running in background. You can safely disconnect.${NC}"
