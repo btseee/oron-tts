@@ -13,17 +13,18 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              count: all
+              count: 1
               capabilities: [gpu]
     
     environment:
       - HF_TOKEN=${HF_TOKEN}
-      - NVIDIA_VISIBLE_DEVICES=all
+      - HF_HOME=/workspace/.cache/huggingface
     
     volumes:
-      - ./outputs:/workspace/oron-tts/outputs
+      - ./ckpts:/workspace/oron-tts/ckpts
       - ./logs:/workspace/oron-tts/logs
-      - ~/.cache/huggingface:/root/.cache/huggingface
+      - ./data:/workspace/oron-tts/data
+      - huggingface-cache:/workspace/.cache/huggingface
     
     working_dir: /workspace/oron-tts
     
@@ -31,5 +32,6 @@ services:
     tty: true
     
     command: /bin/bash
-    
-    restart: unless-stopped
+
+volumes:
+  huggingface-cache:

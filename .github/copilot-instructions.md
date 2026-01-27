@@ -2,36 +2,35 @@
 
 ## 1. Environment & Stack
 - **Language:** Python 3.11
-- **Framework:** PyTorch 2.4.0
+- **Framework:** PyTorch 2.4.0 (via F5-TTS)
 - **Compute:** CUDA 12.4.1
-- **Architecture:** F5-TTS (DiT-based CFM)
-- **Audio Prep:** DeepFilterNet
-- **Phonemizer:** espeak-ng (source build)
+- **Architecture:** F5-TTS (official repo as git submodule)
+- **Local Only:** DeepFilterNet, espeak-ng (for data cleaning)
 
 ## 2. Project Structure
-- `configs/`: JSON/YAML for model hyperparameters (light vs. hq).
-- `src/core/`: CFM solvers, DiT backbone, and ODE integration.
+- `configs/`: YAML configuration files.
+- `third_party/F5-TTS/`: Official F5-TTS repository (git submodule).
 - `src/data/`:
     - `cleaner.py`: Mongolian text normalization & numeric expansion.
     - `audio.py`: DeepFilterNet pipeline & resampling.
-    - `dataset.py`: HF Hub integration & multi-speaker formatting.
-- `src/modules/`: Attention mechanisms (RoPE, Flash), Embeddings.
-- `src/utils/`: Logging, HF API wrappers, checkpointing.
-- `scripts/`: `train.py`, `infer.py`, `setup_runpod.sh`.
+- `src/utils/`: Logging, HF API wrappers.
+- `scripts/training/`: Training scripts wrapping F5-TTS.
+- `scripts/inference/`: Inference using F5-TTS API with Mongolian text cleaning.
+- `scripts/data/`: Dataset preparation scripts (local only).
+- `scripts/setup/`: Environment setup scripts.
 
 ## 3. Coding Standards
 - **Style:** Clean Architecture. No global state.
 - **Typing:** Strict static typing for all function signatures.
 - **Documentation:** Terse, functional comments. Avoid redundant descriptions.
 - **Logic:** Favor `pathlib` over `os`. Use `match` statements for speaker/gender metadata.
-- **Efficiency:** Ensure `torch.compile` compatibility in the DiT forward pass.
 
 ## 4. Mongolian Specifics
 - **Normalization:** Expand numbers to Cyrillic text following Khalkha declension rules.
 - **Phonemes:** Interface with `espeak-ng` using the Mongolian (`mn`) data.
 
-## 5. Workflow Constraints
-- **Local:** Preprocessing and dataset upload to HuggingFace.
-- **Cloud:** Training on Runpod.io. 
-- **Persistence:** All training state must sync to HuggingFace Hub.
-- **Infrastructure:** `setup_runpod.sh` must handle system dependencies (`cmake`, `espeak-ng`, `libsndfile`).
+## 5. Workflow & Dependencies
+- **Local (`pip install -e ".[local]"`):** Data cleaning, preprocessing, dataset upload.
+- **Cloud (RunPod/Docker):** Training only. Install F5-TTS from submodule.
+- **Submodule:** F5-TTS provides all training/inference dependencies.
+- **HuggingFace:** Models and datasets stored on HF Hub.

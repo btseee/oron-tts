@@ -1,15 +1,19 @@
 #!/usr/bin/env python3
-"""OronTTS Training Script with HuggingFace Accelerate.
+"""OronTTS Training Script - Wrapper for F5-TTS training with Mongolian support.
 
 Usage:
-    # Single GPU
-    python scripts/train.py --config configs/light.yaml
-    
-    # Multi-GPU with accelerate
-    accelerate launch scripts/train.py --config configs/hq.yaml
-    
-    # Resume training
-    python scripts/train.py --config configs/hq.yaml --resume
+    # Finetune from pretrained F5-TTS
+    python scripts/training/train.py \
+        --dataset-name oron_mn \
+        --finetune \
+        --epochs 100 \
+        --batch-size 3200
+
+    # Train from scratch
+    python scripts/training/train.py \
+        --dataset-name oron_mn \
+        --epochs 500 \
+        --batch-size 1600
 """
 
 from __future__ import annotations
@@ -19,336 +23,256 @@ import os
 import sys
 from pathlib import Path
 
-# Add project root to path
-sys.path.insert(0, str(Path(__file__).parent.parent))
+# Add project root and F5-TTS to path
+PROJECT_ROOT = Path(__file__).parent.parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+sys.path.insert(0, str(PROJECT_ROOT / "third_party" / "F5-TTS" / "src"))
 
-import torch
-import yaml
-from accelerate import Accelerator
-from accelerate.utils import set_seed
-from torch.optim import AdamW
-from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
-from torch.utils.data import DataLoader
+from rich.console import Console
 
-from src.core.model import F5TTS, F5TTSConfig
-from src.data.audio import AudioConfig
-from src.data.dataset import OronDataCollator, OronDataset
-from src.utils.checkpoint import AccelerateCheckpointManager
-from src.utils.hub import HubConfig, HubManager
-from src.utils.logging import TrainingLogger, get_progress_bar
+console = Console()
 
 
 def parse_args() -> argparse.Namespace:
     """Parse command line arguments."""
-    parser = argparse.ArgumentParser(description="Train OronTTS")
-    
+    parser = argparse.ArgumentParser(
+        description="Train OronTTS (F5-TTS for Mongolian)",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+
+    # Dataset
     parser.add_argument(
-        "--config",
+        "--dataset-name",
         type=str,
-        default="configs/base.yaml",
-        help="Path to configuration file",
+        required=True,
+        help="Name of the dataset (should match prepared data directory)",
     )
     parser.add_argument(
-        "--resume",
+        "--dataset-path",
+        type=str,
+        default=None,
+        help="Path to dataset directory (default: data/{dataset-name})",
+    )
+
+    # Model
+    parser.add_argument(
+        "--exp-name",
+        type=str,
+        default="F5TTS_v1_Base",
+        choices=["F5TTS_v1_Base", "F5TTS_Base", "E2TTS_Base"],
+        help="Base model architecture",
+    )
+    parser.add_argument(
+        "--finetune",
         action="store_true",
-        help="Resume from latest checkpoint",
+        help="Finetune from pretrained checkpoint",
     )
     parser.add_argument(
-        "--output-dir",
-        type=str,
-        default="outputs",
-        help="Output directory for checkpoints and logs",
-    )
-    parser.add_argument(
-        "--hf-dataset",
+        "--pretrain",
         type=str,
         default=None,
-        help="HuggingFace dataset name (overrides config)",
+        help="Path to pretrained checkpoint (uses default if not specified)",
     )
+
+    # Training
+    parser.add_argument("--epochs", type=int, default=100, help="Number of training epochs")
+    parser.add_argument("--learning-rate", type=float, default=1e-5, help="Learning rate")
+    parser.add_argument("--batch-size", type=int, default=3200, help="Batch size per GPU (in frames)")
     parser.add_argument(
-        "--hub-repo",
+        "--batch-size-type",
         type=str,
-        default=None,
-        help="HuggingFace Hub repo for checkpoint sync",
+        default="frame",
+        choices=["frame", "sample"],
+        help="Batch size type",
     )
+    parser.add_argument("--max-samples", type=int, default=64, help="Max samples per batch")
+    parser.add_argument("--grad-accumulation", type=int, default=1, help="Gradient accumulation steps")
+    parser.add_argument("--max-grad-norm", type=float, default=1.0, help="Max gradient norm")
+    parser.add_argument("--warmup-updates", type=int, default=2000, help="Warmup updates")
+
+    # Checkpointing
+    parser.add_argument("--save-per-updates", type=int, default=10000, help="Save checkpoint every N updates")
+    parser.add_argument("--last-per-updates", type=int, default=1000, help="Save last checkpoint every N updates")
     parser.add_argument(
-        "--seed",
+        "--keep-checkpoints",
         type=int,
-        default=42,
-        help="Random seed",
+        default=5,
+        help="Number of checkpoints to keep (-1 for all, 0 for none)",
     )
-    
+    parser.add_argument(
+        "--checkpoint-path",
+        type=str,
+        default=None,
+        help="Checkpoint save directory (default: ckpts/{dataset-name})",
+    )
+
+    # Tokenizer
+    parser.add_argument(
+        "--tokenizer",
+        type=str,
+        default="char",
+        choices=["pinyin", "char", "custom"],
+        help="Tokenizer type (char recommended for Mongolian)",
+    )
+    parser.add_argument(
+        "--tokenizer-path",
+        type=str,
+        default=None,
+        help="Path to custom tokenizer vocab file",
+    )
+
+    # Logging
+    parser.add_argument(
+        "--logger",
+        type=str,
+        default=None,
+        choices=[None, "wandb", "tensorboard"],
+        help="Logger for training metrics",
+    )
+    parser.add_argument("--wandb-project", type=str, default="oron-tts", help="W&B project name")
+    parser.add_argument("--log-samples", action="store_true", help="Log audio samples during training")
+
+    # Optimization
+    parser.add_argument("--bnb-optimizer", action="store_true", help="Use 8-bit Adam optimizer")
+
     return parser.parse_args()
 
 
-def load_config(config_path: str) -> dict:
-    """Load YAML configuration."""
-    with open(config_path) as f:
-        return yaml.safe_load(f)
-
-
-def build_model(config: dict) -> F5TTS:
-    """Build F5-TTS model from config."""
-    model_cfg = config["model"]
-    
-    f5_config = F5TTSConfig(
-        mel_dim=model_cfg.get("mel_dim", 100),
-        phoneme_vocab_size=model_cfg.get("phoneme_vocab_size", 256),
-        dim=model_cfg.get("dim", 1024),
-        depth=model_cfg.get("depth", 22),
-        num_heads=model_cfg.get("num_heads", 16),
-        ff_mult=model_cfg.get("ff_mult", 4.0),
-        dropout=model_cfg.get("dropout", 0.1),
-        max_seq_len=model_cfg.get("max_seq_len", 4096),
-        num_speakers=model_cfg.get("num_speakers", 1),
-        speaker_dim=model_cfg.get("speaker_dim", 256),
-        sigma_min=model_cfg.get("sigma_min", 1e-4),
-        use_flash_attn=model_cfg.get("use_flash_attn", True),
-    )
-    
-    return F5TTS(f5_config)
-
-
-def build_dataloader(
-    config: dict,
-    split: str = "train",
-    hf_dataset: str | None = None,
-) -> DataLoader:
-    """Build data loader from config."""
-    data_cfg = config["data"]
-    audio_cfg = config["audio"]
-    train_cfg = config["training"]
-    
-    audio_config = AudioConfig(
-        sample_rate=audio_cfg.get("sample_rate", 24000),
-        n_fft=audio_cfg.get("n_fft", 1024),
-        hop_length=audio_cfg.get("hop_length", 256),
-        win_length=audio_cfg.get("win_length", 1024),
-        n_mels=audio_cfg.get("n_mels", 100),
-        denoise=audio_cfg.get("denoise", True),
-    )
-    
-    dataset = OronDataset(
-        manifest_path=data_cfg.get(f"{split}_manifest"),
-        hf_dataset_name=hf_dataset or data_cfg.get("hf_dataset"),
-        hf_split=split,
-        audio_config=audio_config,
-        max_duration_sec=data_cfg.get("max_duration_sec", 30.0),
-        min_duration_sec=data_cfg.get("min_duration_sec", 0.5),
-    )
-    
-    collator = OronDataCollator()
-    
-    return DataLoader(
-        dataset,
-        batch_size=train_cfg.get("batch_size", 16),
-        shuffle=(split == "train"),
-        num_workers=data_cfg.get("num_workers", 4),
-        pin_memory=data_cfg.get("pin_memory", True),
-        collate_fn=collator,
-        drop_last=(split == "train"),
-    )
-
-
-def build_optimizer(model: F5TTS, config: dict) -> AdamW:
-    """Build AdamW optimizer from config."""
-    train_cfg = config["training"]
-    
-    return AdamW(
-        model.parameters(),
-        lr=train_cfg.get("learning_rate", 1e-4),
-        weight_decay=train_cfg.get("weight_decay", 0.01),
-        betas=tuple(train_cfg.get("betas", [0.9, 0.999])),
-        eps=train_cfg.get("eps", 1e-8),
-    )
-
-
-def build_scheduler(optimizer: AdamW, config: dict):
-    """Build learning rate scheduler from config."""
-    train_cfg = config["training"]
-    warmup_steps = train_cfg.get("warmup_steps", 1000)
-    max_steps = train_cfg.get("max_steps", 100000)
-    
-    warmup = LinearLR(
-        optimizer,
-        start_factor=1e-8,
-        end_factor=1.0,
-        total_iters=warmup_steps,
-    )
-    
-    cosine = CosineAnnealingLR(
-        optimizer,
-        T_max=max_steps - warmup_steps,
-        eta_min=1e-7,
-    )
-    
-    return SequentialLR(
-        optimizer,
-        schedulers=[warmup, cosine],
-        milestones=[warmup_steps],
-    )
-
-
-def train_step(
-    model: F5TTS,
-    batch,
-    accelerator: Accelerator,
-) -> dict[str, float]:
-    """Perform a single training step."""
-    # Move batch to device explicitly
-    device = accelerator.device
-    mel = batch.mel.to(device)
-    phonemes = batch.phonemes.to(device)
-    speaker_ids = batch.speaker_ids.to(device)
-    mask = batch.mask.to(device)
-    
-    # Forward pass
-    losses = model.compute_loss(
-        mel=mel,
-        phonemes=phonemes,
-        speaker_ids=speaker_ids,
-        mask=mask,
-    )
-    
-    loss = losses["loss"]
-    
-    # Backward pass
-    accelerator.backward(loss)
-    
-    return {"loss": loss.item()}
-
-
 def main() -> None:
-    """Main training loop."""
+    """Main training function."""
     args = parse_args()
-    
-    # Load configuration
-    config = load_config(args.config)
-    train_cfg = config["training"]
-    
-    # Set seed
-    set_seed(args.seed)
-    
-    # Initialize accelerator
-    accelerator = Accelerator(
-        gradient_accumulation_steps=train_cfg.get("gradient_accumulation_steps", 1),
-        mixed_precision=train_cfg.get("mixed_precision", "bf16"),
+
+    console.print("[bold blue]OronTTS Training[/]")
+    console.print(f"Dataset: {args.dataset_name}")
+    console.print(f"Model: {args.exp_name}")
+    console.print(f"Finetune: {args.finetune}")
+
+    # Import F5-TTS components
+    import shutil
+
+    from cached_path import cached_path
+
+    from f5_tts.model import CFM, DiT, Trainer, UNetT
+    from f5_tts.model.dataset import load_dataset
+    from f5_tts.model.utils import get_tokenizer
+
+    # Setup paths
+    checkpoint_path = args.checkpoint_path or str(PROJECT_ROOT / "ckpts" / args.dataset_name)
+    os.makedirs(checkpoint_path, exist_ok=True)
+
+    # Model configuration based on experiment name
+    if args.exp_name == "F5TTS_v1_Base":
+        model_cls = DiT
+        model_cfg = dict(
+            dim=1024,
+            depth=22,
+            heads=16,
+            ff_mult=2,
+            text_dim=512,
+            conv_layers=4,
+        )
+        default_ckpt = "hf://SWivid/F5-TTS/F5TTS_v1_Base/model_1250000.safetensors"
+
+    elif args.exp_name == "F5TTS_Base":
+        model_cls = DiT
+        model_cfg = dict(
+            dim=1024,
+            depth=22,
+            heads=16,
+            ff_mult=2,
+            text_dim=512,
+            text_mask_padding=False,
+            conv_layers=4,
+            pe_attn_head=1,
+        )
+        default_ckpt = "hf://SWivid/F5-TTS/F5TTS_Base/model_1200000.pt"
+
+    elif args.exp_name == "E2TTS_Base":
+        model_cls = UNetT
+        model_cfg = dict(
+            dim=1024,
+            depth=24,
+            heads=16,
+            ff_mult=4,
+            text_mask_padding=False,
+            pe_attn_head=1,
+        )
+        default_ckpt = "hf://SWivid/E2-TTS/E2TTS_Base/model_1200000.pt"
+
+    # Handle finetuning checkpoint
+    if args.finetune:
+        ckpt_path = args.pretrain or str(cached_path(default_ckpt))
+        file_checkpoint = os.path.basename(ckpt_path)
+        if not file_checkpoint.startswith("pretrained_"):
+            file_checkpoint = "pretrained_" + file_checkpoint
+        file_checkpoint = os.path.join(checkpoint_path, file_checkpoint)
+        if not os.path.isfile(file_checkpoint):
+            console.print(f"[yellow]Copying pretrained checkpoint to {file_checkpoint}[/]")
+            shutil.copy2(ckpt_path, file_checkpoint)
+
+    # Tokenizer setup
+    tokenizer = args.tokenizer
+    if tokenizer == "custom":
+        if not args.tokenizer_path:
+            raise ValueError("Custom tokenizer selected but no tokenizer_path provided")
+        tokenizer_path = args.tokenizer_path
+    else:
+        tokenizer_path = args.dataset_name
+
+    vocab_char_map, vocab_size = get_tokenizer(tokenizer_path, tokenizer)
+    console.print(f"Vocabulary size: {vocab_size}")
+
+    # Mel spectrogram configuration
+    mel_spec_type = "vocos"
+    mel_spec_kwargs = dict(
+        n_fft=1024,
+        hop_length=256,
+        win_length=1024,
+        n_mel_channels=100,
+        target_sample_rate=24000,
+        mel_spec_type=mel_spec_type,
     )
-    
-    # Setup logging
-    output_dir = Path(args.output_dir)
-    logger = TrainingLogger(
-        log_dir=output_dir / "logs",
+
+    # Create model
+    model = CFM(
+        transformer=model_cls(**model_cfg, text_num_embeds=vocab_size, mel_dim=100),
+        mel_spec_kwargs=mel_spec_kwargs,
+        vocab_char_map=vocab_char_map,
     )
-    
-    if accelerator.is_main_process:
-        logger.log_hyperparameters(config)
-    
-    # Build components
-    model = build_model(config)
-    optimizer = build_optimizer(model, config)
-    
-    # Initialize Hub Manager
-    hub_repo_id = args.hub_repo or config.get("hub", {}).get("repo_id")
-    hub_manager = None
-    if hub_repo_id and accelerator.is_main_process:
-        hub_manager = HubManager(HubConfig(repo_id=hub_repo_id))
-    scheduler = build_scheduler(optimizer, config)
-    train_loader = build_dataloader(config, "train", args.hf_dataset)
-    
-    if accelerator.is_main_process:
-        logger.log_model_summary(model.num_parameters)
-    
-    # Compile model if requested (BEFORE accelerator.prepare)
-    # if config["model"].get("compile_model", False):
-    #     model = torch.compile(model, mode=config.get("advanced", {}).get("compile_mode", "default"))
-    
-    # Prepare with accelerator
-    model, optimizer, train_loader, scheduler = accelerator.prepare(
-        model, optimizer, train_loader, scheduler
+
+    # Create trainer
+    trainer = Trainer(
+        model,
+        epochs=args.epochs,
+        learning_rate=args.learning_rate,
+        num_warmup_updates=args.warmup_updates,
+        save_per_updates=args.save_per_updates,
+        keep_last_n_checkpoints=args.keep_checkpoints,
+        checkpoint_path=checkpoint_path,
+        batch_size_per_gpu=args.batch_size,
+        batch_size_type=args.batch_size_type,
+        max_samples=args.max_samples,
+        grad_accumulation_steps=args.grad_accumulation,
+        max_grad_norm=args.max_grad_norm,
+        logger=args.logger,
+        wandb_project=args.wandb_project,
+        wandb_run_name=f"{args.exp_name}_{args.dataset_name}",
+        wandb_resume_id=None,
+        log_samples=args.log_samples,
+        last_per_updates=args.last_per_updates,
+        bnb_optimizer=args.bnb_optimizer,
     )
-    
-    # Checkpoint management
-    ckpt_manager = AccelerateCheckpointManager(
-        output_dir=output_dir / "checkpoints",
-        max_checkpoints=train_cfg.get("max_checkpoints", 5),
+
+    # Load dataset
+    console.print(f"[blue]Loading dataset: {args.dataset_name}[/]")
+    train_dataset = load_dataset(args.dataset_name, tokenizer, mel_spec_kwargs=mel_spec_kwargs)
+
+    # Start training
+    console.print("[bold green]Starting training...[/]")
+    trainer.train(
+        train_dataset,
+        resumable_with_seed=42,
     )
-    
-    # Hub sync is initialized earlier
-    
-    # Resume if requested
-    global_step = 0
-    if args.resume:
-        global_step = ckpt_manager.load(accelerator)
-        if accelerator.is_main_process:
-            logger.logger.info(f"Resumed from step {global_step}")
-    
-    # Training loop
-    max_steps = train_cfg.get("max_steps", 100000)
-    save_steps = train_cfg.get("save_steps", 5000)
-    log_steps = train_cfg.get("log_steps", 100)
-    grad_accum = train_cfg.get("gradient_accumulation_steps", 1)
-    max_grad_norm = train_cfg.get("max_grad_norm", 1.0)
-    
-    model.train()
-    
-    with get_progress_bar() as progress:
-        task = progress.add_task("Training", total=max_steps)
-        progress.update(task, advance=global_step)
-        
-        while global_step < max_steps:
-            for batch in train_loader:
-                with accelerator.accumulate(model):
-                    metrics = train_step(model, batch, accelerator)
-                    
-                    # Gradient clipping
-                    if accelerator.sync_gradients:
-                        accelerator.clip_grad_norm_(model.parameters(), max_grad_norm)
-                    
-                    optimizer.step()
-                    scheduler.step()
-                    optimizer.zero_grad()
-                
-                if accelerator.sync_gradients:
-                    global_step += 1
-                    progress.update(task, advance=1)
-                    
-                    # Logging
-                    if global_step % log_steps == 0:
-                        metrics["lr"] = scheduler.get_last_lr()[0]
-                        if accelerator.is_main_process:
-                            logger.log_metrics(metrics, global_step)
-                    
-                    # Checkpointing
-                    if global_step % save_steps == 0:
-                        ckpt_manager.save(accelerator, global_step, metrics)
-                        
-                        # Sync to Hub
-                        if hub_manager is not None and accelerator.is_main_process:
-                            hub_manager.upload_training_state(
-                                output_dir,
-                                commit_message=f"Step {global_step}",
-                            )
-                    
-                    if global_step >= max_steps:
-                        break
-    
-    # Final save
-    if accelerator.is_main_process:
-        ckpt_manager.save(accelerator, global_step, metrics)
-        
-        # Save final model
-        unwrapped_model = accelerator.unwrap_model(model)
-        unwrapped_model.save_pretrained(output_dir / "final_model")
-        
-        if hub_manager is not None:
-            hub_manager.upload_training_state(output_dir, "Final model")
-            hub_manager.upload_model_card(
-                model_name=config["model"].get("name", "OronTTS"),
-                description="Mongolian TTS model trained with F5-TTS architecture.",
-            )
-        
-        logger.finish()
 
 
 if __name__ == "__main__":

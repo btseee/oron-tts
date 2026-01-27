@@ -4,111 +4,100 @@ High-quality Mongolian (Khalkha dialect) text-to-speech using **F5-TTS** with Co
 
 ## Features
 
-- **F5-TTS Architecture**: Flow matching with Diffusion Transformer backbone
+- **F5-TTS Backend**: Official F5-TTS as git submodule for voice cloning
 - **Mongolian Support**: Khalkha text normalization and phonemization
-- **Multi-Speaker**: Multiple speakers with gender separation
+- **Multi-Speaker**: Zero-shot voice cloning from reference audio
 - **DeepFilterNet**: Audio denoising for recordings
-- **Flash Attention 2**: Optimized training
-- **HuggingFace**: Dataset streaming and model hosting
 
 ## Quick Start
 
-### Docker (Recommended)
+### Installation
 
 ```bash
-# Set HuggingFace token
-export HF_TOKEN=hf_xxx
-
-# Build and run
-docker-compose up -d
-
-# Start training
-docker exec -it oron-tts accelerate launch scripts/training/train.py \
-  --config configs/config.yaml \
-  --output-dir outputs \
-  --hub-repo btsee/oron-tts \
-  --hf-dataset btsee/common-voices-24-mn
-```
-
-### Runpod
-
-```bash
-# Run setup script
-curl -sSL https://raw.githubusercontent.com/btseee/oron-tts/main/scripts/setup/setup_runpod.sh | bash
-
-# Train
-cd /workspace/oron-tts
-accelerate launch scripts/training/train.py \
-  --config configs/config.yaml \
-  --output-dir outputs \
-  --hub-repo btsee/oron-tts \
-  --hf-dataset btsee/common-voices-24-mn
-```
-
-### Local
-
-```bash
-# Clone
-git clone https://github.com/btseee/oron-tts.git
+# Clone with submodules
+git clone --recurse-submodules https://github.com/btseee/oron-tts.git
 cd oron-tts
 
-# Install
-pip install -e ".[dev]"
+# Or if already cloned:
+git submodule update --init --recursive
 
-# Build espeak-ng from source (see scripts/setup/setup_runpod.sh)
+# Install OronTTS
+pip install -e .
 
-# Train
-accelerate launch scripts/training/train.py \
-  --config configs/config.yaml \
-  --output-dir outputs \
-  --hub-repo btsee/oron-tts \
-  --hf-dataset btsee/common-voices-24-mn
+# Install F5-TTS from submodule
+pip install -e third_party/F5-TTS
+```
+
+### Inference
+
+```bash
+# Basic synthesis
+python scripts/inference/infer.py \
+    --ref-audio reference.wav \
+    --ref-text "Энэ бол жишээ текст" \
+    --gen-text "Сайн байна уу" \
+    --output output.wav
+
+# With custom checkpoint
+python scripts/inference/infer.py \
+    --ckpt-file path/to/checkpoint.pt \
+    --ref-audio reference.wav \
+    --gen-text "Сайн байна уу" \
+    --output output.wav
+
+# Batch synthesis
+python scripts/inference/infer.py \
+    --ref-audio reference.wav \
+    --ref-text "Энэ бол жишээ текст" \
+    --input-file texts.txt \
+    --output-dir outputs/audio
 ```
 
 ## Project Structure
 
-```
+```text
 oron-tts/
 ├── configs/
-│   └── config.yaml         # Model configuration
+│   └── config.yaml          # Configuration
 ├── src/
-│   ├── core/              # CFM, DiT, F5-TTS model
-│   ├── data/              # Audio, text processing, dataset
-│   ├── modules/           # Attention, embeddings
-│   └── utils/             # Checkpoints, logging, hub
-└── scripts/
-    ├── training/train.py
-    ├── data/prepare_cv_dataset.py
-    └── setup/setup_runpod.sh
+│   ├── data/                # Audio, text processing
+│   │   ├── audio.py         # Audio preprocessing
+│   │   └── cleaner.py       # Mongolian text normalization
+│   └── utils/               # Checkpoints, logging, hub
+├── scripts/
+│   ├── inference/infer.py   # Inference script
+│   ├── data/                # Dataset preparation
+│   └── setup/               # Environment setup
+└── third_party/
+    └── F5-TTS/              # Official F5-TTS (submodule)
 ```
 
-## Model Architecture
-
-| Component | Value |
-|-----------|-------|
-| Parameters | ~300M |
-| Layers | 22 |
-| Attention Heads | 16 |
-| Embedding Dim | 1024 |
-| Max Sequence | 4096 tokens |
-
-## Training Arguments
-
-```bash
---config          # Path to config.yaml
---output-dir      # Output directory
---hub-repo        # HuggingFace repo for checkpoints
---hf-dataset      # HuggingFace dataset name
---resume          # Resume from checkpoint
-```
-
-## Inference
+## Python API
 
 ```python
-from src.core import F5TTS
+import sys
+from pathlib import Path
 
-model = F5TTS.from_pretrained("btsee/oron-tts")
-mel = model.synthesize(phonemes, speaker_id=0, cfg_scale=2.0)
+# Add F5-TTS to path
+sys.path.insert(0, str(Path("third_party/F5-TTS/src")))
+
+from f5_tts.api import F5TTS
+from src.data import MongolianTextCleaner
+
+# Initialize
+tts = F5TTS()
+cleaner = MongolianTextCleaner()
+
+# Clean Mongolian text
+text = cleaner("2024 онд 5 км")
+
+# Synthesize
+wav, sr, spec = tts.infer(
+    ref_file="reference.wav",
+    ref_text="Энэ бол жишээ текст",
+    gen_text=text,
+    file_wave="output.wav",
+)
 ```
 
 ## Mongolian Text Processing
@@ -122,17 +111,19 @@ from src.data import MongolianTextCleaner
 
 cleaner = MongolianTextCleaner()
 text = cleaner("2024 онд 5 км")
+# Output: "хоёр мянга хорин дөрөв онд тав километр"
 ```
 
-## Dataset Preparation
+## Training
+
+For training custom models, use the official F5-TTS training pipeline:
 
 ```bash
-python scripts/data/prepare_cv_dataset.py \
-  --output-repo btsee/common-voices-24-mn \
-  --min-duration 1.0 \
-  --max-duration 15.0 \
-  --quality-filter  # Only upvotes>0, downvotes=0
+cd third_party/F5-TTS
+python src/f5_tts/train/train.py --help
 ```
+
+See the [F5-TTS documentation](https://github.com/SWivid/F5-TTS) for training details.
 
 ## License
 

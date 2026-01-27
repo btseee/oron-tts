@@ -1,7 +1,7 @@
 #!/bin/bash
 # =============================================================================
-# OronTTS Runpod Setup
-# Installs dependencies and prepares training environment
+# OronTTS RunPod Setup
+# Minimal setup for training environment - no data cleaning deps
 # =============================================================================
 
 set -euo pipefail
@@ -18,46 +18,42 @@ log_success() { echo -e "${GREEN}[✓]${NC} $1"; }
 WORKSPACE_DIR="${WORKSPACE_DIR:-/workspace}"
 PROJECT_DIR="${WORKSPACE_DIR}/oron-tts"
 
-log_info "OronTTS Runpod Setup"
+log_info "OronTTS RunPod Setup"
 
-# Install system dependencies
+# Install minimal system dependencies (no espeak-ng needed for training)
 log_info "Installing system dependencies..."
 apt-get update && apt-get install -y --no-install-recommends \
-    build-essential cmake git git-lfs \
-    libsndfile1-dev sox ffmpeg \
-    autoconf automake libtool pkg-config
-
-# Build espeak-ng from source (main branch for Mongolian support)
-log_info "Building espeak-ng with Mongolian support..."
-cd /tmp
-git clone --depth 1 https://github.com/espeak-ng/espeak-ng.git
-cd espeak-ng
-./autogen.sh
-./configure --prefix=/usr/local
-make -j$(nproc)
-make install
-ldconfig
-rm -rf /tmp/espeak-ng
+    git git-lfs libsndfile1-dev sox ffmpeg
+rm -rf /var/lib/apt/lists/*
 
 # Initialize git-lfs
 git lfs install
 
-# Clone repository
+# Clone repository with submodules
 if [ ! -d "${PROJECT_DIR}" ]; then
     log_info "Cloning OronTTS repository..."
     cd "${WORKSPACE_DIR}"
-    git clone https://github.com/btseee/oron-tts.git
+    git clone --recurse-submodules https://github.com/btseee/oron-tts.git
+else
+    log_info "Updating repository and submodules..."
+    cd "${PROJECT_DIR}"
+    git pull
+    git submodule update --init --recursive
 fi
 
 cd "${PROJECT_DIR}"
 
-# Install Python dependencies
-log_info "Installing Python dependencies..."
+# Install F5-TTS from submodule (includes all training dependencies)
+log_info "Installing F5-TTS..."
 pip install --no-cache-dir --upgrade pip setuptools wheel
-pip install --no-cache-dir "packaging>=23.0,<24.0"
-pip install --no-cache-dir -e ".[dev]"
+pip install --no-cache-dir -e third_party/F5-TTS
 
-# Install Flash Attention 2 (optional)
+# Install OronTTS wrapper (minimal deps)
+log_info "Installing OronTTS..."
+pip install --no-cache-dir -e .
+
+# Install Flash Attention 2 for faster training
+log_info "Installing Flash Attention 2..."
 pip install --no-cache-dir flash-attn --no-build-isolation || \
     log_info "Flash Attention 2 not available, using standard attention"
 
@@ -67,11 +63,30 @@ if [ -n "${HF_TOKEN:-}" ]; then
     huggingface-cli login --token "${HF_TOKEN}" --add-to-git-credential
 fi
 
+# Create directories
+mkdir -p ckpts logs data
+
+# Make training scripts executable
+chmod +x "${PROJECT_DIR}/scripts/training/train_background.sh"
+
 log_success "Setup complete!"
 echo ""
-echo "Training command:"
-echo "  accelerate launch scripts/training/train.py \\"
-echo "    --config configs/config.yaml \\"
-echo "    --output-dir outputs \\"
-echo "    --hub-repo btsee/oron-tts \\"
-echo "    --hf-dataset btsee/common-voices-24-mn"
+echo "=== Training Commands ==="
+echo ""
+echo "Background training (recommended):"
+echo "  ./scripts/training/train_background.sh <dataset_name>"
+echo ""
+echo "Interactive training:"
+echo "  python scripts/training/train.py \\"
+echo "    --dataset-name <dataset_name> \\"
+echo "    --finetune \\"
+echo "    --epochs 100 \\"
+echo "    --batch-size 3200"
+echo ""
+echo "=== Inference ==="
+echo ""
+echo "  python scripts/inference/infer.py \\"
+echo "    --ref-audio reference.wav \\"
+echo "    --ref-text 'Reference text' \\"
+echo "    --gen-text 'Text to synthesize' \\"
+echo "    --output output.wav"
