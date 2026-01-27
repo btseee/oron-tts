@@ -34,8 +34,8 @@ sys.path.insert(0, str(PROJECT_ROOT / "third_party" / "F5-TTS" / "src"))
 import torch  # noqa: E402
 import torchaudio  # noqa: E402
 from datasets import load_dataset  # noqa: E402
-from f5_tts.infer.utils_infer import (  # noqa: E402
-    infer_process,
+from f5_tts.infer.utils_infer import (
+    infer_process,  # noqa: E402
     load_checkpoint,
     load_vocoder,
 )
