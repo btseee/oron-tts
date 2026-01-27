@@ -6,6 +6,9 @@
 
 set -euo pipefail
 
+# Force datasets to use soundfile instead of torchcodec
+export HF_AUDIO_DECODER=soundfile
+
 # Colors
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'

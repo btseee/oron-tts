@@ -26,6 +26,9 @@ import shutil
 import sys
 from pathlib import Path
 
+# Force datasets to use soundfile instead of torchcodec (compatibility fix)
+os.environ["HF_AUDIO_DECODER"] = "soundfile"
+
 # Add project root and F5-TTS to path
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))

@@ -53,6 +53,9 @@ pip install --no-cache-dir -e third_party/F5-TTS
 log_info "Installing OronTTS..."
 pip install --no-cache-dir -e .
 
+# Install TensorBoard for logging
+pip install --no-cache-dir tensorboard
+
 # Install Flash Attention 2 for faster training
 log_info "Installing Flash Attention 2..."
 pip install --no-cache-dir flash-attn --no-build-isolation || \
