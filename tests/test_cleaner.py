@@ -1,9 +1,10 @@
-import pytest
 from src.data.cleaner import MongolianTextCleaner
+
 
 def test_cleaner_instantiation():
     cleaner = MongolianTextCleaner()
     assert cleaner is not None
+
 
 def test_number_expansion():
     cleaner = MongolianTextCleaner()
@@ -13,6 +14,7 @@ def test_number_expansion():
     expanded = cleaner.expand_numbers(text)
     assert expanded != text
     assert isinstance(expanded, str)
+
 
 def test_latin_to_cyrillic():
     cleaner = MongolianTextCleaner()

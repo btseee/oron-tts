@@ -1,330 +1,259 @@
 #!/usr/bin/env python3
-"""OronTTS Inference Script for Mongolian speech synthesis using F5-TTS.
+"""OronTTS Inference Script for Mongolian speech synthesis.
 
 Usage:
+    # Generate example with trained model
+    python scripts/inference/infer.py
+
+    # Custom text
     python scripts/inference/infer.py \
-        --ref-audio reference.wav \
-        --ref-text "Энэ бол жишээ текст" \
-        --gen-text "Сайн байна уу" \
-        --output output.wav
-        
-    # With custom model checkpoint
+        --text "Сайн байна уу, монгол хэлээр ярьж байна"
+
+    # With specific checkpoint
     python scripts/inference/infer.py \
-        --model path/to/checkpoint.pt \
-        --ref-audio reference.wav \
-        --ref-text "Энэ бол жишээ текст" \
-        --gen-text "Сайн байна уу" \
-        --output output.wav
-        
-    # Batch synthesis from file
-    python scripts/inference/infer.py \
-        --ref-audio reference.wav \
-        --ref-text "Энэ бол жишээ текст" \
-        --input-file texts.txt \
-        --output-dir outputs/audio
+        --checkpoint /workspace/output/ckpts/mongolian-tts/model_50000.pt \
+        --text "Энэ бол жишээ текст" \
+        --output custom_output.wav
 """
 
 from __future__ import annotations
 
 import argparse
+import os
 import sys
-import time
 from pathlib import Path
+from typing import Any
+
+os.environ["HF_AUDIO_DECODER"] = "soundfile"
 
 # Add project root and F5-TTS to path
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / "third_party" / "F5-TTS" / "src"))
 
-import torch
-from rich.console import Console
-from rich.progress import track
+import torch  # noqa: E402
+import torchaudio  # noqa: E402
+from datasets import load_dataset  # noqa: E402
+from f5_tts.infer.utils_infer import (  # noqa: E402
+    infer_process,
+    load_checkpoint,
+    load_vocoder,
+)
+from f5_tts.model import CFM, DiT  # noqa: E402
+from rich.console import Console  # noqa: E402
 
-from f5_tts.api import F5TTS
-from src.data.cleaner import MongolianTextCleaner
+from src.data.cleaner import MongolianTextCleaner  # noqa: E402
 
 console = Console()
 
 
 def parse_args() -> argparse.Namespace:
     """Parse command line arguments."""
-    parser = argparse.ArgumentParser(description="Synthesize Mongolian speech with OronTTS (F5-TTS)")
-    
+    parser = argparse.ArgumentParser(description="Generate Mongolian speech with trained OronTTS")
+
     parser.add_argument(
-        "--model",
-        type=str,
-        default="F5TTS_v1_Base",
-        help="Model name or path to checkpoint (default: F5TTS_v1_Base)",
-    )
-    parser.add_argument(
-        "--ckpt-file",
-        type=str,
-        default="",
-        help="Path to custom checkpoint file",
-    )
-    parser.add_argument(
-        "--vocab-file",
-        type=str,
-        default="",
-        help="Path to custom vocabulary file",
-    )
-    parser.add_argument(
-        "--ref-audio",
-        type=str,
-        required=True,
-        help="Reference audio file for voice cloning",
-    )
-    parser.add_argument(
-        "--ref-text",
-        type=str,
-        default="",
-        help="Transcript of reference audio (auto-transcribed if empty)",
-    )
-    parser.add_argument(
-        "--gen-text",
+        "--checkpoint",
         type=str,
         default=None,
+        help="Path to checkpoint (default: finds latest in /workspace/output)",
+    )
+    parser.add_argument(
+        "--dataset",
+        type=str,
+        default="btsee/mongolian-tts-combined",
+        help="Dataset used for training (for vocabulary)",
+    )
+    parser.add_argument(
+        "--text",
+        type=str,
+        default="Сайн байна уу! Би монгол хэлээр ярьж байна. 2025 онд Улаанбаатар хотод амьдардаг.",
         help="Text to synthesize",
-    )
-    parser.add_argument(
-        "--input-file",
-        type=str,
-        default=None,
-        help="File with texts to synthesize (one per line)",
     )
     parser.add_argument(
         "--output",
         type=str,
-        default="output.wav",
-        help="Output audio file path",
+        default="/workspace/output/example_mongolian.wav",
+        help="Output audio file",
     )
     parser.add_argument(
-        "--output-dir",
+        "--ref-audio",
         type=str,
         default=None,
-        help="Output directory for batch synthesis",
+        help="Reference audio (optional, uses F5-TTS example if not provided)",
     )
     parser.add_argument(
-        "--cfg-strength",
-        type=float,
-        default=2.0,
-        help="Classifier-free guidance strength",
-    )
-    parser.add_argument(
-        "--nfe-step",
-        type=int,
-        default=32,
-        help="Number of function evaluations (ODE steps)",
-    )
-    parser.add_argument(
-        "--speed",
-        type=float,
-        default=1.0,
-        help="Speed factor for generation",
-    )
-    parser.add_argument(
-        "--ode-method",
+        "--ref-text",
         type=str,
-        default="euler",
-        help="ODE solver method",
+        default="Some call me nature, others call me mother nature.",
+        help="Reference audio text",
     )
-    parser.add_argument(
-        "--remove-silence",
-        action="store_true",
-        help="Remove silence from generated audio",
-    )
-    parser.add_argument(
-        "--seed",
-        type=int,
-        default=None,
-        help="Random seed for reproducibility",
-    )
-    parser.add_argument(
-        "--device",
-        type=str,
-        default=None,
-        help="Device to run inference on (auto-detected if not specified)",
-    )
-    parser.add_argument(
-        "--no-clean",
-        action="store_true",
-        help="Disable Mongolian text cleaning/normalization",
-    )
-    
+
     return parser.parse_args()
 
 
-class OronTTSSynthesizer:
-    """Mongolian speech synthesizer using F5-TTS."""
-    
-    def __init__(
-        self,
-        model: str = "F5TTS_v1_Base",
-        ckpt_file: str = "",
-        vocab_file: str = "",
-        ode_method: str = "euler",
-        device: str | None = None,
-    ) -> None:
-        """Initialize synthesizer.
-        
-        Args:
-            model: Model name or config.
-            ckpt_file: Path to checkpoint.
-            vocab_file: Path to vocabulary.
-            ode_method: ODE solver method.
-            device: Device to run on.
-        """
-        console.print(f"[bold blue]Loading F5-TTS model: {model}...[/]")
-        
-        self.tts = F5TTS(
-            model=model,
-            ckpt_file=ckpt_file,
-            vocab_file=vocab_file,
-            ode_method=ode_method,
-            device=device,
-        )
-        
-        # Initialize Mongolian text cleaner
-        self.cleaner = MongolianTextCleaner()
-        
-        console.print("[bold green]Ready for synthesis![/]")
-    
-    def synthesize(
-        self,
-        ref_audio: str,
-        ref_text: str,
-        gen_text: str,
-        cfg_strength: float = 2.0,
-        nfe_step: int = 32,
-        speed: float = 1.0,
-        remove_silence: bool = False,
-        output_path: str | None = None,
-        seed: int | None = None,
-        clean_text: bool = True,
-    ) -> tuple:
-        """Synthesize speech from text.
-        
-        Args:
-            ref_audio: Reference audio path.
-            ref_text: Reference audio transcript.
-            gen_text: Text to synthesize.
-            cfg_strength: CFG strength.
-            nfe_step: Number of ODE steps.
-            speed: Speed factor.
-            remove_silence: Remove silence from output.
-            output_path: Output file path.
-            seed: Random seed.
-            clean_text: Apply Mongolian text cleaning.
-            
-        Returns:
-            Tuple of (wav, sample_rate, spectrogram).
-        """
-        # Clean text if enabled
-        if clean_text:
-            gen_text = self.cleaner(gen_text)
-            if ref_text:
-                ref_text = self.cleaner(ref_text)
-        
-        wav, sr, spec = self.tts.infer(
-            ref_file=ref_audio,
-            ref_text=ref_text,
-            gen_text=gen_text,
-            cfg_strength=cfg_strength,
-            nfe_step=nfe_step,
-            speed=speed,
-            remove_silence=remove_silence,
-            file_wave=output_path,
-            seed=seed,
-        )
-        
-        return wav, sr, spec
+def find_latest_checkpoint(base_dir: str = "/workspace/output/ckpts") -> Path | None:
+    """Find latest checkpoint."""
+    ckpt_dir = Path(base_dir) / "mongolian-tts"
+    if not ckpt_dir.exists():
+        return None
+
+    checkpoints = list(ckpt_dir.glob("model_*.pt"))
+    if not checkpoints:
+        # Try safetensors
+        checkpoints = list(ckpt_dir.glob("model_*.safetensors"))
+
+    if not checkpoints:
+        return None
+
+    # Sort by modification time
+    checkpoints.sort(key=lambda x: x.stat().st_mtime, reverse=True)
+    return checkpoints[0]
 
 
-def main() -> None:
-    """Main inference function."""
-    args = parse_args()
-    
-    # Validate arguments
-    if args.gen_text is None and args.input_file is None:
-        console.print("[red]Error: Must provide --gen-text or --input-file[/]")
-        sys.exit(1)
-    
-    # Initialize synthesizer
-    synth = OronTTSSynthesizer(
-        model=args.model,
-        ckpt_file=args.ckpt_file,
-        vocab_file=args.vocab_file,
-        ode_method=args.ode_method,
-        device=args.device,
+def load_model(checkpoint_path: Path, dataset_name: str, device: str = "cuda") -> Any:
+    """Load trained model with correct vocabulary."""
+    console.print(f"[blue]📥 Loading vocabulary from dataset: {dataset_name}[/]")
+
+    # Build vocabulary from dataset
+    hf_dataset = load_dataset(dataset_name, split="train")
+    all_texts = hf_dataset["text"]
+    all_text = " ".join(all_texts)
+    vocab_chars = sorted(set(all_text))
+    vocab_char_map = {char: idx for idx, char in enumerate(vocab_chars)}
+    vocab_size = len(vocab_char_map)
+
+    console.print(f"[green]✓ Vocabulary: {vocab_size} characters[/]")
+
+    # Mel spec config (must match training)
+    mel_spec_kwargs = {
+        "n_fft": 1024,
+        "hop_length": 256,
+        "win_length": 1024,
+        "n_mel_channels": 100,
+        "target_sample_rate": 24000,
+        "mel_spec_type": "vocos",
+    }
+
+    # Model config (F5TTS_v1_Base)
+    model_cfg = {
+        "dim": 1024,
+        "depth": 22,
+        "heads": 16,
+        "ff_mult": 2,
+        "text_dim": 512,
+        "conv_layers": 4,
+    }
+
+    console.print("[blue]🏗️  Creating model architecture...[/]")
+    transformer = DiT(**model_cfg, text_num_embeds=vocab_size, mel_dim=100)
+    model = CFM(
+        transformer=transformer,
+        mel_spec_kwargs=mel_spec_kwargs,
+        vocab_char_map=vocab_char_map,
     )
-    
-    clean_text = not args.no_clean
-    
-    # Single text synthesis
-    if args.gen_text is not None:
-        console.print(f"\n[bold]Text:[/] {args.gen_text}")
-        
-        start_time = time.time()
-        wav, sr, _ = synth.synthesize(
-            ref_audio=args.ref_audio,
-            ref_text=args.ref_text,
-            gen_text=args.gen_text,
-            cfg_strength=args.cfg_strength,
-            nfe_step=args.nfe_step,
-            speed=args.speed,
-            remove_silence=args.remove_silence,
-            output_path=args.output,
-            seed=args.seed,
-            clean_text=clean_text,
+
+    console.print(f"[blue]📂 Loading checkpoint: {checkpoint_path.name}[/]")
+    model = load_checkpoint(model, str(checkpoint_path), device, use_ema=True)
+
+    return model
+
+
+def main() -> int:
+    args = parse_args()
+
+    console.print("\n[bold blue]═" * 35)
+    console.print("[bold blue]  OronTTS - Mongolian Speech Synthesis")
+    console.print("[bold blue]═" * 35 + "\n")
+
+    # Find checkpoint
+    ckpt_path: Path
+    if args.checkpoint:
+        ckpt_path = Path(args.checkpoint)
+    else:
+        ckpt_path_optional = find_latest_checkpoint()
+        if not ckpt_path_optional:
+            console.print("[red]❌ No checkpoint found in /workspace/output/ckpts/[/]")
+            console.print("[yellow]Please specify --checkpoint or train a model first[/]")
+            return 1
+        ckpt_path = ckpt_path_optional
+
+    if not ckpt_path.exists():
+        console.print(f"[red]❌ Checkpoint not found: {ckpt_path}[/]")
+        return 1
+
+    console.print(f"[green]✓ Using checkpoint: {ckpt_path}[/]")
+
+    # Clean text
+    cleaner = MongolianTextCleaner()
+    original_text = args.text
+    cleaned_text = cleaner(original_text)
+
+    console.print(f"\n[bold]Original:[/] {original_text}")
+    console.print(f"[bold]Cleaned:[/]  {cleaned_text}\n")
+
+    # Device
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    console.print(f"[dim]Device: {device.upper()}[/]")
+
+    # Load model
+    model = load_model(ckpt_path, args.dataset, device)
+
+    # Load vocoder
+    console.print("[blue]🎵 Loading vocoder (Vocos)...[/]")
+    vocoder = load_vocoder(vocoder_name="vocos", is_local=False, local_path="")
+
+    # Reference audio
+    if args.ref_audio:
+        ref_audio = args.ref_audio
+    else:
+        # Use F5-TTS example
+        ref_audio = str(
+            PROJECT_ROOT
+            / "third_party"
+            / "F5-TTS"
+            / "src"
+            / "f5_tts"
+            / "infer"
+            / "examples"
+            / "basic"
+            / "basic_ref_en.wav"
         )
-        elapsed = time.time() - start_time
-        
-        duration = len(wav) / sr
-        rtf = elapsed / duration if duration > 0 else 0
-        
-        console.print(f"[green]Saved to {args.output}[/]")
-        console.print(f"[dim]Duration: {duration:.2f}s | Generation: {elapsed:.2f}s | RTF: {rtf:.3f}[/]")
-        console.print(f"[dim]Seed: {synth.tts.seed}[/]")
-    
-    # Batch synthesis
-    elif args.input_file is not None:
-        input_path = Path(args.input_file)
-        output_dir = Path(args.output_dir or "outputs/audio")
-        output_dir.mkdir(parents=True, exist_ok=True)
-        
-        with open(input_path, encoding="utf-8") as f:
-            texts = [line.strip() for line in f if line.strip()]
-        
-        console.print(f"\n[bold]Synthesizing {len(texts)} texts...[/]\n")
-        
-        total_time = 0.0
-        total_duration = 0.0
-        
-        for i, text in track(enumerate(texts), total=len(texts), description="Synthesizing"):
-            output_path = output_dir / f"{i:04d}.wav"
-            
-            start_time = time.time()
-            wav, sr, _ = synth.synthesize(
-                ref_audio=args.ref_audio,
-                ref_text=args.ref_text,
-                gen_text=text,
-                cfg_strength=args.cfg_strength,
-                nfe_step=args.nfe_step,
-                speed=args.speed,
-                remove_silence=args.remove_silence,
-                output_path=str(output_path),
-                seed=args.seed,
-                clean_text=clean_text,
-            )
-            elapsed = time.time() - start_time
-            
-            total_time += elapsed
-            total_duration += len(wav) / sr
-        
-        rtf = total_time / total_duration if total_duration > 0 else 0
-        console.print(f"\n[green]Batch synthesis complete![/]")
-        console.print(f"[dim]Total duration: {total_duration:.1f}s | Total time: {total_time:.1f}s | Avg RTF: {rtf:.3f}[/]")
+
+    console.print(f"[dim]Reference: {Path(ref_audio).name}[/]\n")
+
+    # Generate
+    console.print("[bold green]🎤 Generating speech...[/]")
+
+    wav, sr, _ = infer_process(
+        ref_audio=ref_audio,
+        ref_text=args.ref_text,
+        gen_text=cleaned_text,
+        model_obj=model,
+        vocoder=vocoder,
+        mel_spec_type="vocos",
+        target_rms=0.1,
+        cross_fade_duration=0.15,
+        nfe_step=32,
+        cfg_strength=2.0,
+        sway_sampling_coef=-1.0,
+        speed=1.0,
+        device=device,
+    )
+
+    # Save
+    output_path = Path(args.output)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    torchaudio.save(str(output_path), torch.tensor(wav).unsqueeze(0), sr)
+
+    duration = len(wav) / sr
+
+    console.print("\n[bold green]✅ Success![/]")
+    console.print(f"[green]Saved to: {output_path}[/]")
+    console.print(f"[dim]Duration: {duration:.2f}s | Sample rate: {sr} Hz[/]")
+    console.print("\n[bold blue]═" * 35 + "\n")
+
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

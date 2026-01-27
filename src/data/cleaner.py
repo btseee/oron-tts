@@ -189,7 +189,7 @@ class MongolianTextCleaner:
     def normalize_punctuation(self, text: str) -> str:
         """Standardize punctuation marks."""
         # Normalize quotes
-        text = re.sub(r"[«»„""]", '"', text)
+        text = re.sub(r"[«»„" "]", '"', text)
         text = re.sub(r"['']", "'", text)
 
         # Normalize dashes
@@ -298,17 +298,62 @@ class MongolianPhonemizer:
         """Build default phoneme vocabulary."""
         # IPA symbols common in Mongolian + special tokens
         symbols = [
-            "<pad>", "<unk>", "<bos>", "<eos>", "|",  # Special
-            " ", ".", ",", "?", "!",  # Punctuation
-            "a", "ɑ", "æ", "e", "ɛ", "i", "ɪ",  # Vowels
-            "o", "ɔ", "u", "ʊ", "ø", "y",
-            "aː", "eː", "iː", "oː", "uː", "øː",  # Long vowels
-            "b", "p", "d", "t", "g", "k", "q",  # Plosives
-            "m", "n", "ŋ",  # Nasals
-            "f", "v", "s", "z", "ʃ", "ʒ", "x", "h",  # Fricatives
-            "ts", "tʃ", "dʒ",  # Affricates
-            "l", "r", "ɾ",  # Liquids
-            "j", "w",  # Approximants
-            "ˈ", "ˌ",  # Stress markers
+            "<pad>",
+            "<unk>",
+            "<bos>",
+            "<eos>",
+            "|",  # Special
+            " ",
+            ".",
+            ",",
+            "?",
+            "!",  # Punctuation
+            "a",
+            "ɑ",
+            "æ",
+            "e",
+            "ɛ",
+            "i",
+            "ɪ",  # Vowels
+            "o",
+            "ɔ",
+            "u",
+            "ʊ",
+            "ø",
+            "y",
+            "aː",
+            "eː",
+            "iː",
+            "oː",
+            "uː",
+            "øː",  # Long vowels
+            "b",
+            "p",
+            "d",
+            "t",
+            "g",
+            "k",
+            "q",  # Plosives
+            "m",
+            "n",
+            "ŋ",  # Nasals
+            "f",
+            "v",
+            "s",
+            "z",
+            "ʃ",
+            "ʒ",
+            "x",
+            "h",  # Fricatives
+            "ts",
+            "tʃ",
+            "dʒ",  # Affricates
+            "l",
+            "r",
+            "ɾ",  # Liquids
+            "j",
+            "w",  # Approximants
+            "ˈ",
+            "ˌ",  # Stress markers
         ]
         return {s: i for i, s in enumerate(symbols)}

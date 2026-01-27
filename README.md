@@ -4,10 +4,11 @@ High-quality Mongolian (Khalkha dialect) text-to-speech using **F5-TTS** with Co
 
 ## Features
 
-- **F5-TTS Backend**: Official F5-TTS as git submodule for voice cloning
-- **Mongolian Support**: Khalkha text normalization and phonemization
-- **Multi-Speaker**: Zero-shot voice cloning from reference audio
-- **DeepFilterNet**: Audio denoising for recordings
+- **F5-TTS Backend**: Finetuned from pretrained F5-TTS for high quality
+- **Mongolian Khalkha**: Native support with text normalization and number expansion
+- **Multi-Speaker**: Male and female voices with zero-shot voice cloning
+- **Combined Dataset**: 5,800+ samples from mbspeech + Common Voice
+- **Optimized Training**: Best settings for low loss and natural speech
 
 ## Quick Start
 
@@ -18,9 +19,6 @@ High-quality Mongolian (Khalkha dialect) text-to-speech using **F5-TTS** with Co
 git clone --recurse-submodules https://github.com/btseee/oron-tts.git
 cd oron-tts
 
-# Or if already cloned:
-git submodule update --init --recursive
-
 # Install OronTTS
 pip install -e .
 
@@ -28,48 +26,75 @@ pip install -e .
 pip install -e third_party/F5-TTS
 ```
 
+### Development Setup
+
+```bash
+# Install with local dependencies (data preprocessing)
+pip install -e ".[local]"
+
+# Install with dev dependencies (testing, linting)
+pip install -e ".[dev]"
+
+# Install pre-commit hooks
+pre-commit install
+```
+
 ### Inference
 
 ```bash
-# Basic synthesis
-python scripts/inference/infer.py \
-    --ref-audio reference.wav \
-    --ref-text "Энэ бол жишээ текст" \
-    --gen-text "Сайн байна уу" \
-    --output output.wav
+# Generate example audio with trained model
+python scripts/inference/infer.py
 
-# With custom checkpoint
+# Custom text
 python scripts/inference/infer.py \
-    --ckpt-file path/to/checkpoint.pt \
-    --ref-audio reference.wav \
-    --gen-text "Сайн байна уу" \
-    --output output.wav
+    --text "Сайн байна уу! Би монгол хэлээр ярьж байна."
 
-# Batch synthesis
+# With specific checkpoint
 python scripts/inference/infer.py \
-    --ref-audio reference.wav \
-    --ref-text "Энэ бол жишээ текст" \
-    --input-file texts.txt \
-    --output-dir outputs/audio
+    --checkpoint /workspace/output/ckpts/mongolian-tts/model_50000.pt \
+    --text "Энэ бол жишээ текст" \
+    --output custom_output.wav
 ```
 
 ## Project Structure
 
 ```text
 oron-tts/
-├── configs/
-│   └── config.yaml          # Configuration
+├── .vscode/                 # VS Code configuration
+│   ├── settings.json        # Python, Ruff, MyPy settings
+│   ├── launch.json          # Debug configurations
+│   ├── tasks.json           # Build, lint, test tasks
+│   └── extensions.json      # Recommended extensions
 ├── src/
-│   ├── data/                # Audio, text processing
-│   │   ├── audio.py         # Audio preprocessing
-│   │   └── cleaner.py       # Mongolian text normalization
-│   └── utils/               # Checkpoints, logging, hub
+│   ├── data/
+│   │   ├── audio.py         # Audio preprocessing (DeepFilterNet)
+│   │   ├── cleaner.py       # Mongolian text normalization
+│   │   └── dataset.py       # Dataset handling utilities
+│   └── utils/
+│       ├── logging.py       # Rich console logging
+│       ├── hub.py           # HuggingFace Hub API wrappers
+│       └── checkpoint.py    # Model checkpoint utilities
 ├── scripts/
-│   ├── inference/infer.py   # Inference script
-│   ├── data/                # Dataset preparation
-│   └── setup/               # Environment setup
-└── third_party/
-    └── F5-TTS/              # Official F5-TTS (submodule)
+│   ├── data/
+│   │   └── prepare_combined_dataset.py  # Dataset preparation
+│   ├── training/
+│   │   ├── train.py         # Optimized training script
+│   │   └── train.sh         # RunPod training wrapper
+│   ├── inference/
+│   │   └── infer.py         # Generate speech
+│   ├── setup/
+│   │   └── runpod_setup.sh  # RunPod environment setup
+│   └── utils/
+│       └── upload_to_hub.py # HuggingFace upload
+├── tests/
+│   ├── conftest.py          # Pytest configuration
+│   └── test_cleaner.py      # Text cleaner tests
+├── third_party/
+│   └── F5-TTS/              # Official F5-TTS (submodule)
+└── /workspace/output/       # Training outputs (RunPod/Docker)
+    ├── ckpts/               # Model checkpoints
+    ├── logs/                # Training logs
+    └── runs/                # TensorBoard logs
 ```
 
 ## Python API
@@ -78,26 +103,15 @@ oron-tts/
 import sys
 from pathlib import Path
 
-# Add F5-TTS to path
-sys.path.insert(0, str(Path("third_party/F5-TTS/src")))
+# Add paths
+sys.path.insert(0, "third_party/F5-TTS/src")
 
-from f5_tts.api import F5TTS
 from src.data import MongolianTextCleaner
+# Use scripts/inference/infer.py for generation
 
-# Initialize
-tts = F5TTS()
 cleaner = MongolianTextCleaner()
-
-# Clean Mongolian text
 text = cleaner("2024 онд 5 км")
-
-# Synthesize
-wav, sr, spec = tts.infer(
-    ref_file="reference.wav",
-    ref_text="Энэ бол жишээ текст",
-    gen_text=text,
-    file_wave="output.wav",
-)
+# Output: "хоёр мянга хорин дөрөв онд тав километр"
 ```
 
 ## Mongolian Text Processing
@@ -116,14 +130,49 @@ text = cleaner("2024 онд 5 км")
 
 ## Training
 
-For training custom models, use the official F5-TTS training pipeline:
+### RunPod Setup (Cloud Training)
 
 ```bash
-cd third_party/F5-TTS
-python src/f5_tts/train/train.py --help
+# First-time setup on RunPod instance
+bash scripts/setup/runpod_setup.sh
+
+# This will:
+# - Clone repository with F5-TTS submodule
+# - Install dependencies (PyTorch, F5-TTS)
+# - Download pretrained checkpoint
+# - Set up environment variables
 ```
 
-See the [F5-TTS documentation](https://github.com/SWivid/F5-TTS) for training details.
+### Prepare Combined Dataset
+
+```bash
+# Combine mbspeech (3.8k samples) + Common Voice (best male/female voices)
+python scripts/data/prepare_combined_dataset.py
+```
+
+### Train with Optimal Settings
+
+```bash
+# Finetune from pretrained F5-TTS (recommended)
+python scripts/training/train.py
+
+# Output saved to /workspace/output/
+```
+
+**Training Strategy:**
+- Finetuning (NOT from scratch) - essential for small datasets
+- Learning rate: 7.5e-5 (optimized for finetuning)
+- Batch size: 4800 frames (2400 × 2 accumulation)
+- Warmup: 2000 updates
+- Target: Loss < 0.15 for high quality
+
+### Upload to HuggingFace
+
+```bash
+python scripts/utils/upload_to_hub.py \
+    --model-name btsee/oron-tts-mongolian \
+    --checkpoint-dir /workspace/output/ckpts/mongolian-tts
+```
 
 ## License
 

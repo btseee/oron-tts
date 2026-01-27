@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 from huggingface_hub import (
     HfApi,
@@ -52,7 +53,7 @@ class HubManager:
 
     def _ensure_repo(self) -> None:
         """Create repository if it doesn't exist."""
-        try:
+        with contextlib.suppress(Exception):
             create_repo(
                 repo_id=self.config.repo_id,
                 repo_type=self.config.repo_type,
@@ -60,9 +61,6 @@ class HubManager:
                 token=self.config.token,
                 exist_ok=True,
             )
-        except Exception as e:
-            # Repo might already exist
-            pass
 
     def upload_checkpoint(
         self,

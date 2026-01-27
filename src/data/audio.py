@@ -6,13 +6,13 @@ and enhancement of non-professional recordings.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Any
 
-import numpy as np
+import numpy as np  # type: ignore[import-untyped]
 import torch
-import torchaudio
+import torchaudio  # type: ignore[import-untyped]
 from torch import Tensor
 
 
@@ -207,18 +207,17 @@ class AudioProcessor:
         Returns:
             Log mel-spectrogram. Shape: (T, n_mels).
         """
-        import numpy as np
-        
+
         # Convert to tensor
         if isinstance(audio_array, np.ndarray):
             waveform = torch.from_numpy(audio_array).float()
         else:
             waveform = torch.tensor(audio_array, dtype=torch.float32)
-        
+
         # Ensure 1D
         if waveform.dim() == 0:
             waveform = waveform.unsqueeze(0)
-        
+
         # Resample if necessary
         if sample_rate != self.config.sample_rate:
             waveform = torchaudio.functional.resample(
@@ -226,16 +225,16 @@ class AudioProcessor:
                 orig_freq=sample_rate,
                 new_freq=self.config.sample_rate,
             )
-        
+
         # Normalize
         if self.config.normalize_audio:
             waveform = self._normalize_audio(waveform)
-        
+
         # Denoise if requested
         should_denoise = denoise if denoise is not None else self.config.denoise
         if should_denoise:
             waveform = self.denoise_audio(waveform)
-        
+
         # Extract mel
         mel = self.extract_mel(waveform)
         return mel
@@ -338,13 +337,13 @@ class DeepFilterNetWrapper:
         """Lazy-load DeepFilterNet model."""
         if self._model is None:
             try:
-                from df.enhance import enhance, init_df
+                from df.enhance import init_df  # type: ignore[import-not-found,import-untyped]
 
                 self._model, self._df_state, _ = init_df()
-            except ImportError:
+            except ImportError as err:
                 raise ImportError(
                     "DeepFilterNet not installed. Run: pip install deepfilternet"
-                )
+                ) from err
 
     def __call__(self, waveform: Tensor, sample_rate: int) -> Tensor:
         """Denoise audio waveform.
@@ -358,7 +357,7 @@ class DeepFilterNetWrapper:
         """
         self._load_model()
 
-        from df.enhance import enhance
+        from df.enhance import enhance  # type: ignore[import-untyped]
 
         # Ensure correct shape
         squeeze_output = False
@@ -371,11 +370,7 @@ class DeepFilterNetWrapper:
 
         # Resample to 48kHz if needed (DeepFilterNet native rate)
         if sample_rate != 48000:
-            import torchaudio.functional as F
-
-            waveform_48k = torchaudio.functional.resample(
-                waveform, sample_rate, 48000
-            )
+            waveform_48k = torchaudio.functional.resample(waveform, sample_rate, 48000)
             audio_np = waveform_48k.squeeze(0).numpy()
 
         # Enhance
@@ -391,9 +386,7 @@ class DeepFilterNetWrapper:
 
         # Resample back if needed
         if sample_rate != 48000:
-            enhanced_tensor = torchaudio.functional.resample(
-                enhanced_tensor, 48000, sample_rate
-            )
+            enhanced_tensor = torchaudio.functional.resample(enhanced_tensor, 48000, sample_rate)
 
         if squeeze_output:
             enhanced_tensor = enhanced_tensor.squeeze(0)

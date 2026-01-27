@@ -1,0 +1,271 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Ruff: Lint",
+      "type": "shell",
+      "command": "ruff",
+      "args": ["check", "."],
+      "problemMatcher": {
+        "owner": "ruff",
+        "fileLocation": ["relative", "${workspaceFolder}"],
+        "pattern": {
+          "regexp": "^(.+):(\\d+):(\\d+):\\s+(.+)\\s+\\[(.+)\\]$",
+          "file": 1,
+          "line": 2,
+          "column": 3,
+          "message": 4,
+          "code": 5
+        }
+      },
+      "group": "build",
+      "presentation": {
+        "reveal": "always",
+        "panel": "new"
+      }
+    },
+    {
+      "label": "Ruff: Lint & Fix",
+      "type": "shell",
+      "command": "ruff",
+      "args": ["check", ".", "--fix"],
+      "problemMatcher": {
+        "owner": "ruff",
+        "fileLocation": ["relative", "${workspaceFolder}"],
+        "pattern": {
+          "regexp": "^(.+):(\\d+):(\\d+):\\s+(.+)\\s+\\[(.+)\\]$",
+          "file": 1,
+          "line": 2,
+          "column": 3,
+          "message": 4,
+          "code": 5
+        }
+      },
+      "group": "build",
+      "presentation": {
+        "reveal": "always",
+        "panel": "new"
+      }
+    },
+    {
+      "label": "Ruff: Format",
+      "type": "shell",
+      "command": "ruff",
+      "args": ["format", "."],
+      "problemMatcher": [],
+      "group": "build",
+      "presentation": {
+        "reveal": "always",
+        "panel": "new"
+      }
+    },
+    {
+      "label": "MyPy: Type Check",
+      "type": "shell",
+      "command": "mypy",
+      "args": ["src/", "scripts/", "tests/"],
+      "problemMatcher": {
+        "owner": "mypy",
+        "fileLocation": ["relative", "${workspaceFolder}"],
+        "pattern": {
+          "regexp": "^(.+):(\\d+):\\s+(error|warning|note):\\s+(.+)$",
+          "file": 1,
+          "line": 2,
+          "severity": 3,
+          "message": 4
+        }
+      },
+      "group": "test",
+      "presentation": {
+        "reveal": "always",
+        "panel": "new"
+      }
+    },
+    {
+      "label": "Pytest: All Tests",
+      "type": "shell",
+      "command": "pytest",
+      "args": ["tests/", "-v"],
+      "problemMatcher": [],
+      "group": {
+        "kind": "test",
+        "isDefault": true
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "new"
+      },
+      "options": {
+        "env": {
+          "PYTHONPATH": "${workspaceFolder}:${workspaceFolder}/third_party/F5-TTS/src"
+        }
+      }
+    },
+    {
+      "label": "Pytest: All Tests with Coverage",
+      "type": "shell",
+      "command": "pytest",
+      "args": [
+        "tests/",
+        "-v",
+        "--cov=src",
+        "--cov-report=html",
+        "--cov-report=term"
+      ],
+      "problemMatcher": [],
+      "group": "test",
+      "presentation": {
+        "reveal": "always",
+        "panel": "new"
+      },
+      "options": {
+        "env": {
+          "PYTHONPATH": "${workspaceFolder}:${workspaceFolder}/third_party/F5-TTS/src"
+        }
+      }
+    },
+    {
+      "label": "OronTTS: Train",
+      "type": "shell",
+      "command": "python",
+      "args": ["scripts/training/train.py"],
+      "problemMatcher": [],
+      "isBackground": true,
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      },
+      "options": {
+        "env": {
+          "PYTHONPATH": "${workspaceFolder}:${workspaceFolder}/third_party/F5-TTS/src",
+          "HF_AUDIO_DECODER": "soundfile",
+          "CUDA_VISIBLE_DEVICES": "0"
+        }
+      }
+    },
+    {
+      "label": "OronTTS: Inference Example",
+      "type": "shell",
+      "command": "python",
+      "args": [
+        "scripts/inference/infer.py",
+        "--text",
+        "Сайн байна уу! Би монгол хэлээр ярьж байна."
+      ],
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "new"
+      },
+      "options": {
+        "env": {
+          "PYTHONPATH": "${workspaceFolder}:${workspaceFolder}/third_party/F5-TTS/src",
+          "HF_AUDIO_DECODER": "soundfile"
+        }
+      }
+    },
+    {
+      "label": "OronTTS: Prepare Dataset",
+      "type": "shell",
+      "command": "python",
+      "args": ["scripts/data/prepare_combined_dataset.py"],
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      },
+      "options": {
+        "env": {
+          "PYTHONPATH": "${workspaceFolder}:${workspaceFolder}/third_party/F5-TTS/src",
+          "HF_AUDIO_DECODER": "soundfile"
+        }
+      }
+    },
+    {
+      "label": "Install: OronTTS (Editable)",
+      "type": "shell",
+      "command": "pip",
+      "args": ["install", "-e", "."],
+      "problemMatcher": [],
+      "group": "build",
+      "presentation": {
+        "reveal": "always",
+        "panel": "new"
+      }
+    },
+    {
+      "label": "Install: F5-TTS Submodule",
+      "type": "shell",
+      "command": "pip",
+      "args": ["install", "-e", "third_party/F5-TTS"],
+      "problemMatcher": [],
+      "group": "build",
+      "presentation": {
+        "reveal": "always",
+        "panel": "new"
+      }
+    },
+    {
+      "label": "Install: Local Dependencies",
+      "type": "shell",
+      "command": "pip",
+      "args": ["install", "-e", ".[local]"],
+      "problemMatcher": [],
+      "group": "build",
+      "presentation": {
+        "reveal": "always",
+        "panel": "new"
+      }
+    },
+    {
+      "label": "Install: Dev Dependencies",
+      "type": "shell",
+      "command": "pip",
+      "args": ["install", "-e", ".[dev]"],
+      "problemMatcher": [],
+      "group": "build",
+      "presentation": {
+        "reveal": "always",
+        "panel": "new"
+      }
+    },
+    {
+      "label": "Pre-commit: Run All Hooks",
+      "type": "shell",
+      "command": "pre-commit",
+      "args": ["run", "--all-files"],
+      "problemMatcher": [],
+      "group": "build",
+      "presentation": {
+        "reveal": "always",
+        "panel": "new"
+      }
+    },
+    {
+      "label": "Git: Update F5-TTS Submodule",
+      "type": "shell",
+      "command": "git",
+      "args": ["submodule", "update", "--remote", "third_party/F5-TTS"],
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "new"
+      }
+    },
+    {
+      "label": "Full Build & Test",
+      "dependsOn": [
+        "Ruff: Lint & Fix",
+        "Ruff: Format",
+        "MyPy: Type Check",
+        "Pytest: All Tests"
+      ],
+      "dependsOrder": "sequence",
+      "problemMatcher": [],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      }
+    }
+  ]
+}
