@@ -20,10 +20,11 @@ PROJECT_DIR="${WORKSPACE_DIR}/oron-tts"
 
 log_info "OronTTS RunPod Setup"
 
-# Install minimal system dependencies (no espeak-ng needed for training)
+# Install system dependencies including FFmpeg dev libraries
 log_info "Installing system dependencies..."
 apt-get update && apt-get install -y --no-install-recommends \
-    git git-lfs libsndfile1-dev sox ffmpeg
+    git git-lfs libsndfile1-dev sox \
+    ffmpeg libavcodec-dev libavformat-dev libavutil-dev libswresample-dev
 rm -rf /var/lib/apt/lists/*
 
 # Initialize git-lfs

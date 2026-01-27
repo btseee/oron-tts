@@ -212,6 +212,15 @@ def main() -> None:
         mel_spec_type="vocos",
     )
 
+    # Build vocabulary from dataset text (access column directly to avoid audio decoding)
+    console.print("[blue]Building vocabulary from dataset...[/]")
+    all_texts = hf_dataset["text"]  # Direct column access, no audio decoding
+    all_text = " ".join(all_texts)
+    vocab_chars = sorted(set(all_text))
+    vocab_char_map = {char: idx for idx, char in enumerate(vocab_chars)}
+    vocab_size = len(vocab_char_map)
+    console.print(f"[green]✓ Vocabulary size: {vocab_size} characters[/]")
+
     # Wrap in F5-TTS HFDataset
     train_dataset = HFDataset(
         hf_dataset,
@@ -222,14 +231,6 @@ def main() -> None:
         win_length=1024,
         mel_spec_type="vocos",
     )
-
-    # Build vocabulary from dataset text
-    console.print("[blue]Building vocabulary from dataset...[/]")
-    all_text = " ".join([sample["text"] for sample in hf_dataset])
-    vocab_chars = sorted(set(all_text))
-    vocab_char_map = {char: idx for idx, char in enumerate(vocab_chars)}
-    vocab_size = len(vocab_char_map)
-    console.print(f"[green]✓ Vocabulary size: {vocab_size} characters[/]")
 
     # Create model
     console.print("[blue]Creating model...[/]")
