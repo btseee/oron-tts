@@ -220,3 +220,14 @@ __marimo__/
 
 # VSCode settings
 .vscode/mcp.json
+
+# OronTTS specific
+output/
+data/cache/
+data/processed/
+checkpoints/
+logs/
+*.pt
+*.pth
+*.ckpt
+*.arrow

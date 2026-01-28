@@ -114,6 +114,32 @@ model:
   n_heads: 2
 ```
 
+### Logging
+
+OronTTS supports two logging modes:
+
+**Local Training (with tqdm)**:
+
+```yaml
+use_tqdm: true  # Progress bars for interactive training
+log_interval: 100  # Log every 100 steps
+```
+
+**RunPod/Cloud Training (structured logs)**:
+
+```yaml
+use_tqdm: false  # Disable tqdm for container logs
+log_interval: 50  # More frequent logging
+```
+
+Container logs will show:
+
+```text
+[2026-01-28 14:37:22] [INFO] Starting Epoch 1
+[2026-01-28 14:37:24] [INFO] Step 0 | Batch 1/320 | Loss: 281.89 | Mel: 100.38 | KL: 175.99 | Dur: 0.01 | LR: 0.000200
+[2026-01-28 14:37:29] [INFO] Step 10 | Batch 11/320 | Loss: 139.46 | Mel: 72.75 | KL: 63.69 | Dur: 0.01 | LR: 0.000200
+```
+
 ## Development
 
 ```bash

@@ -1,5 +1,8 @@
 """VITS Trainer with multi-GPU support and HF Hub integration."""
 
+import logging
+import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -71,6 +74,13 @@ class VITSTrainer:
 
         self.global_step = 0
         self.epoch = 0
+        
+        # Setup logging for container logs (RunPod)
+        self.use_tqdm = config.get("use_tqdm", True)
+        if self.is_main:
+            self.logger = self._setup_logger()
+        else:
+            self.logger = None
 
     def _setup_optimizers(self) -> None:
         lr = self.config.get("learning_rate", 2e-4)
@@ -98,6 +108,27 @@ class VITSTrainer:
         self.scheduler_d = torch.optim.lr_scheduler.ExponentialLR(
             self.optimizer_d, gamma=gamma
         )
+    
+    def _setup_logger(self) -> logging.Logger:
+        logger = logging.getLogger("OronTTS")
+        logger.setLevel(logging.INFO)
+        
+        # Remove existing handlers
+        logger.handlers.clear()
+        
+        # Console handler for container logs
+        handler = logging.StreamHandler(sys.stdout)
+        handler.setLevel(logging.INFO)
+        
+        # Format with timestamp for RunPod logs
+        formatter = logging.Formatter(
+            "[%(asctime)s] [%(levelname)s] %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S"
+        )
+        handler.setFormatter(formatter)
+        logger.addHandler(handler)
+        
+        return logger
 
     def train_step(self, batch: dict[str, torch.Tensor]) -> dict[str, float]:
         self.model.train()
@@ -200,9 +231,15 @@ class VITSTrainer:
     def train_epoch(self) -> dict[str, float]:
         epoch_losses = {}
         num_batches = 0
+        
+        if self.is_main and self.logger:
+            self.logger.info(f"Starting Epoch {self.epoch + 1}")
 
-        pbar = tqdm(self.train_loader, desc=f"Epoch {self.epoch}", disable=not self.is_main)
-        for batch in pbar:
+        # Use tqdm if enabled, otherwise plain iterator
+        disable_tqdm = not self.is_main or not self.use_tqdm
+        pbar = tqdm(self.train_loader, desc=f"Epoch {self.epoch}", disable=disable_tqdm)
+        
+        for batch_idx, batch in enumerate(pbar):
             losses = self.train_step(batch)
 
             for key, value in losses.items():
@@ -211,10 +248,19 @@ class VITSTrainer:
 
             if self.is_main and self.global_step % self.config.get("log_interval", 100) == 0:
                 self._log_training(losses)
+                
+                # Log to container logs (RunPod)
+                if self.logger and not self.use_tqdm:
+                    lr = self.optimizer_g.param_groups[0]['lr']
+                    self.logger.info(
+                        f"Step {self.global_step} | Batch {batch_idx + 1}/{len(self.train_loader)} | "
+                        f"Loss: {losses['loss_total']:.4f} | Mel: {losses['loss_mel']:.4f} | "
+                        f"KL: {losses['loss_kl']:.4f} | Dur: {losses['loss_dur']:.4f} | LR: {lr:.6f}"
+                    )
 
             self.global_step += 1
 
-            if self.is_main:
+            if self.is_main and self.use_tqdm:
                 pbar.set_postfix(
                     loss=f"{losses['loss_total']:.4f}",
                     mel=f"{losses['loss_mel']:.4f}",
@@ -237,9 +283,23 @@ class VITSTrainer:
             epoch_losses = self.train_epoch()
 
             if self.is_main:
-                print(f"Epoch {self.epoch} - Loss: {epoch_losses['loss_total']:.4f}")
+                epoch_summary = (
+                    f"Epoch {self.epoch} Complete | "
+                    f"Avg Loss: {epoch_losses['loss_total']:.4f} | "
+                    f"Mel: {epoch_losses['loss_mel']:.4f} | "
+                    f"KL: {epoch_losses['loss_kl']:.4f} | "
+                    f"Dur: {epoch_losses['loss_dur']:.4f} | "
+                    f"Disc: {epoch_losses['loss_disc']:.4f} | "
+                    f"Gen: {epoch_losses['loss_gen']:.4f}"
+                )
+                if self.logger:
+                    self.logger.info(epoch_summary)
+                else:
+                    print(epoch_summary)
 
                 if self.epoch % save_interval == 0:
+                    if self.logger:
+                        self.logger.info(f"Saving checkpoint at epoch {self.epoch}")
                     self.save_checkpoint(is_best=False)
 
                 if self.val_loader and self.writer:

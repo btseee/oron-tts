@@ -114,7 +114,15 @@ def train_worker(
         )
 
     n_speakers = len(set(train_dataset.speaker_ids))
-    print(f"[Rank {rank}] Dataset size: {len(train_dataset)}, Speakers: {n_speakers}")
+    if rank == 0:
+        print(f"[Rank {rank}] Dataset size: {len(train_dataset)}, Speakers: {n_speakers}")
+        print(f"[Rank {rank}] Training Config:")
+        print(f"  - Batch size: {config.get('batch_size', 16)}")
+        print(f"  - Learning rate: {config.get('learning_rate', 2e-4)}")
+        print(f"  - FP16: {config.get('fp16', True)}")
+        print(f"  - Segment size: {config.get('segment_size', 32)}")
+        print(f"  - Log interval: {config.get('log_interval', 100)}")
+        print(f"  - Use tqdm: {config.get('use_tqdm', True)}")
 
     if world_size > 1:
         sampler = DistributedSampler(train_dataset, num_replicas=world_size, rank=rank)
@@ -169,16 +177,16 @@ def train_worker(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Train OronTTS VITS model")
-    parser.add_argument("--config", type=str, default="configs/vits_base.yaml")
+    parser.add_argument("--config", type=str, default="configs/vits_runpod.yaml")
     parser.add_argument("--data-dir", type=str, default="data/processed")
     parser.add_argument("--from-hf", action="store_true")
-    parser.add_argument("--dataset", type=str, default="btsee/oron-tts-dataset")
+    parser.add_argument("--dataset", type=str, default="btsee/mbspeech_mn")
     parser.add_argument("--audio-column", type=str, default="audio")
     parser.add_argument("--text-column", type=str, default=None, help="Auto-detect if not specified")
     parser.add_argument("--speaker-column", type=str, default=None)
-    parser.add_argument("--cache-dir", type=str, default="data/cache")
-    parser.add_argument("--log-dir", type=str, default="logs")
-    parser.add_argument("--checkpoint-dir", type=str, default="checkpoints")
+    parser.add_argument("--cache-dir", type=str, default="output/data/cache")
+    parser.add_argument("--log-dir", type=str, default="output/logs")
+    parser.add_argument("--checkpoint-dir", type=str, default="output/checkpoints")
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--resume-best", action="store_true")
     parser.add_argument("--push-to-hub", action="store_true")

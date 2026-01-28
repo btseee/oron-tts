@@ -3,7 +3,7 @@ message: "If you use this software, please cite it as below."
 authors:
 - family-names: "Badral"
   given-names: "Battseren"
-title: "OronTTS: Mongolian F5-TTS Implementation"
+title: "OronTTS: Mongolian VITS Text-to-Speech System"
 version: 0.1.0
-date-released: 2026-01-26
+date-released: 2026-01-28
 url: "https://github.com/btsee/oron-tts"

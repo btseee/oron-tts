@@ -26,6 +26,7 @@ save_interval: 10
 grad_accumulation_steps: 1
 prefetch_factor: 4
 pin_memory: true
+use_tqdm: false  # Disable tqdm for cleaner RunPod container logs
 
 # CUDA 12.4 / PyTorch 2.4.0 Optimizations
 compile_model: true  # torch.compile for speedup
