@@ -34,10 +34,6 @@ echo "Installing Python dependencies..."
 pip install --upgrade pip
 pip install -e .
 
-# Install torchcodec
-echo "Installing torchcodec..."
-pip install torchcodec
-
 # Verify installations
 echo "Verifying FFmpeg installation..."
 ffmpeg -version | head -1
@@ -45,7 +41,7 @@ ffmpeg -version | head -1
 echo "Verifying Python packages..."
 python -c "import torch; print(f'PyTorch: {torch.__version__}')"
 python -c "import torchaudio; print(f'Torchaudio: {torchaudio.__version__}')"
-python -c "import torchcodec; print(f'Torchcodec: {torchcodec.__version__}')"
+python -c "from datasets import load_dataset; print('Datasets: OK')"
 
 # Set HuggingFace token if provided
 if [ ! -z "$HF_TOKEN" ]; then
