@@ -1,0 +1,19 @@
+version: '3.8'
+
+services:
+  oron-tts:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: oron-tts:latest
+    container_name: oron-tts-test
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - HF_TOKEN=${HF_TOKEN}
+    volumes:
+      - ./output:/workspace/oron-tts/output
+      - ./data/cache:/workspace/oron-tts/data/cache
+    shm_size: '8gb'
+    stdin_open: true
+    tty: true

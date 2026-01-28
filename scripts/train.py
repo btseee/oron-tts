@@ -179,7 +179,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Train OronTTS VITS model")
     parser.add_argument("--config", type=str, default="configs/vits_runpod.yaml")
     parser.add_argument("--data-dir", type=str, default="data/processed")
-    parser.add_argument("--from-hf", action="store_true", default=True)
+    parser.add_argument("--from-hf", action="store_true", default=True, help="Load dataset from HuggingFace (default: True)")
+    parser.add_argument("--from-local", action="store_true", help="Load dataset from local directory instead of HuggingFace")
     parser.add_argument("--dataset", type=str, default="btsee/mbspeech_mn")
     parser.add_argument("--audio-column", type=str, default="audio")
     parser.add_argument("--text-column", type=str, default=None, help="Auto-detect if not specified")
@@ -193,9 +194,23 @@ def main() -> None:
     parser.add_argument("--hf-repo", type=str, default="btsee/oron-tts")
     parser.add_argument("--hf-token", type=str, default=None)
     parser.add_argument("--num-gpus", type=int, default=1)
+    parser.add_argument("--num-epochs", type=int, default=None, help="Override num_epochs from config")
     args = parser.parse_args()
 
+    # Handle --from-local override
+    if args.from_local:
+        args.from_hf = False
+    
+    # Load HF token from environment if not provided
+    if args.hf_token is None:
+        import os
+        args.hf_token = os.getenv("HF_TOKEN")
+
     config = load_config(args.config)
+    
+    # Override num_epochs if specified
+    if args.num_epochs is not None:
+        config["num_epochs"] = args.num_epochs
 
     world_size = args.num_gpus
     if world_size > 1:
