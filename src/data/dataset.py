@@ -1,421 +1,191 @@
-"""Dataset handling for OronTTS with HuggingFace Hub integration.
+"""TTS Dataset and Collator for VITS training."""
 
-Supports multi-speaker datasets with gender separation and
-efficient streaming from HuggingFace.
-"""
-
-from __future__ import annotations
-
-from collections.abc import Iterator
-from dataclasses import dataclass
-from enum import Enum
 from pathlib import Path
 from typing import Any
 
-import datasets
+import numpy as np
 import torch
-from torch import Tensor
-from torch.utils.data import Dataset, IterableDataset
+from torch.utils.data import Dataset
 
-from src.data.audio import AudioConfig, AudioProcessor
-from src.data.cleaner import MongolianPhonemizer, MongolianTextCleaner
-
-
-class Gender(Enum):
-    """Speaker gender enumeration."""
-
-    MALE = "male"
-    FEMALE = "female"
-    OTHER = "other"
-    UNKNOWN = "unknown"
+from src.utils.audio import AudioProcessor
+from src.utils.text_cleaner import TextCleaner
 
 
-@dataclass
-class SpeakerInfo:
-    """Speaker metadata."""
-
-    id: int
-    name: str
-    gender: Gender = Gender.UNKNOWN
-    language: str = "mn"
-    accent: str | None = None
-
-
-@dataclass
-class Sample:
-    """Single training sample."""
-
-    audio_path: str
-    text: str
-    speaker_id: int
-    gender: Gender = Gender.UNKNOWN
-    duration_sec: float | None = None
-    mel: Tensor | None = None
-    phonemes: Tensor | None = None
-    audio_array: Any | None = None  # For HF datasets
-    sample_rate: int | None = None
-
-
-@dataclass
-class Batch:
-    """Collated batch for training."""
-
-    mel: Tensor  # (B, T_max, mel_dim)
-    phonemes: Tensor  # (B, T_max)
-    speaker_ids: Tensor  # (B,)
-    mel_lengths: Tensor  # (B,)
-    phoneme_lengths: Tensor  # (B,)
-    mask: Tensor  # (B, T_max) - 1 for valid, 0 for padding
-
-
-class OronDataset(Dataset):
-    """PyTorch Dataset for Mongolian TTS training.
-
-    Loads and processes audio-text pairs from local storage or
-    HuggingFace Hub with caching support.
-    """
-
+class TTSDataset(Dataset):
     def __init__(
         self,
-        manifest_path: str | Path | None = None,
-        hf_dataset_name: str | None = None,
-        hf_split: str = "train",
-        audio_config: AudioConfig | None = None,
-        cache_mels: bool = True,
-        max_duration_sec: float = 30.0,
-        min_duration_sec: float = 0.5,
-        filter_by_gender: Gender | None = None,
+        audio_paths: list[Path] | list[str] | None = None,
+        texts: list[str] | None = None,
+        speaker_ids: list[int] | None = None,
+        sample_rate: int = 22050,
+        max_audio_len: int | None = None,
+        min_audio_len: int = 1024,
+        audio_arrays: list[np.ndarray] | None = None,
     ) -> None:
-        """Initialize dataset.
-
-        Args:
-            manifest_path: Path to local manifest JSON/CSV.
-            hf_dataset_name: HuggingFace dataset identifier.
-            hf_split: Dataset split to use.
-            audio_config: Audio processing configuration.
-            cache_mels: Cache mel-spectrograms to disk.
-            max_duration_sec: Maximum audio duration.
-            min_duration_sec: Minimum audio duration.
-            filter_by_gender: Filter samples by speaker gender.
-        """
-        self.manifest_path = Path(manifest_path) if manifest_path else None
-        self.hf_dataset_name = hf_dataset_name
-        self.hf_split = hf_split
-        self.cache_mels = cache_mels
-        self.max_duration = max_duration_sec
-        self.min_duration = min_duration_sec
-        self.filter_gender = filter_by_gender
-
-        self.audio_processor = AudioProcessor(audio_config)
-        self.text_cleaner = MongolianTextCleaner()
-        self.phonemizer = MongolianPhonemizer()
-
-        self.samples: list[Sample] = []
-        self.speakers: dict[int, SpeakerInfo] = {}
-        self._phoneme_vocab: dict[str, int] = {}
-
-        self._load_data()
-
-    def _load_data(self) -> None:
-        """Load samples from manifest or HuggingFace."""
-        if self.hf_dataset_name:
-            self._load_from_huggingface()
-        elif self.manifest_path:
-            self._load_from_manifest()
+        # Support either file paths or pre-loaded audio arrays
+        if audio_paths is not None:
+            self.audio_paths: list[Path] | None = [Path(p) for p in audio_paths]
+            self.audio_arrays: list[np.ndarray] | None = None
+            self._len = len(audio_paths)
+        elif audio_arrays is not None:
+            self.audio_paths = None
+            self.audio_arrays = audio_arrays
+            self._len = len(audio_arrays)
         else:
-            raise ValueError("Must provide either manifest_path or hf_dataset_name")
+            raise ValueError("Must provide either audio_paths or audio_arrays")
 
-    def _load_from_huggingface(self) -> None:
-        """Load dataset from HuggingFace Hub."""
-        from datasets import load_dataset
+        if texts is None:
+            raise ValueError("texts must be provided")
 
-        # Use soundfile for audio decoding instead of torchcodec
-        datasets.config.AUDIO_DECODE_BACKENDS = ["soundfile"]
+        assert self._len == len(texts), "Audio and text lengths must match"
+        if speaker_ids:
+            assert len(speaker_ids) == len(texts)
 
-        dataset = load_dataset(
-            self.hf_dataset_name,
-            split=self.hf_split,
-        )
+        self.texts = texts
+        self.speaker_ids = speaker_ids or [0] * len(texts)
+        self.sample_rate = sample_rate
+        self.max_audio_len = max_audio_len
+        self.min_audio_len = min_audio_len
 
-        # Cast audio to avoid automatic resampling - we'll handle it in process_array
-        dataset = dataset.cast_column(
-            "audio", datasets.Audio(sampling_rate=None, mono=True, decode=True)
-        )
-
-        speaker_map: dict[str, int] = {}
-
-        for idx, item in enumerate(dataset):
-            # Extract audio data - HF datasets return decoded audio as dict
-            audio_data = item.get("audio", {})
-            # Get the audio bytes/array directly instead of path
-            audio_array = audio_data.get("array", None)
-            audio_path = audio_data.get("path", f"sample_{idx}")
-
-            # If we have the audio array, we need to save or cache it
-            # For now, skip if no path and rely on in-memory processing
-            if audio_array is None:
-                continue
-
-            text = item.get("text", item.get("sentence", ""))
-            speaker_name = item.get("speaker", item.get("client_id", f"speaker_{idx}"))
-            gender_str = item.get("gender", "unknown")
-            duration = item.get("duration", None)
-
-            # Map speaker to ID
-            if speaker_name not in speaker_map:
-                speaker_id = len(speaker_map)
-                speaker_map[speaker_name] = speaker_id
-                self.speakers[speaker_id] = SpeakerInfo(
-                    id=speaker_id,
-                    name=speaker_name,
-                    gender=Gender(gender_str)
-                    if gender_str in Gender._value2member_map_
-                    else Gender.UNKNOWN,
-                )
-            else:
-                speaker_id = speaker_map[speaker_name]
-
-            gender = self.speakers[speaker_id].gender
-
-            # Filter by duration
-            if duration is not None and (
-                duration < self.min_duration or duration > self.max_duration
-            ):
-                continue
-
-            # Filter by gender
-            if self.filter_gender is not None and gender != self.filter_gender:
-                continue
-
-            # Store audio array with sample
-            self.samples.append(
-                Sample(
-                    audio_path=audio_path,
-                    text=text,
-                    speaker_id=speaker_id,
-                    gender=gender,
-                    duration_sec=duration,
-                    audio_array=audio_array,  # Store the decoded audio
-                    sample_rate=audio_data.get(
-                        "sampling_rate", self.audio_processor.config.sample_rate
-                    ),
-                )
-            )
-
-    def _load_from_manifest(self) -> None:
-        """Load dataset from local manifest file."""
-        import json
-
-        with open(self.manifest_path) as f:
-            manifest = json.load(f)
-
-        # Load speakers
-        for speaker_data in manifest.get("speakers", []):
-            speaker = SpeakerInfo(
-                id=speaker_data["id"],
-                name=speaker_data["name"],
-                gender=Gender(speaker_data.get("gender", "unknown")),
-                language=speaker_data.get("language", "mn"),
-            )
-            self.speakers[speaker.id] = speaker
-
-        # Load samples
-        for item in manifest.get("samples", []):
-            duration = item.get("duration")
-
-            if duration is not None and (
-                duration < self.min_duration or duration > self.max_duration
-            ):
-                continue
-
-            speaker_id = item.get("speaker_id", 0)
-            gender = self.speakers.get(speaker_id, SpeakerInfo(0, "unknown")).gender
-
-            if self.filter_gender is not None and gender != self.filter_gender:
-                continue
-
-            self.samples.append(
-                Sample(
-                    audio_path=item["audio_path"],
-                    text=item["text"],
-                    speaker_id=speaker_id,
-                    gender=gender,
-                    duration_sec=duration,
-                )
-            )
+        self.audio_processor = AudioProcessor(sample_rate=sample_rate)
+        self.text_cleaner = TextCleaner()
 
     def __len__(self) -> int:
-        return len(self.samples)
+        return self._len
 
     def __getitem__(self, idx: int) -> dict[str, Any]:
-        """Get processed sample.
+        text = self.texts[idx]
+        speaker_id = self.speaker_ids[idx]
 
-        Returns:
-            Dict with 'mel', 'phonemes', 'speaker_id', 'text'.
-        """
-        sample = self.samples[idx]
-
-        # Process audio - use array if available, otherwise load from path
-        if sample.audio_array is not None:
-            mel = self.audio_processor.process_array(
-                sample.audio_array, sample.sample_rate or self.audio_cfg.sample_rate
-            )
+        if self.audio_arrays is not None:
+            audio = torch.from_numpy(self.audio_arrays[idx]).float()
+            audio_path = f"sample_{idx}"
         else:
-            mel = self.audio_processor.process(sample.audio_path)
+            assert self.audio_paths is not None
+            audio_path = str(self.audio_paths[idx])
+            audio, _ = self.audio_processor.load_audio(self.audio_paths[idx])
 
-        # Process text
-        text_clean = self.text_cleaner(sample.text)
-        phonemes_str = self.phonemizer(text_clean)
-        phoneme_ids = self.phonemizer.phoneme_to_ids(phonemes_str, self._phoneme_vocab)
-        phonemes = torch.tensor(phoneme_ids, dtype=torch.long)
+        audio = self.audio_processor.normalize_audio(audio)
+
+        if self.max_audio_len and len(audio) > self.max_audio_len:
+            audio = audio[: self.max_audio_len]
+
+        spec = self.audio_processor.mel_spectrogram(audio)
+        text_ids = self.text_cleaner.text_to_sequence(text)
 
         return {
-            "mel": mel,
-            "phonemes": phonemes,
-            "speaker_id": sample.speaker_id,
-            "text": text_clean,
-            "gender": sample.gender.value,
+            "audio": audio,
+            "spec": spec,
+            "text_ids": torch.LongTensor(text_ids),
+            "speaker_id": speaker_id,
+            "audio_path": audio_path,
+            "text": text,
         }
 
-    @property
-    def num_speakers(self) -> int:
-        """Number of unique speakers."""
-        return len(self.speakers)
+    @classmethod
+    def from_hf_dataset(
+        cls,
+        hf_dataset: Any,
+        audio_column: str = "audio",
+        text_column: str | None = None,
+        speaker_column: str | None = "speaker_id",
+        sample_rate: int = 22050,
+    ) -> "TTSDataset":
+        audio_arrays: list[np.ndarray] = []
+        texts: list[str] = []
+        speaker_ids: list[int] = []
 
-    def get_speakers_by_gender(self, gender: Gender) -> list[SpeakerInfo]:
-        """Get all speakers of a specific gender."""
-        return [s for s in self.speakers.values() if s.gender == gender]
+        # Auto-detect text column if not specified
+        if text_column is None:
+            columns = hf_dataset.column_names
+            text_candidates = ["text", "sentence", "sentence_norm", "transcript", "transcription"]
+            for candidate in text_candidates:
+                if candidate in columns:
+                    text_column = candidate
+                    break
+            if text_column is None:
+                raise ValueError(f"Could not find text column. Available: {columns}")
 
+        print(f"Using text column: {text_column}")
 
-class OronDataCollator:
-    """Collate samples into padded batches."""
+        for item in hf_dataset:
+            audio_info = item[audio_column]
 
-    def __init__(self, pad_value: int = 0) -> None:
-        self.pad_value = pad_value
+            # Handle different audio data types from HF datasets
+            if isinstance(audio_info, dict):
+                # Old-style HF datasets with dict containing 'array'
+                audio_array = audio_info["array"]
+                if not isinstance(audio_array, np.ndarray):
+                    audio_array = np.array(audio_array, dtype=np.float32)
+            elif hasattr(audio_info, "get_all_samples"):
+                # torchcodec AudioDecoder (newer datasets library)
+                samples = audio_info.get_all_samples()
+                audio_array = samples.data.squeeze(0).numpy()
+            else:
+                # Fallback: try to convert directly
+                audio_array = np.array(audio_info, dtype=np.float32)
 
-    def __call__(self, samples: list[dict[str, Any]]) -> Batch:
-        """Collate samples into a batch.
+            audio_arrays.append(audio_array.astype(np.float32))
 
-        Args:
-            samples: List of sample dicts from OronDataset.
+            texts.append(item[text_column])
 
-        Returns:
-            Collated Batch object.
-        """
-        batch_size = len(samples)
+            if speaker_column and speaker_column in item:
+                speaker_ids.append(item[speaker_column])
+            else:
+                speaker_ids.append(0)
 
-        # Get max lengths
-        max_mel_len = max(s["mel"].size(0) for s in samples)
-        max_phoneme_len = max(s["phonemes"].size(0) for s in samples)
-        mel_dim = samples[0]["mel"].size(-1)
-
-        # Initialize tensors
-        mel = torch.zeros(batch_size, max_mel_len, mel_dim)
-        phonemes = torch.full((batch_size, max_phoneme_len), self.pad_value, dtype=torch.long)
-        speaker_ids = torch.zeros(batch_size, dtype=torch.long)
-        mel_lengths = torch.zeros(batch_size, dtype=torch.long)
-        phoneme_lengths = torch.zeros(batch_size, dtype=torch.long)
-        mask = torch.zeros(batch_size, max_mel_len)
-
-        # Fill tensors
-        for i, sample in enumerate(samples):
-            mel_len = sample["mel"].size(0)
-            phoneme_len = sample["phonemes"].size(0)
-
-            mel[i, :mel_len] = sample["mel"]
-            phonemes[i, :phoneme_len] = sample["phonemes"]
-            speaker_ids[i] = sample["speaker_id"]
-            mel_lengths[i] = mel_len
-            phoneme_lengths[i] = phoneme_len
-            mask[i, :mel_len] = 1.0
-
-        return Batch(
-            mel=mel,
-            phonemes=phonemes,
-            speaker_ids=speaker_ids,
-            mel_lengths=mel_lengths,
-            phoneme_lengths=phoneme_lengths,
-            mask=mask,
+        return cls(
+            audio_arrays=audio_arrays,
+            texts=texts,
+            speaker_ids=speaker_ids if speaker_column else None,
+            sample_rate=sample_rate,
         )
 
 
-class StreamingOronDataset(IterableDataset):
-    """Streaming dataset for large-scale training from HuggingFace."""
+class TTSCollator:
+    def __init__(self, return_ids: bool = False) -> None:
+        self.return_ids = return_ids
 
-    def __init__(
-        self,
-        hf_dataset_name: str,
-        hf_split: str = "train",
-        audio_config: AudioConfig | None = None,
-        shuffle_buffer_size: int = 10000,
-    ) -> None:
-        """Initialize streaming dataset.
+    def __call__(self, batch: list[dict[str, Any]]) -> dict[str, torch.Tensor]:
+        text_ids = [item["text_ids"] for item in batch]
+        specs = [item["spec"] for item in batch]
+        audios = [item["audio"] for item in batch]
+        speaker_ids = torch.LongTensor([item["speaker_id"] for item in batch])
 
-        Args:
-            hf_dataset_name: HuggingFace dataset identifier.
-            hf_split: Dataset split.
-            audio_config: Audio processing config.
-            shuffle_buffer_size: Buffer size for shuffling.
-        """
-        self.hf_dataset_name = hf_dataset_name
-        self.hf_split = hf_split
-        self.shuffle_buffer_size = shuffle_buffer_size
+        text_lengths = torch.LongTensor([len(t) for t in text_ids])
+        spec_lengths = torch.LongTensor([s.shape[-1] for s in specs])
+        audio_lengths = torch.LongTensor([len(a) for a in audios])
 
-        self.audio_processor = AudioProcessor(audio_config)
-        self.text_cleaner = MongolianTextCleaner()
-        self.phonemizer = MongolianPhonemizer()
+        max_text_len = int(text_lengths.max().item())
+        max_spec_len = int(spec_lengths.max().item())
+        max_audio_len = int(audio_lengths.max().item())
 
-    def __iter__(self) -> Iterator[dict[str, Any]]:
-        from datasets import load_dataset
+        text_ids_padded = torch.zeros(len(batch), max_text_len, dtype=torch.long)
+        for i, t in enumerate(text_ids):
+            text_ids_padded[i, : len(t)] = t
 
-        dataset = load_dataset(
-            self.hf_dataset_name,
-            split=self.hf_split,
-            streaming=True,
-            trust_remote_code=True,
-        )
+        n_mels = specs[0].shape[0]
+        specs_padded = torch.zeros(len(batch), n_mels, max_spec_len)
+        for i, s in enumerate(specs):
+            specs_padded[i, :, : s.shape[-1]] = s
 
-        # Shuffle with buffer
-        dataset = dataset.shuffle(buffer_size=self.shuffle_buffer_size)
+        # Pad audio waveforms
+        audios_padded = torch.zeros(len(batch), max_audio_len)
+        for i, a in enumerate(audios):
+            audios_padded[i, : len(a)] = a
 
-        for item in dataset:
-            try:
-                yield self._process_item(item)
-            except Exception:
-                # Skip failed samples in streaming mode
-                continue
-
-    def _process_item(self, item: dict[str, Any]) -> dict[str, Any]:
-        """Process a single streaming item."""
-        audio_data = item.get("audio", {})
-        audio_array = audio_data.get("array")
-        sample_rate = audio_data.get("sampling_rate", 16000)
-
-        # Convert to tensor
-        waveform = torch.from_numpy(audio_array).float().unsqueeze(0)
-
-        # Resample if needed
-        if sample_rate != self.audio_processor.config.sample_rate:
-            import torchaudio
-
-            resampler = torchaudio.transforms.Resample(
-                sample_rate, self.audio_processor.config.sample_rate
-            )
-            waveform = resampler(waveform)
-
-        # Extract mel
-        mel = self.audio_processor.extract_mel(waveform)
-
-        # Process text
-        text = item.get("text", item.get("sentence", ""))
-        text_clean = self.text_cleaner(text)
-        phonemes_str = self.phonemizer(text_clean)
-        phoneme_ids = self.phonemizer.phoneme_to_ids(phonemes_str)
-        phonemes = torch.tensor(phoneme_ids, dtype=torch.long)
-
-        return {
-            "mel": mel,
-            "phonemes": phonemes,
-            "speaker_id": 0,  # Default for streaming
-            "text": text_clean,
+        result: dict[str, Any] = {
+            "text_ids": text_ids_padded,
+            "text_lengths": text_lengths,
+            "specs": specs_padded,
+            "spec_lengths": spec_lengths,
+            "audios": audios_padded,
+            "audio_lengths": audio_lengths,
+            "speaker_ids": speaker_ids,
         }
+
+        if self.return_ids:
+            result["audio_paths"] = [item["audio_path"] for item in batch]
+            result["texts"] = [item["text"] for item in batch]
+
+        return result

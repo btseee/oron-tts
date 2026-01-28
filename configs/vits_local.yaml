@@ -1,0 +1,50 @@
+# OronTTS VITS Local Configuration
+# Optimized for: Intel Core Ultra 7 265K, RTX 5070 Ti 16GB, 46GB RAM
+
+# Audio Settings
+sample_rate: 22050
+n_fft: 1024
+hop_length: 256
+win_length: 1024
+n_mels: 80
+fmin: 0.0
+fmax: 8000.0
+
+# Training Settings (RTX 5070 Ti 16GB VRAM)
+batch_size: 12
+num_epochs: 500
+learning_rate: 0.0002
+betas: [0.8, 0.99]
+eps: 1.0e-9
+lr_decay: 0.999875
+segment_size: 32
+fp16: true
+num_workers: 8  # 20 vCPUs available
+log_interval: 100
+save_interval: 10
+grad_accumulation_steps: 2
+
+# Model Settings
+model:
+  inter_channels: 192
+  hidden_channels: 192
+  filter_channels: 768
+  n_heads: 2
+  n_layers: 6
+  kernel_size: 3
+  p_dropout: 0.1
+  resblock: "1"
+  resblock_kernel_sizes: [3, 7, 11]
+  resblock_dilation_sizes: [[1, 3, 5], [1, 3, 5], [1, 3, 5]]
+  upsample_rates: [8, 8, 2, 2]
+  upsample_initial_channel: 512
+  upsample_kernel_sizes: [16, 16, 4, 4]
+  gin_channels: 256
+  use_sdp: true
+
+# Dataset Settings
+data:
+  min_audio_length: 0.5
+  max_audio_length: 12.0  # Conservative for 16GB VRAM
+  min_text_length: 2
+  max_text_length: 400

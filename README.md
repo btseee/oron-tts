@@ -1,190 +1,145 @@
-# OronTTS: Mongolian Text-to-Speech
+# OronTTS
 
-High-quality Mongolian (Khalkha dialect) text-to-speech using **F5-TTS** with Conditional Flow Matching.
+Mongolian Cyrillic (Khalkha) multi-speaker Text-to-Speech system using VITS architecture.
 
 ## Features
 
-- **F5-TTS Backend**: Finetuned from pretrained F5-TTS for high quality
-- **Mongolian Khalkha**: Native support with text normalization and number expansion
-- **Multi-Speaker**: Male and female voices with zero-shot voice cloning
-- **Combined Dataset**: 5,800+ samples from mbspeech + Common Voice
-- **Optimized Training**: Best settings for low loss and natural speech
+- **VITS Architecture**: End-to-end TTS with variational inference and adversarial training
+- **Multi-speaker**: Support for distinct male and female voices
+- **Mongolian Text Processing**: Custom rule-based phonemizer for Cyrillic script
+- **Number Normalization**: Comprehensive Mongolian number-to-text transliteration
+- **Audio Denoising**: DeepFilterNet integration for preprocessing non-professional recordings
+- **Hugging Face Integration**: Dataset and model hub support
 
-## Quick Start
-
-### Installation
-
-```bash
-# Clone with submodules
-git clone --recurse-submodules https://github.com/btseee/oron-tts.git
-cd oron-tts
-
-# Install OronTTS
-pip install -e .
-
-# Install F5-TTS from submodule
-pip install -e third_party/F5-TTS
-```
-
-### Development Setup
+## Installation
 
 ```bash
-# Install with local dependencies (data preprocessing)
-pip install -e ".[local]"
+# Create virtual environment
+python3.11 -m venv .venv
+source .venv/bin/activate
 
-# Install with dev dependencies (testing, linting)
+# Install dependencies
 pip install -e ".[dev]"
-
-# Install pre-commit hooks
-pre-commit install
-```
-
-### Inference
-
-```bash
-# Generate example audio with trained model
-python scripts/inference/infer.py
-
-# Custom text
-python scripts/inference/infer.py \
-    --text "Сайн байна уу! Би монгол хэлээр ярьж байна."
-
-# With specific checkpoint
-python scripts/inference/infer.py \
-    --checkpoint /workspace/output/ckpts/mongolian-tts/model_50000.pt \
-    --text "Энэ бол жишээ текст" \
-    --output custom_output.wav
 ```
 
 ## Project Structure
 
 ```text
 oron-tts/
-├── .vscode/                 # VS Code configuration
-│   ├── settings.json        # Python, Ruff, MyPy settings
-│   ├── launch.json          # Debug configurations
-│   ├── tasks.json           # Build, lint, test tasks
-│   └── extensions.json      # Recommended extensions
 ├── src/
-│   ├── data/
-│   │   ├── audio.py         # Audio preprocessing (DeepFilterNet)
-│   │   ├── cleaner.py       # Mongolian text normalization
-│   │   └── dataset.py       # Dataset handling utilities
-│   └── utils/
-│       ├── logging.py       # Rich console logging
-│       ├── hub.py           # HuggingFace Hub API wrappers
-│       └── checkpoint.py    # Model checkpoint utilities
+│   ├── data/           # Dataset wrappers, denoising, preprocessing
+│   ├── models/         # VITS architecture components
+│   ├── training/       # Training loop, losses, checkpointing
+│   └── utils/          # Audio processing, text normalization
 ├── scripts/
-│   ├── data/
-│   │   └── prepare_combined_dataset.py  # Dataset preparation
-│   ├── training/
-│   │   ├── train.py         # Optimized training script
-│   │   └── train.sh         # RunPod training wrapper
-│   ├── inference/
-│   │   └── infer.py         # Generate speech
-│   ├── setup/
-│   │   └── runpod_setup.sh  # RunPod environment setup
-│   └── utils/
-│       └── upload_to_hub.py # HuggingFace upload
-├── tests/
-│   ├── conftest.py          # Pytest configuration
-│   └── test_cleaner.py      # Text cleaner tests
-├── third_party/
-│   └── F5-TTS/              # Official F5-TTS (submodule)
-└── /workspace/output/       # Training outputs (RunPod/Docker)
-    ├── ckpts/               # Model checkpoints
-    ├── logs/                # Training logs
-    └── runs/                # TensorBoard logs
+│   ├── prepare.py      # Dataset preparation
+│   ├── train.py        # Model training
+│   └── infer.py        # Inference/synthesis
+└── configs/            # YAML configuration files
 ```
 
-## Python API
+## Usage
 
-```python
-import sys
-from pathlib import Path
+### 1. Dataset Preparation (Local)
 
-# Add paths
-sys.path.insert(0, "third_party/F5-TTS/src")
-
-from src.data import MongolianTextCleaner
-# Use scripts/inference/infer.py for generation
-
-cleaner = MongolianTextCleaner()
-text = cleaner("2024 онд 5 км")
-# Output: "хоёр мянга хорин дөрөв онд тав километр"
-```
-
-## Mongolian Text Processing
-
-- **Numeric expansion**: `123` → `нэг зуун хорин гурав`
-- **Unicode normalization**: NFC form
-- **Punctuation standardization**
-
-```python
-from src.data import MongolianTextCleaner
-
-cleaner = MongolianTextCleaner()
-text = cleaner("2024 онд 5 км")
-# Output: "хоёр мянга хорин дөрөв онд тав километр"
-```
-
-## Training
-
-### RunPod Setup (Cloud Training)
+Clean and denoise audio from Common Voice and MBSpeech datasets:
 
 ```bash
-# First-time setup on RunPod instance
-bash scripts/setup/runpod_setup.sh
-
-# This will:
-# - Clone repository with F5-TTS submodule
-# - Install dependencies (PyTorch, F5-TTS)
-# - Download pretrained checkpoint
-# - Set up environment variables
+python scripts/prepare.py \
+    --output-dir data/processed \
+    --dataset all \
+    --upload \
+    --hf-repo btsee/oron-tts-dataset
 ```
 
-### Prepare Combined Dataset
+### 2. Training (RunPod/Cloud)
+
+Train the VITS model:
 
 ```bash
-# Combine mbspeech (3.8k samples) + Common Voice (best male/female voices)
-python scripts/data/prepare_combined_dataset.py
+# Single GPU
+python scripts/train.py \
+    --config configs/vits_runpod.yaml \
+    --from-hf \
+    --dataset btsee/oron-tts-dataset \
+    --push-to-hub \
+    --hf-repo btsee/oron-tts-model
+
+# Multi-GPU
+python scripts/train.py \
+    --config configs/vits_runpod.yaml \
+    --from-hf \
+    --dataset btsee/oron-tts-dataset \
+    --num-gpus 4
 ```
 
-### Train with Optimal Settings
+### 3. Inference
+
+Generate speech from text:
 
 ```bash
-# Finetune from pretrained F5-TTS (recommended)
-python scripts/training/train.py
-
-# Output saved to /workspace/output/
+python scripts/infer.py \
+    --checkpoint checkpoints/vits_best.pt \
+    --text "Сайн байна уу" \
+    --speaker 0 \
+    --output output.wav
 ```
 
-**Training Strategy:**
-- Finetuning (NOT from scratch) - essential for small datasets
-- Learning rate: 7.5e-5 (optimized for finetuning)
-- Batch size: 4800 frames (2400 × 2 accumulation)
-- Warmup: 2000 updates
-- Target: Loss < 0.15 for high quality
+Speaker IDs:
 
-### Upload to HuggingFace
+- `0`: Female voice
+- `1`: Male voice
+
+## Mongolian Number Examples
+
+| Input | Output                  |
+| ----- | ----------------------- |
+| 10    | арван                   |
+| 25    | хорин тав               |
+| 100   | зуун                    |
+| 1-р   | нэгдүгээр               |
+| 2024  | хоёр мянга хорин дөрөв  |
+
+## Configuration
+
+Key hyperparameters in `configs/vits_base.yaml`:
+
+```yaml
+sample_rate: 22050
+batch_size: 16
+learning_rate: 0.0002
+model:
+  hidden_channels: 192
+  n_layers: 6
+  n_heads: 2
+```
+
+## Development
 
 ```bash
-python scripts/utils/upload_to_hub.py \
-    --model-name btsee/oron-tts-mongolian \
-    --checkpoint-dir /workspace/output/ckpts/mongolian-tts
+# Install dev dependencies
+pip install -e ".[dev]"
+
+# Lint
+ruff check src/ scripts/
+
+# Format
+ruff format src/ scripts/
+isort src/ scripts/
 ```
 
 ## License
 
-Apache 2.0
+MIT
 
 ## Citation
 
+If you use OronTTS in your research, please cite:
+
 ```bibtex
-@software{orontts2026,
-  author = {OronTTS Team},
-  title = {OronTTS: Mongolian Text-to-Speech with F5-TTS},
-  year = {2026},
-  url = {https://github.com/btseee/oron-tts}
+@software{orontts2024,
+  title = {OronTTS: Mongolian Text-to-Speech},
+  year = {2024},
+  url = {https://github.com/btsee/oron-tts}
 }
 ```

@@ -1,0 +1,58 @@
+# OronTTS RunPod Training Configuration
+# Container: runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04
+# Hardware: RTX 4090 24GB, 16 vCPU, 62GB RAM, 50GB Disk
+
+# Audio Settings
+sample_rate: 22050
+n_fft: 1024
+hop_length: 256
+win_length: 1024
+n_mels: 80
+fmin: 0.0
+fmax: 8000.0
+
+# Training Settings (RTX 4090 24GB VRAM)
+batch_size: 24
+num_epochs: 1500
+learning_rate: 0.0002
+betas: [0.8, 0.99]
+eps: 1.0e-9
+lr_decay: 0.99995
+segment_size: 64
+fp16: true
+num_workers: 12  # 16 vCPU available
+log_interval: 50
+save_interval: 10
+grad_accumulation_steps: 1
+prefetch_factor: 4
+pin_memory: true
+
+# CUDA 12.4 / PyTorch 2.4.0 Optimizations
+compile_model: true  # torch.compile for speedup
+cudnn_benchmark: true
+use_tf32: true  # TensorFloat-32 for Ampere+
+
+# Model Settings
+model:
+  inter_channels: 192
+  hidden_channels: 192
+  filter_channels: 768
+  n_heads: 2
+  n_layers: 6
+  kernel_size: 3
+  p_dropout: 0.1
+  resblock: "1"
+  resblock_kernel_sizes: [3, 7, 11]
+  resblock_dilation_sizes: [[1, 3, 5], [1, 3, 5], [1, 3, 5]]
+  upsample_rates: [8, 8, 2, 2]
+  upsample_initial_channel: 512
+  upsample_kernel_sizes: [16, 16, 4, 4]
+  gin_channels: 256
+  use_sdp: true
+
+# Dataset Settings
+data:
+  min_audio_length: 0.5
+  max_audio_length: 15.0
+  min_text_length: 2
+  max_text_length: 500

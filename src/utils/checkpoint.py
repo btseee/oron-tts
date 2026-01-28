@@ -1,308 +1,156 @@
-"""Checkpoint management for training resumption and model saving."""
-
-from __future__ import annotations
+"""Checkpoint management for training and inference."""
 
 import json
-from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
 import torch
-from torch import nn
-from torch.optim import Optimizer
-from torch.optim.lr_scheduler import _LRScheduler
-
-
-@dataclass
-class TrainingState:
-    """Training state for checkpointing."""
-
-    epoch: int
-    global_step: int
-    best_loss: float
-    config: dict[str, Any]
+from huggingface_hub import HfApi, hf_hub_download
 
 
 class CheckpointManager:
-    """Manager for saving and loading training checkpoints.
-
-    Features:
-    - Automatic checkpoint rotation (keep last N)
-    - Best model tracking
-    - Full training state preservation
-    - HuggingFace Hub integration
-    """
-
     def __init__(
         self,
-        output_dir: str | Path,
+        checkpoint_dir: str | Path,
+        model_name: str = "vits",
         max_checkpoints: int = 5,
-        save_optimizer: bool = True,
-        save_scheduler: bool = True,
     ) -> None:
-        """Initialize checkpoint manager.
-
-        Args:
-            output_dir: Directory for checkpoints.
-            max_checkpoints: Maximum checkpoints to keep.
-            save_optimizer: Include optimizer state in checkpoints.
-            save_scheduler: Include scheduler state in checkpoints.
-        """
-        self.output_dir = Path(output_dir)
-        self.output_dir.mkdir(parents=True, exist_ok=True)
-
+        self.checkpoint_dir = Path(checkpoint_dir)
+        self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        self.model_name = model_name
         self.max_checkpoints = max_checkpoints
-        self.save_optimizer = save_optimizer
-        self.save_scheduler = save_scheduler
 
-        self.checkpoints: list[Path] = []
-        self._load_checkpoint_list()
+    def _get_checkpoint_path(self, step: int) -> Path:
+        return self.checkpoint_dir / f"{self.model_name}_step_{step:08d}.pt"
 
-    def _load_checkpoint_list(self) -> None:
-        """Load existing checkpoint list from disk."""
-        checkpoints_file = self.output_dir / "checkpoints.json"
-        if checkpoints_file.exists():
-            with open(checkpoints_file) as f:
-                data = json.load(f)
-                self.checkpoints = [Path(p) for p in data.get("checkpoints", [])]
+    def _get_best_checkpoint_path(self) -> Path:
+        return self.checkpoint_dir / f"{self.model_name}_best.pt"
 
-    def _save_checkpoint_list(self) -> None:
-        """Save checkpoint list to disk."""
-        checkpoints_file = self.output_dir / "checkpoints.json"
-        with open(checkpoints_file, "w") as f:
-            json.dump(
-                {"checkpoints": [str(p) for p in self.checkpoints]},
-                f,
-                indent=2,
-            )
+    def _get_config_path(self) -> Path:
+        return self.checkpoint_dir / "config.json"
 
     def save(
         self,
-        model: nn.Module,
-        optimizer: Optimizer | None = None,
-        scheduler: _LRScheduler | None = None,
-        state: TrainingState | None = None,
+        step: int,
+        model: torch.nn.Module,
+        optimizer_g: torch.optim.Optimizer,
+        optimizer_d: torch.optim.Optimizer,
+        scheduler_g: torch.optim.lr_scheduler.LRScheduler | None = None,
+        scheduler_d: torch.optim.lr_scheduler.LRScheduler | None = None,
+        loss: float | None = None,
+        config: dict[str, Any] | None = None,
         is_best: bool = False,
-        prefix: str = "checkpoint",
     ) -> Path:
-        """Save a checkpoint.
-
-        Args:
-            model: Model to save.
-            optimizer: Optimizer to save.
-            scheduler: Learning rate scheduler to save.
-            state: Training state metadata.
-            is_best: Mark as best checkpoint.
-            prefix: Checkpoint filename prefix.
-
-        Returns:
-            Path to saved checkpoint.
-        """
-        step = state.global_step if state else 0
-        checkpoint_name = f"{prefix}_step{step:08d}.pt"
-        checkpoint_path = self.output_dir / checkpoint_name
-
-        # Build checkpoint dict
         checkpoint = {
+            "step": step,
             "model_state_dict": model.state_dict(),
+            "optimizer_g_state_dict": optimizer_g.state_dict(),
+            "optimizer_d_state_dict": optimizer_d.state_dict(),
+            "loss": loss,
         }
 
-        if self.save_optimizer and optimizer is not None:
-            checkpoint["optimizer_state_dict"] = optimizer.state_dict()
+        if scheduler_g is not None:
+            checkpoint["scheduler_g_state_dict"] = scheduler_g.state_dict()
+        if scheduler_d is not None:
+            checkpoint["scheduler_d_state_dict"] = scheduler_d.state_dict()
 
-        if self.save_scheduler and scheduler is not None:
-            checkpoint["scheduler_state_dict"] = scheduler.state_dict()
+        path = self._get_checkpoint_path(step)
+        torch.save(checkpoint, path)
 
-        if state is not None:
-            checkpoint["training_state"] = asdict(state)
+        if config is not None:
+            with open(self._get_config_path(), "w") as f:
+                json.dump(config, f, indent=2)
 
-        # Save checkpoint
-        torch.save(checkpoint, checkpoint_path)
-
-        # Track checkpoint
-        self.checkpoints.append(checkpoint_path)
-
-        # Rotate old checkpoints
-        self._rotate_checkpoints()
-
-        # Save best model separately
         if is_best:
-            best_path = self.output_dir / "best_model.pt"
+            best_path = self._get_best_checkpoint_path()
             torch.save(checkpoint, best_path)
 
-        self._save_checkpoint_list()
-
-        return checkpoint_path
+        self._cleanup_old_checkpoints()
+        return path
 
     def load(
         self,
-        model: nn.Module,
-        optimizer: Optimizer | None = None,
-        scheduler: _LRScheduler | None = None,
-        checkpoint_path: str | Path | None = None,
+        model: torch.nn.Module,
+        optimizer_g: torch.optim.Optimizer | None = None,
+        optimizer_d: torch.optim.Optimizer | None = None,
+        scheduler_g: torch.optim.lr_scheduler.LRScheduler | None = None,
+        scheduler_d: torch.optim.lr_scheduler.LRScheduler | None = None,
+        path: str | Path | None = None,
         load_best: bool = False,
-        strict: bool = True,
-        device: str | torch.device = "cpu",
-    ) -> TrainingState | None:
-        """Load a checkpoint.
-
-        Args:
-            model: Model to load weights into.
-            optimizer: Optimizer to restore state.
-            scheduler: Scheduler to restore state.
-            checkpoint_path: Specific checkpoint to load.
-            load_best: Load best model instead of latest.
-            strict: Strict state dict loading.
-            device: Device to load checkpoint to.
-
-        Returns:
-            Training state if available.
-        """
-        if checkpoint_path is None:
+        device: str = "cpu",
+    ) -> dict[str, Any]:
+        if path is None:
             if load_best:
-                checkpoint_path = self.output_dir / "best_model.pt"
-            elif self.checkpoints:
-                checkpoint_path = self.checkpoints[-1]
+                path = self._get_best_checkpoint_path()
             else:
-                return None
+                path = self._get_latest_checkpoint()
 
-        checkpoint_path = Path(checkpoint_path)
-        if not checkpoint_path.exists():
-            return None
+        if path is None or not Path(path).exists():
+            return {"step": 0, "loss": None}
 
-        checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
+        checkpoint = torch.load(path, map_location=device, weights_only=False)
+        model.load_state_dict(checkpoint["model_state_dict"])
 
-        # Load model
-        model.load_state_dict(checkpoint["model_state_dict"], strict=strict)
+        if optimizer_g is not None and "optimizer_g_state_dict" in checkpoint:
+            optimizer_g.load_state_dict(checkpoint["optimizer_g_state_dict"])
+        if optimizer_d is not None and "optimizer_d_state_dict" in checkpoint:
+            optimizer_d.load_state_dict(checkpoint["optimizer_d_state_dict"])
+        if scheduler_g is not None and "scheduler_g_state_dict" in checkpoint:
+            scheduler_g.load_state_dict(checkpoint["scheduler_g_state_dict"])
+        if scheduler_d is not None and "scheduler_d_state_dict" in checkpoint:
+            scheduler_d.load_state_dict(checkpoint["scheduler_d_state_dict"])
 
-        # Load optimizer
-        if optimizer is not None and "optimizer_state_dict" in checkpoint:
-            optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
-
-        # Load scheduler
-        if scheduler is not None and "scheduler_state_dict" in checkpoint:
-            scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
-
-        # Return training state
-        if "training_state" in checkpoint:
-            return TrainingState(**checkpoint["training_state"])
-
-        return None
-
-    def _rotate_checkpoints(self) -> None:
-        """Remove old checkpoints beyond max_checkpoints."""
-        while len(self.checkpoints) > self.max_checkpoints:
-            old_checkpoint = self.checkpoints.pop(0)
-            if old_checkpoint.exists():
-                old_checkpoint.unlink()
-
-    def get_latest_checkpoint(self) -> Path | None:
-        """Get path to latest checkpoint."""
-        if self.checkpoints:
-            return self.checkpoints[-1]
-        return None
-
-    def has_checkpoint(self) -> bool:
-        """Check if any checkpoints exist."""
-        return len(self.checkpoints) > 0 or (self.output_dir / "best_model.pt").exists()
-
-
-class AccelerateCheckpointManager:
-    """Checkpoint manager compatible with HuggingFace Accelerate.
-
-    Uses Accelerate's save/load state for distributed training.
-    """
-
-    def __init__(
-        self,
-        output_dir: str | Path,
-        max_checkpoints: int = 5,
-    ) -> None:
-        """Initialize accelerate checkpoint manager.
-
-        Args:
-            output_dir: Directory for checkpoints.
-            max_checkpoints: Maximum checkpoints to keep.
-        """
-        self.output_dir = Path(output_dir)
-        self.output_dir.mkdir(parents=True, exist_ok=True)
-        self.max_checkpoints = max_checkpoints
-
-    def save(
-        self,
-        accelerator,
-        global_step: int,
-        metrics: dict[str, float] | None = None,
-    ) -> Path:
-        """Save checkpoint using Accelerate.
-
-        Args:
-            accelerator: HuggingFace Accelerator instance.
-            global_step: Current training step.
-            metrics: Optional metrics to save.
-
-        Returns:
-            Path to checkpoint directory.
-        """
-        checkpoint_dir = self.output_dir / f"checkpoint-{global_step}"
-
-        # Save accelerate state
-        accelerator.save_state(str(checkpoint_dir))
-
-        # Save metrics
-        if metrics is not None:
-            metrics_file = checkpoint_dir / "metrics.json"
-            with open(metrics_file, "w") as f:
-                json.dump(metrics, f, indent=2)
-
-        # Rotate checkpoints
-        self._rotate_checkpoints()
-
-        return checkpoint_dir
-
-    def load(self, accelerator, checkpoint_dir: str | Path | None = None) -> int:
-        """Load checkpoint using Accelerate.
-
-        Args:
-            accelerator: HuggingFace Accelerator instance.
-            checkpoint_dir: Specific checkpoint to load.
-
-        Returns:
-            Training step from checkpoint.
-        """
-        if checkpoint_dir is None:
-            checkpoint_dir = self._get_latest_checkpoint()
-
-        if checkpoint_dir is None:
-            return 0
-
-        checkpoint_dir = Path(checkpoint_dir)
-        accelerator.load_state(str(checkpoint_dir))
-
-        # Extract step from directory name
-        step = int(checkpoint_dir.name.split("-")[-1])
-        return step
+        return {"step": checkpoint.get("step", 0), "loss": checkpoint.get("loss")}
 
     def _get_latest_checkpoint(self) -> Path | None:
-        """Get latest checkpoint directory."""
-        checkpoints = list(self.output_dir.glob("checkpoint-*"))
-        if not checkpoints:
-            return None
-
-        # Sort by step number
-        checkpoints.sort(key=lambda p: int(p.name.split("-")[-1]))
-        return checkpoints[-1]
-
-    def _rotate_checkpoints(self) -> None:
-        """Remove old checkpoint directories."""
         checkpoints = sorted(
-            self.output_dir.glob("checkpoint-*"),
-            key=lambda p: int(p.name.split("-")[-1]),
+            self.checkpoint_dir.glob(f"{self.model_name}_step_*.pt"),
+            key=lambda x: int(x.stem.split("_")[-1]),
         )
+        return checkpoints[-1] if checkpoints else None
 
+    def _cleanup_old_checkpoints(self) -> None:
+        checkpoints = sorted(
+            self.checkpoint_dir.glob(f"{self.model_name}_step_*.pt"),
+            key=lambda x: int(x.stem.split("_")[-1]),
+        )
         while len(checkpoints) > self.max_checkpoints:
-            old_checkpoint = checkpoints.pop(0)
-            if old_checkpoint.exists():
-                import shutil
+            checkpoints[0].unlink()
+            checkpoints.pop(0)
 
-                shutil.rmtree(old_checkpoint)
+    def load_config(self) -> dict[str, Any] | None:
+        config_path = self._get_config_path()
+        if config_path.exists():
+            with open(config_path) as f:
+                return json.load(f)
+        return None
+
+    def push_to_hub(
+        self,
+        repo_id: str,
+        token: str | None = None,
+        private: bool = False,
+    ) -> str:
+        api = HfApi()
+        api.create_repo(repo_id=repo_id, token=token, private=private, exist_ok=True)
+
+        api.upload_folder(
+            folder_path=str(self.checkpoint_dir),
+            repo_id=repo_id,
+            token=token,
+        )
+        return f"https://huggingface.co/{repo_id}"
+
+    def pull_from_hub(
+        self,
+        repo_id: str,
+        filename: str = "vits_best.pt",
+        token: str | None = None,
+    ) -> Path:
+        path = hf_hub_download(
+            repo_id=repo_id,
+            filename=filename,
+            token=token,
+            local_dir=str(self.checkpoint_dir),
+        )
+        return Path(path)

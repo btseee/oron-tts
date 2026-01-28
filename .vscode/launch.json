@@ -1,145 +1,83 @@
 {
-  "version": "0.2.0",
-  "configurations": [
-    {
-      "name": "Python: Current File",
-      "type": "debugpy",
-      "request": "launch",
-      "program": "${file}",
-      "console": "integratedTerminal",
-      "justMyCode": false,
-      "env": {
-        "PYTHONPATH": "${workspaceFolder}:${workspaceFolder}/third_party/F5-TTS/src",
-        "HF_AUDIO_DECODER": "soundfile"
-      }
-    },
-    {
-      "name": "OronTTS: Inference",
-      "type": "debugpy",
-      "request": "launch",
-      "program": "${workspaceFolder}/scripts/inference/infer.py",
-      "console": "integratedTerminal",
-      "justMyCode": false,
-      "args": [
-        "--text",
-        "Сайн байна уу! Би монгол хэлээр ярьж байна."
-      ],
-      "env": {
-        "PYTHONPATH": "${workspaceFolder}:${workspaceFolder}/third_party/F5-TTS/src",
-        "HF_AUDIO_DECODER": "soundfile"
-      }
-    },
-    {
-      "name": "OronTTS: Inference (Custom Checkpoint)",
-      "type": "debugpy",
-      "request": "launch",
-      "program": "${workspaceFolder}/scripts/inference/infer.py",
-      "console": "integratedTerminal",
-      "justMyCode": false,
-      "args": [
-        "--checkpoint",
-        "/workspace/output/ckpts/mongolian-tts/model_50000.pt",
-        "--text",
-        "Энэ бол жишээ текст",
-        "--output",
-        "custom_output.wav"
-      ],
-      "env": {
-        "PYTHONPATH": "${workspaceFolder}:${workspaceFolder}/third_party/F5-TTS/src",
-        "HF_AUDIO_DECODER": "soundfile"
-      }
-    },
-    {
-      "name": "OronTTS: Training",
-      "type": "debugpy",
-      "request": "launch",
-      "program": "${workspaceFolder}/scripts/training/train.py",
-      "console": "integratedTerminal",
-      "justMyCode": false,
-      "args": [],
-      "env": {
-        "PYTHONPATH": "${workspaceFolder}:${workspaceFolder}/third_party/F5-TTS/src",
-        "HF_AUDIO_DECODER": "soundfile",
-        "CUDA_VISIBLE_DEVICES": "0"
-      }
-    },
-    {
-      "name": "OronTTS: Prepare Dataset",
-      "type": "debugpy",
-      "request": "launch",
-      "program": "${workspaceFolder}/scripts/data/prepare_combined_dataset.py",
-      "console": "integratedTerminal",
-      "justMyCode": false,
-      "env": {
-        "PYTHONPATH": "${workspaceFolder}:${workspaceFolder}/third_party/F5-TTS/src",
-        "HF_AUDIO_DECODER": "soundfile"
-      }
-    },
-    {
-      "name": "OronTTS: Upload to Hub",
-      "type": "debugpy",
-      "request": "launch",
-      "program": "${workspaceFolder}/scripts/utils/upload_to_hub.py",
-      "console": "integratedTerminal",
-      "justMyCode": false,
-      "args": [
-        "--model-name",
-        "btsee/oron-tts-mongolian",
-        "--checkpoint-dir",
-        "/workspace/output/ckpts/mongolian-tts"
-      ],
-      "env": {
-        "PYTHONPATH": "${workspaceFolder}:${workspaceFolder}/third_party/F5-TTS/src"
-      }
-    },
-    {
-      "name": "Python: Pytest Current File",
-      "type": "debugpy",
-      "request": "launch",
-      "module": "pytest",
-      "args": [
-        "${file}",
-        "-v",
-        "-s"
-      ],
-      "console": "integratedTerminal",
-      "justMyCode": false,
-      "env": {
-        "PYTHONPATH": "${workspaceFolder}:${workspaceFolder}/third_party/F5-TTS/src"
-      }
-    },
-    {
-      "name": "Python: All Tests",
-      "type": "debugpy",
-      "request": "launch",
-      "module": "pytest",
-      "args": [
-        "tests/",
-        "-v",
-        "--cov=src",
-        "--cov-report=html"
-      ],
-      "console": "integratedTerminal",
-      "justMyCode": false,
-      "env": {
-        "PYTHONPATH": "${workspaceFolder}:${workspaceFolder}/third_party/F5-TTS/src"
-      }
-    },
-    {
-      "name": "Python: Test Cleaner",
-      "type": "debugpy",
-      "request": "launch",
-      "module": "pytest",
-      "args": [
-        "tests/test_cleaner.py",
-        "-v",
-        "-s"
-      ],
-      "console": "integratedTerminal",
-      "justMyCode": false,
-      "env": {
-        "PYTHONPATH": "${workspaceFolder}"
-      }
-    }
-  ]
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Prepare Dataset",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "scripts.prepare",
+            "args": [
+                "--output-dir", "data/processed",
+                "--dataset", "all",
+                "--max-samples", "100"
+            ],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}"
+            }
+        },
+        {
+            "name": "Train Local",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "scripts.train",
+            "args": [
+                "--config", "configs/vits_local.yaml",
+                "--data-dir", "data/processed",
+                "--log-dir", "logs",
+                "--checkpoint-dir", "checkpoints"
+            ],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}",
+                "CUDA_VISIBLE_DEVICES": "0"
+            }
+        },
+        {
+            "name": "Train from HF",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "scripts.train",
+            "args": [
+                "--config", "configs/vits_local.yaml",
+                "--from-hf",
+                "--dataset", "btsee/oron-tts-dataset"
+            ],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}"
+            }
+        },
+        {
+            "name": "Inference",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "scripts.infer",
+            "args": [
+                "--checkpoint", "checkpoints/vits_best.pt",
+                "--text", "Сайн байна уу",
+                "--speaker", "0",
+                "--output", "output.wav"
+            ],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}"
+            }
+        },
+        {
+            "name": "Debug Current File",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}"
+            }
+        }
+    ]
 }

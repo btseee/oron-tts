@@ -5,72 +5,64 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "oron-tts"
 version = "0.1.0"
-description = "F5-TTS for Mongolian Khalkha Dialect"
+description = "Mongolian Cyrillic (Khalkha) multi-speaker TTS using VITS"
 readme = "README.md"
-license = { text = "Apache-2.0" }
+license = {text = "MIT"}
 requires-python = ">=3.11"
-authors = [{ name = "OronTTS Team" }]
-keywords = ["tts", "mongolian", "flow-matching", "f5-tts"]
+authors = [
+    {name = "OronTTS Team"}
+]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: Apache Software License",
+    "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3.11",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
-
-# Core dependencies - minimal for training/inference
-# F5-TTS is installed separately from submodule
 dependencies = [
-    "huggingface-hub>=0.24.0",
-    "pyyaml>=6.0.1",
-    "rich>=13.7.0",
+    "torch>=2.1.0",
+    "torchaudio>=2.1.0",
+    "torchcodec>=0.10.0",
+    "numpy>=1.24.0",
+    "scipy>=1.11.0",
+    "librosa>=0.10.0",
+    "soundfile>=0.12.0",
+    "datasets>=2.14.0",
+    "huggingface-hub>=0.19.0",
+    "deepfilternet>=0.5.0",
+    "pyyaml>=6.0",
+    "tqdm>=4.66.0",
+    "tensorboard>=2.15.0",
+    "einops>=0.7.0",
+    "ffmpeg-python>=0.2.0",
 ]
 
 [project.optional-dependencies]
-# Local development - data cleaning, preprocessing
-local = [
-    "deepfilternet>=0.5.6",
-    "phonemizer>=3.3.0",
-    "librosa>=0.10.2",
-    "soundfile>=0.12.1",
-    "datasets>=2.20.0,<4.0",  # datasets 4.x requires torchcodec which needs FFmpeg 5+
-]
-# Development tools
 dev = [
-    "pytest>=8.0.0",
-    "pytest-cov>=5.0.0",
-    "ruff>=0.5.0",
-    "mypy>=1.10.0",
+    "ruff>=0.1.0",
+    "isort>=5.12.0",
+    "pytest>=7.4.0",
 ]
 
 [project.scripts]
-oron-train = "scripts.training.train:main"
-oron-infer = "scripts.inference.infer:main"
-
-[tool.setuptools.packages.find]
-where = ["."]
-include = ["src*", "scripts*", "configs*"]
-
-[tool.mypy]
-python_version = "3.11"
-strict = true
-warn_return_any = true
-warn_unused_configs = true
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-python_files = ["test_*.py"]
-addopts = "-ra -q"
+oron-prepare = "scripts.prepare:main"
+oron-train = "scripts.train:main"
+oron-infer = "scripts.infer:main"
 
 [tool.ruff]
 line-length = 100
 target-version = "py311"
-
-[tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B", "SIM"]
+select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM"]
 ignore = ["E501"]
 
-[tool.ruff.lint.isort]
+[tool.ruff.isort]
 known-first-party = ["src"]
-section-order = ["future", "standard-library", "third-party", "first-party", "local-folder"]
+
+[tool.isort]
+profile = "black"
+line_length = 100
+known_first_party = ["src"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*", "scripts*", "configs*"]

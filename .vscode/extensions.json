@@ -1,58 +1,11 @@
 {
-  "recommendations": [
-    // Python Development
-    "ms-python.python",
-    "ms-python.vscode-pylance",
-    "ms-python.debugpy",
-
-    // Linting & Formatting
-    "charliermarsh.ruff",
-    "ms-python.mypy-type-checker",
-
-    // Testing
-    "ms-python.pytest",
-
-    // Git & Version Control
-    "eamodio.gitlens",
-    "mhutchie.git-graph",
-
-    // GitHub Integration
-    "GitHub.copilot",
-    "GitHub.copilot-chat",
-    "GitHub.vscode-pull-request-github",
-
-    // YAML Support
-    "redhat.vscode-yaml",
-
-    // Markdown
-    "yzhang.markdown-all-in-one",
-    "DavidAnson.vscode-markdownlint",
-
-    // PyTorch & ML
-    "ms-toolsai.jupyter",
-    "ms-toolsai.jupyter-keymap",
-    "ms-toolsai.jupyter-renderers",
-
-    // Docker (for RunPod deployment)
-    "ms-azuretools.vscode-docker",
-
-    // File Management
-    "alefragnani.project-manager",
-
-    // Code Quality
-    "SonarSource.sonarlint-vscode",
-
-    // Productivity
-    "oderwat.indent-rainbow",
-    "PKief.material-icon-theme",
-    "usernamehw.errorlens",
-
-    // TOML support
-    "tamasfe.even-better-toml"
-  ],
-  "unwantedRecommendations": [
-    "ms-python.pylint",
-    "ms-python.flake8",
-    "ms-python.black-formatter"
-  ]
+    "recommendations": [
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "charliermarsh.ruff",
+        "ms-python.debugpy",
+        "redhat.vscode-yaml",
+        "ms-toolsai.jupyter",
+        "github.copilot"
+    ]
 }
