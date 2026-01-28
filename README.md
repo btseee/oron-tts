@@ -54,7 +54,26 @@ python scripts/prepare.py \
 
 ### 2. Training (RunPod/Cloud)
 
-Train the VITS model:
+**For detailed RunPod setup instructions, see [RUNPOD.md](RUNPOD.md)**
+
+Quick start on RunPod:
+
+```bash
+# Run setup script
+wget https://raw.githubusercontent.com/btseee/oron-tts/main/runpod_setup.sh
+chmod +x runpod_setup.sh
+./runpod_setup.sh
+
+# Start training
+python scripts/train.py \
+    --config configs/vits_runpod.yaml \
+    --from-hf \
+    --dataset btsee/mbspeech_mn \
+    --push-to-hub \
+    --hf-repo btsee/orontts
+```
+
+Local/Custom training:
 
 ```bash
 # Single GPU
