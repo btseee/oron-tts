@@ -98,7 +98,7 @@ def main() -> None:
     parser.add_argument("--sample-rate", type=int, default=22050)
     parser.add_argument("--max-samples", type=int, default=None)
     parser.add_argument("--upload", action="store_true")
-    parser.add_argument("--hf-repo", type=str, default="btsee/oron-tts-dataset")
+    parser.add_argument("--hf-repo", type=str, default="btsee/oron-tts")
     parser.add_argument("--hf-token", type=str, default=None)
     parser.add_argument(
         "--dataset",

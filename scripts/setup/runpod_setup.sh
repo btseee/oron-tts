@@ -51,6 +51,7 @@ python -c "import torchcodec; print(f'Torchcodec: {torchcodec.__version__}')"
 if [ ! -z "$HF_TOKEN" ]; then
     echo "Setting HuggingFace token..."
     echo "HF_TOKEN=$HF_TOKEN" > .env
+    export HF_TOKEN=$HF_TOKEN
     huggingface-cli login --token $HF_TOKEN
 fi
 
@@ -58,5 +59,8 @@ echo ""
 echo "=== Setup Complete! ==="
 echo ""
 echo "To start training, run:"
-echo "python scripts/train.py --config configs/vits_runpod.yaml --from-hf --dataset btsee/mbspeech_mn --push-to-hub --hf-repo btsee/orontts"
+echo "python scripts/train.py --config configs/vits_runpod.yaml --dataset btsee/mbspeech_mn --push-to-hub --hf-repo btsee/orontts"
+echo ""
+echo "Or with explicit token:"
+echo "python scripts/train.py --config configs/vits_runpod.yaml --dataset btsee/mbspeech_mn --push-to-hub --hf-repo btsee/orontts --hf-token \$HF_TOKEN"
 echo ""
