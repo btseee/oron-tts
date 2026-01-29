@@ -1,62 +1,69 @@
 #!/bin/bash
 # RunPod Setup Script for OronTTS
-# Run this script on your RunPod instance to install all dependencies
+# Tested with: runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04
 
 set -e
 
 echo "=== OronTTS RunPod Setup ==="
+echo "Container: PyTorch 2.4.0 + CUDA 12.4.1 + Python 3.11"
+echo ""
 
 # Update package lists
-echo "Updating package lists..."
-apt-get update
+echo "[1/6] Updating package lists..."
+apt-get update -qq
 
-# Install FFmpeg and development libraries for torchcodec
-echo "Installing FFmpeg..."
-apt-get install -y ffmpeg libavutil-dev libavcodec-dev libavformat-dev libavdevice-dev libavfilter-dev libswscale-dev libswresample-dev
-
-# Install git if not present
-apt-get install -y git
+# Install minimal dependencies (no FFmpeg needed - we use datasets<4.0 with soundfile)
+echo "[2/6] Installing system dependencies..."
+apt-get install -y -qq git libsndfile1
 
 # Clone repository if not already cloned
 if [ ! -d "/workspace/oron-tts" ]; then
-    echo "Cloning OronTTS repository..."
+    echo "[3/6] Cloning OronTTS repository..."
     cd /workspace
     git clone https://github.com/btseee/oron-tts.git
     cd oron-tts
 else
-    echo "Repository already exists, pulling latest changes..."
+    echo "[3/6] Repository already exists, pulling latest changes..."
     cd /workspace/oron-tts
     git pull
 fi
 
-# Install Python dependencies
-echo "Installing Python dependencies..."
-pip install --upgrade pip
-pip install -e .
+# Record pre-installed PyTorch version
+echo "[4/6] Checking pre-installed PyTorch..."
+TORCH_VERSION=$(python -c "import torch; print(torch.__version__)")
+echo "  Found PyTorch: $TORCH_VERSION"
+
+# Install Python dependencies (preserve pre-installed torch)
+echo "[5/6] Installing Python dependencies..."
+pip install --upgrade pip -q
+
+# Install datasets<4.0 first to avoid torchcodec requirement
+pip install "datasets>=3.0.0,<4.0.0" -q
+
+# Install project without upgrading torch
+pip install -e . --no-deps -q
+pip install numpy scipy librosa soundfile huggingface-hub deepfilternet pyyaml tqdm tensorboard einops -q
 
 # Verify installations
-echo "Verifying FFmpeg installation..."
-ffmpeg -version | head -1
-
-echo "Verifying Python packages..."
-python -c "import torch; print(f'PyTorch: {torch.__version__}')"
-python -c "import torchaudio; print(f'Torchaudio: {torchaudio.__version__}')"
-python -c "from datasets import load_dataset; print('Datasets: OK')"
+echo "[6/6] Verifying installation..."
+python -c "import torch; print(f'  PyTorch: {torch.__version__}')"
+python -c "import torchaudio; print(f'  Torchaudio: {torchaudio.__version__}')"
+python -c "import datasets; print(f'  Datasets: {datasets.__version__}')"
+python -c "from src.models.vits import VITS; print('  OronTTS: OK')"
 
 # Set HuggingFace token if provided
 if [ ! -z "$HF_TOKEN" ]; then
+    echo ""
     echo "Setting HuggingFace token..."
-    echo "HF_TOKEN=$HF_TOKEN" > .env
-    export HF_TOKEN=$HF_TOKEN
     huggingface-cli login --token $HF_TOKEN
 fi
 
 echo ""
 echo "=== Setup Complete! ==="
 echo ""
-echo "To start training, run:"
-echo "python scripts/train.py --config configs/vits_runpod.yaml --dataset btsee/mbspeech_mn --push-to-hub --hf-repo btsee/orontts"
+echo "To start training:"
+echo "  nohup python scripts/train.py --config configs/vits_runpod.yaml --dataset btsee/mbspeech_mn --push-to-hub --hf-repo btsee/oron-tts > /workspace/train.log 2>&1 &"
 echo ""
-echo "Or with explicit token:"
-echo "python scripts/train.py --config configs/vits_runpod.yaml --dataset btsee/mbspeech_mn --push-to-hub --hf-repo btsee/orontts --hf-token \$HF_TOKEN"
+echo "To monitor training:"
+echo "  tail -f /workspace/train.log"
 echo ""
