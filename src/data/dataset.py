@@ -5,6 +5,7 @@ from typing import Any
 
 import numpy as np
 import torch
+from datasets import Audio
 from torch.utils.data import Dataset
 
 from src.utils.audio import AudioProcessor
@@ -94,6 +95,12 @@ class TTSDataset(Dataset):
         audio_arrays: list[np.ndarray] = []
         texts: list[str] = []
         speaker_ids: list[int] = []
+
+        # Cast audio column to use soundfile decoder (avoids torchcodec/FFmpeg dependency)
+        hf_dataset = hf_dataset.cast_column(
+            audio_column,
+            Audio(sampling_rate=sample_rate, decode=True),
+        )
 
         # Auto-detect text column if not specified
         if text_column is None:
