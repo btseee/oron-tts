@@ -96,7 +96,7 @@ class TTSDataset(Dataset):
         texts: list[str] = []
         speaker_ids: list[int] = []
 
-        # Cast audio column to use soundfile decoder (avoids torchcodec/FFmpeg dependency)
+        # Cast audio column to ensure correct sample rate
         hf_dataset = hf_dataset.cast_column(
             audio_column,
             Audio(sampling_rate=sample_rate, decode=True),
