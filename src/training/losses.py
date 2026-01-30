@@ -8,11 +8,15 @@ def feature_loss(
     fmap_r: list[list[torch.Tensor]],
     fmap_g: list[list[torch.Tensor]],
 ) -> torch.Tensor:
-    loss = torch.tensor(0.0, device=fmap_r[0][0].device)
+    loss = torch.tensor(0.0, device=fmap_r[0][0].device, requires_grad=True)
+    count = 0
     for dr, dg in zip(fmap_r, fmap_g):
         for rl, gl in zip(dr, dg):
-            loss += torch.mean(torch.abs(rl - gl))
-    return loss * 2
+            if torch.isnan(rl).any() or torch.isnan(gl).any():
+                continue
+            loss = loss + torch.mean(torch.abs(rl - gl).clamp(max=100.0))
+            count += 1
+    return (loss / max(count, 1)) * 2
 
 
 def discriminator_loss(

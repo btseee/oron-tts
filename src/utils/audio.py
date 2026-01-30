@@ -68,7 +68,10 @@ class AudioProcessor:
         sf.write(str(path), audio, self.sample_rate)
 
     def normalize_audio(self, audio: torch.Tensor) -> torch.Tensor:
-        return audio / (audio.abs().max() + 1e-7)
+        max_val = audio.abs().max()
+        if max_val < 1e-8:  # Silent audio
+            return audio
+        return torch.clamp(audio / (max_val + 1e-7), -1.0, 1.0)
 
     def trim_silence(
         self,
@@ -116,7 +119,12 @@ class AudioProcessor:
         return mel.squeeze(0)
 
     def _amp_to_db(self, x: torch.Tensor, min_level: float = 1e-5) -> torch.Tensor:
-        return torch.log(torch.clamp(x, min=min_level))
+        x_clamped = torch.clamp(x, min=min_level)
+        log_spec = torch.log(x_clamped)
+        # Check for NaN/Inf in spectrogram
+        if torch.isnan(log_spec).any() or torch.isinf(log_spec).any():
+            log_spec = torch.nan_to_num(log_spec, nan=0.0, posinf=0.0, neginf=-11.5)
+        return log_spec
 
     def _db_to_amp(self, x: torch.Tensor) -> torch.Tensor:
         return torch.exp(x)

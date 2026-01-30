@@ -43,6 +43,7 @@ pip install "datasets>=3.0.0,<4.0.0" -q
 # Install project without upgrading torch
 pip install -e . --no-deps -q
 pip install numpy scipy librosa soundfile huggingface-hub deepfilternet pyyaml tqdm tensorboard einops -q
+pip install torch-ema
 
 # Verify installations
 echo "[6/6] Verifying installation..."

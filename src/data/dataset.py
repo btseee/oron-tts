@@ -55,33 +55,42 @@ class TTSDataset(Dataset):
         return self._len
 
     def __getitem__(self, idx: int) -> dict[str, Any]:
-        text = self.texts[idx]
-        speaker_id = self.speaker_ids[idx]
+        try:
+            text = self.texts[idx]
+            speaker_id = self.speaker_ids[idx]
 
-        if self.audio_arrays is not None:
-            audio = torch.from_numpy(self.audio_arrays[idx]).float()
-            audio_path = f"sample_{idx}"
-        else:
-            assert self.audio_paths is not None
-            audio_path = str(self.audio_paths[idx])
-            audio, _ = self.audio_processor.load_audio(self.audio_paths[idx])
+            if self.audio_arrays is not None:
+                audio = torch.from_numpy(self.audio_arrays[idx]).float()
+                audio_path = f"sample_{idx}"
+            else:
+                assert self.audio_paths is not None
+                audio_path = str(self.audio_paths[idx])
+                audio, _ = self.audio_processor.load_audio(self.audio_paths[idx])
 
-        audio = self.audio_processor.normalize_audio(audio)
+            audio = self.audio_processor.normalize_audio(audio)
 
-        if self.max_audio_len and len(audio) > self.max_audio_len:
-            audio = audio[: self.max_audio_len]
+            if self.max_audio_len and len(audio) > self.max_audio_len:
+                audio = audio[: self.max_audio_len]
+            
+            if torch.isnan(audio).any() or torch.isinf(audio).any():
+                raise ValueError(f"Invalid audio at {audio_path}")
+            
+            if len(audio) < self.min_audio_len:
+                raise ValueError(f"Audio too short: {len(audio)} < {self.min_audio_len}")
 
-        spec = self.audio_processor.mel_spectrogram(audio)
-        text_ids = self.text_cleaner.text_to_sequence(text)
+            spec = self.audio_processor.mel_spectrogram(audio)
+            text_ids = self.text_cleaner.text_to_sequence(text)
 
-        return {
-            "audio": audio,
-            "spec": spec,
-            "text_ids": torch.LongTensor(text_ids),
-            "speaker_id": speaker_id,
-            "audio_path": audio_path,
-            "text": text,
-        }
+            return {
+                "audio": audio,
+                "spec": spec,
+                "text_ids": torch.LongTensor(text_ids),
+                "speaker_id": speaker_id,
+                "audio_path": audio_path,
+                "text": text,
+            }
+        except Exception as e:
+            return self.__getitem__((idx + 1) % len(self))
 
     @classmethod
     def from_hf_dataset(

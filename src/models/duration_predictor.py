@@ -258,9 +258,10 @@ class StochasticDurationPredictor(nn.Module):
             z_u, z1 = torch.split(z_q, [1, 1], 1)
             u = torch.sigmoid(z_u) * x_mask
             z0 = (w - u) * x_mask
+            z0_safe = torch.clamp(z0, min=1e-8)
             logdet_tot_q = 0.0
             logdet_tot_q += torch.sum((F.logsigmoid(z_u) + F.logsigmoid(-z_u)) * x_mask, [1, 2])
-            logw, logdet_q = self.log_flow(z0, x_mask)
+            logw, logdet_q = self.log_flow(z0_safe, x_mask)
             logdet_tot_q += logdet_q
             logdet_tot_q += torch.sum((z1**2 + math.log(2 * math.pi)) * x_mask, [1, 2]) * -0.5
 
@@ -270,7 +271,11 @@ class StochasticDurationPredictor(nn.Module):
                 logdet_tot_q -= logdet
 
             nll = torch.sum(0.5 * (math.log(2 * math.pi) + z**2) * x_mask, [1, 2]) - logdet_tot_q
-            return nll / torch.sum(x_mask)
+            nll_normalized = nll / torch.clamp(torch.sum(x_mask), min=1.0)
+            # Cap NLL to prevent explosion
+            nll_clamped = torch.clamp(nll_normalized, min=0.0, max=50.0)
+            
+            return nll_clamped
 
         flows = list(reversed(self.flows))
         flows = flows[:-2] + [flows[-1]]

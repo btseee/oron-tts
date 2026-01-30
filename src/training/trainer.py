@@ -64,7 +64,12 @@ class VITSTrainer:
         self._setup_schedulers()
 
         self.scaler = GradScaler("cuda", enabled=config.get("fp16", True))
+        from torch_ema import ExponentialMovingAverage
 
+        self.ema = ExponentialMovingAverage(
+            self.model.parameters(), decay=0.9999
+        ) if self.is_main else None
+        
         if self.is_main:
             self.writer = SummaryWriter(log_dir)
             self.checkpoint_manager = CheckpointManager(checkpoint_dir)
@@ -101,12 +106,19 @@ class VITSTrainer:
         )
 
     def _setup_schedulers(self) -> None:
-        gamma = self.config.get("lr_decay", 0.999875)
-        self.scheduler_g = torch.optim.lr_scheduler.ExponentialLR(
-            self.optimizer_g, gamma=gamma
+        gamma = self.config.get("lr_decay", 0.999)
+        
+        warmup_epochs = 2
+        def lr_lambda(epoch):
+            if epoch < warmup_epochs:
+                return (epoch + 1) / warmup_epochs
+            return gamma ** (epoch - warmup_epochs)
+        
+        self.scheduler_g = torch.optim.lr_scheduler.LambdaLR(
+            self.optimizer_g, lr_lambda=lr_lambda
         )
-        self.scheduler_d = torch.optim.lr_scheduler.ExponentialLR(
-            self.optimizer_d, gamma=gamma
+        self.scheduler_d = torch.optim.lr_scheduler.LambdaLR(
+            self.optimizer_d, lr_lambda=lr_lambda
         )
     
     def _setup_logger(self) -> logging.Logger:
@@ -173,11 +185,14 @@ class VITSTrainer:
         self.scaler.unscale_(self.optimizer_d)
         nn.utils.clip_grad_norm_(self.discriminator.parameters(), max_norm=1.0)
         self.scaler.step(self.optimizer_d)
-
+        self.scaler.update()  
+        
         with autocast("cuda", enabled=self.config.get("fp16", True)):
             y_d_hat_r, y_d_hat_g, fmap_r, fmap_g = self.discriminator(wav_slice, y_hat)
 
-            loss_dur = torch.sum(l_length.float())
+            l_length_safe = torch.clamp(l_length.float(), min=-100.0, max=100.0)
+            loss_dur = torch.sum(l_length_safe) / torch.clamp(torch.sum(x_mask), min=1.0)
+            
             loss_mel = mel_loss(y_mel, y_hat_mel)
             loss_kl = kl_loss(z_p, logs_q, m_p, logs_p, y_mask)
             loss_fm = feature_loss(fmap_r, fmap_g)
@@ -187,8 +202,29 @@ class VITSTrainer:
 
         self.optimizer_g.zero_grad()
         self.scaler.scale(loss_gen_all).backward()
+        
+        if torch.isnan(loss_gen_all) or torch.isinf(loss_gen_all):
+            self.optimizer_g.zero_grad()
+            self.optimizer_d.zero_grad()
+            if self.is_main and self.logger:
+                self.logger.warning(f"NaN/Inf at step {self.global_step}, skipping batch")
+            return {
+                "loss_disc": 0.0, "loss_gen": 0.0, "loss_fm": 0.0,
+                "loss_mel": 0.0, "loss_dur": 0.0, "loss_kl": 0.0, "loss_total": 0.0,
+            }
+
+        # Also add individual checks before combining losses:
+        if torch.isnan(loss_dur) or torch.isinf(loss_dur):
+            loss_dur = torch.tensor(0.0, device=loss_dur.device, requires_grad=True)
+        if torch.isnan(loss_mel):
+            loss_mel = torch.tensor(0.0, device=loss_mel.device, requires_grad=True)
+        if torch.isnan(loss_kl):
+            loss_kl = torch.tensor(0.0, device=loss_kl.device, requires_grad=True)
+            
         self.scaler.unscale_(self.optimizer_g)
         nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+        if self.ema:
+            self.ema.update()
         self.scaler.step(self.optimizer_g)
         self.scaler.update()
 
@@ -350,10 +386,17 @@ class VITSTrainer:
         )
 
     def save_checkpoint(self, is_best: bool = False) -> Path | None:
+        if self.ema:
+            with self.ema.average_parameters():
+                model_state = self.model.state_dict()
+        else:
+            model_state = self.model.state_dict()
+            
         if self.checkpoint_manager is None:
             return None
         model: nn.Module = self.model.module if hasattr(self.model, "module") else self.model  # type: ignore
         return self.checkpoint_manager.save(
+            model_state=model_state,
             step=self.global_step,
             model=model,
             optimizer_g=self.optimizer_g,
