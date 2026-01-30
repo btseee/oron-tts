@@ -382,7 +382,7 @@ class VITSTrainer:
             loss_mel = mel_loss(y_mel, y_hat_mel)
             loss_kl = kl_loss(z_p, logs_q, m_p, logs_p, y_mask)
             if torch.is_tensor(l_length) and l_length.numel() > 0:
-                loss_dur = torch.mean(l_length)
+                loss_dur = torch.mean(l_length)  # Average across batch
             else:
                 loss_dur = torch.zeros(1, device=self.device, requires_grad=True)
 

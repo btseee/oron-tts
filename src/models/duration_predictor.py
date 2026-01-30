@@ -289,9 +289,9 @@ class StochasticDurationPredictor(nn.Module):
             # Clamp z before final NLL computation
             z_clamped = torch.clamp(z, min=-10.0, max=10.0)
             nll = torch.sum(0.5 * (math.log(2 * math.pi) + z_clamped ** 2) * x_mask, [1, 2]) - logdet_tot_q
-            nll_normalized = nll / torch.clamp(torch.sum(x_mask), min=1.0)
+            mask_sum_per_sample = torch.sum(x_mask, [1, 2]).clamp(min=1.0)  # [batch_size]
+            nll_normalized = nll / mask_sum_per_sample  # Per-sample division
 
-            # Cap NLL to prevent explosion
             nll_clamped = torch.clamp(nll_normalized, min=0.0, max=30.0)
 
             return nll_clamped
