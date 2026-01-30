@@ -25,7 +25,6 @@ from src.models.discriminator import MultiPeriodDiscriminator
 from src.models.vits import VITS
 from src.training.losses import (
     discriminator_loss,
-    duration_loss,
     feature_loss,
     generator_loss,
     kl_loss,
@@ -129,7 +128,7 @@ class VITSTrainer:
 
         self._setup_optimizers()
         self._setup_schedulers()
-        
+
         # Use separate scalers for generator and discriminator (more stable)
         use_amp = config.get("fp16", False)  # Default to FP32 for stability
         self.scaler = GradScaler("cuda", enabled=use_amp)
@@ -196,20 +195,22 @@ class VITSTrainer:
 
     def _setup_optimizers(self) -> None:
         # Lower learning rate for stable training from scratch
-        lr = self.config.get("learning_rate", 1e-4)  # Reduced from 2e-4
+        lr_g = self.config.get("learning_rate", 1e-4)  # Reduced from 2e-4
+        # Discriminator learns 2x slower to prevent it from dominating
+        lr_d = self.config.get("discriminator_lr", lr_g * 0.5)
         betas = tuple(self.config.get("betas", [0.8, 0.99]))
         eps = self.config.get("eps", 1e-8)  # Slightly larger epsilon
 
         self.optimizer_g = torch.optim.AdamW(
             self.model.parameters(),
-            lr=lr,
+            lr=lr_g,
             betas=betas,
             eps=eps,
             weight_decay=0.01,  # Add weight decay for regularization
         )
         self.optimizer_d = torch.optim.AdamW(
             self.discriminator.parameters(),
-            lr=lr,
+            lr=lr_d,  # Use lower learning rate
             betas=betas,
             eps=eps,
         )
@@ -229,7 +230,7 @@ class VITSTrainer:
         self.scheduler_d = torch.optim.lr_scheduler.LambdaLR(
             self.optimizer_d, lr_lambda=lr_lambda, last_epoch=-1
         )
-        
+
         self._scheduler_initialized = True
 
     def _setup_logger(self) -> logging.Logger:
@@ -265,7 +266,7 @@ class VITSTrainer:
         """
         self.model.train()
         self.discriminator.train()
-        
+
         # Track whether optimizers actually stepped (for scheduler synchronization)
         optimizer_g_stepped = False
         optimizer_d_stepped = False
@@ -339,13 +340,28 @@ class VITSTrainer:
         # ========== DISCRIMINATOR UPDATE ==========
         # Skip discriminator update during warmup phase
         in_warmup = self.global_step < self.disc_warmup_steps
+        # Train discriminator less frequently (every N generator steps)
+        disc_update_ratio = self.config.get("disc_update_ratio", 2)
+        should_update_disc = (self.global_step % disc_update_ratio == 0)
 
-        if not in_warmup:
+        if not in_warmup and should_update_disc:
             self.optimizer_d.zero_grad()
 
             with autocast("cuda", enabled=use_amp, dtype=torch.float16 if use_amp else torch.float32):
                 y_d_hat_r, y_d_hat_g, _, _ = self.discriminator(wav_slice, y_hat.detach())
                 loss_disc, _, _ = discriminator_loss(y_d_hat_r, y_d_hat_g)
+
+            # Diagnostic logging for GAN training
+            if self.is_main and self.global_step % 500 == 0:
+                with torch.no_grad():
+                    dr_mean = torch.mean(torch.cat([d.flatten() for d in y_d_hat_r])).item()
+                    dg_mean = torch.mean(torch.cat([d.flatten() for d in y_d_hat_g])).item()
+                    if self.logger:
+                        self.logger.info(
+                            f"[GAN Diagnostics] Step {self.global_step} | "
+                            f"D(real)={dr_mean:.4f} | D(fake)={dg_mean:.4f} | "
+                            f"Disc Loss={loss_disc.item():.4f}"
+                        )
 
             if not _check_nan_inf(loss_disc, "loss_disc"):
                 success = _safe_backward(
@@ -489,7 +505,7 @@ class VITSTrainer:
     def train_epoch(self, total_epochs: int) -> dict[str, float]:
         epoch_losses = {}
         num_batches = 0
-        
+
         # Track optimizer steps for proper scheduler synchronization
         epoch_optimizer_g_stepped = False
         epoch_optimizer_d_stepped = False
@@ -503,7 +519,7 @@ class VITSTrainer:
 
         for batch_idx, batch in enumerate(pbar):
             losses = self.train_step(batch)
-            
+
             # Track if optimizers stepped during this epoch
             if losses.get("_optimizer_g_stepped", False):
                 epoch_optimizer_g_stepped = True
