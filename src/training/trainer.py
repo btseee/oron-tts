@@ -129,7 +129,9 @@ class VITSTrainer:
 
         self._setup_optimizers()
         self._setup_schedulers()
-
+        
+        self._scheduler_step_count = 0
+        
         # Use separate scalers for generator and discriminator (more stable)
         use_amp = config.get("fp16", False)  # Default to FP32 for stability
         self.scaler = GradScaler("cuda", enabled=use_amp)
@@ -504,7 +506,10 @@ class VITSTrainer:
 
         for key in epoch_losses:
             epoch_losses[key] /= num_batches
-
+            
+        if self._scheduler_step_count == 0:
+            pass
+        
         self.scheduler_g.step()
         self.scheduler_d.step()
         self.epoch += 1
