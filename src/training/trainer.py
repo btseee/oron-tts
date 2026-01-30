@@ -315,11 +315,10 @@ class VITSTrainer:
                 self.nan_count += 1
                 return zero_losses
 
-            # Compute mel spectrograms for loss
+            # Slice real mel spectrograms (for mel loss later)
             y_mel = self._slice_segments(
                 y, ids_slice, self.config.get("segment_size", 32)
             )
-            y_hat_mel = self.audio_processor.mel_spectrogram(y_hat.squeeze(1).float())
 
             # Slice real audio waveforms to match generated audio
             hop_length = self.config.get("hop_length", 256)
@@ -381,6 +380,10 @@ class VITSTrainer:
                 loss_fm = torch.zeros(1, device=self.device, requires_grad=True).squeeze()
                 loss_gen = torch.zeros(1, device=self.device, requires_grad=True).squeeze()
 
+            # Compute mel spectrogram from generated audio (AFTER discriminator update)
+            # This ensures fresh computation graph with no shared state from disc backward
+            y_hat_mel = self.audio_processor.mel_spectrogram(y_hat.squeeze(1).float())
+
             # Compute reconstruction losses
             loss_mel = mel_loss(y_mel, y_hat_mel)
             loss_kl = kl_loss(z_p, logs_q, m_p, logs_p, y_mask)
@@ -428,36 +431,11 @@ class VITSTrainer:
             max_grad_norm=self.max_grad_norm,
             clip_value=self.grad_clip_value,
         )
-        
-        if not in_warmup and self.global_step % 2 == 0:
-            self.optimizer_g.zero_grad()
-            
-            with autocast("cuda", enabled=use_amp, dtype=torch.float16 if use_amp else torch.float32):
-                # Re-run for second gen update
-                y_d_hat_r, y_d_hat_g, fmap_r, fmap_g = self.discriminator(wav_slice, y_hat)
-                loss_fm_2 = feature_loss(fmap_r, fmap_g)
-                loss_gen_2, _ = generator_loss(y_d_hat_g)
-                
-                # Only adversarial losses, skip mel/kl/dur
-                w = self.loss_weights
-                loss_gen_extra = w["gen"] * loss_gen_2 + w["fm"] * loss_fm_2
-            
-            if not _check_nan_inf(loss_gen_extra, "loss_gen_extra"):
-                _safe_backward(
-                    loss_gen_extra,
-                    self.scaler,
-                    self.optimizer_g,
-                    self.model,
-                    max_grad_norm=self.max_grad_norm,
-                    clip_value=self.grad_clip_value,
-                )
-                self.scaler.step(self.optimizer_g)
-            self.scaler.update()
-                
+
         if success:
             if self.ema:
                 self.ema.update()
-            self.scaler.step(self.optimizer_g)            
+            self.scaler.step(self.optimizer_g)
             optimizer_g_stepped = True
         else:
             if self.is_main and self.logger:
