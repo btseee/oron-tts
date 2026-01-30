@@ -37,7 +37,7 @@ dependencies = [
     "tqdm>=4.66.0",
     "tensorboard>=2.15.0",
     "einops>=0.7.0",
-    "torch-ema",
+    "torch-ema>=0.3.0",
 ]
 
 [project.optional-dependencies]

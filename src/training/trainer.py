@@ -386,27 +386,35 @@ class VITSTrainer:
         )
 
     def save_checkpoint(self, is_best: bool = False) -> Path | None:
-        if self.ema:
-            with self.ema.average_parameters():
-                model_state = self.model.state_dict()
-        else:
-            model_state = self.model.state_dict()
-            
         if self.checkpoint_manager is None:
             return None
         model: nn.Module = self.model.module if hasattr(self.model, "module") else self.model  # type: ignore
-        return self.checkpoint_manager.save(
-            model_state=model_state,
-            step=self.global_step,
-            model=model,
-            optimizer_g=self.optimizer_g,
-            optimizer_d=self.optimizer_d,
-            scheduler_g=self.scheduler_g,
-            scheduler_d=self.scheduler_d,
-            loss=None,
-            config=self.config,
-            is_best=is_best,
-        )
+        
+        if self.ema:
+            with self.ema.average_parameters():
+                return self.checkpoint_manager.save(
+                    step=self.global_step,
+                    model=model, 
+                    optimizer_g=self.optimizer_g,
+                    optimizer_d=self.optimizer_d,
+                    scheduler_g=self.scheduler_g,
+                    scheduler_d=self.scheduler_d,
+                    loss=None,
+                    config=self.config,
+                    is_best=is_best,
+                )
+        else:
+            return self.checkpoint_manager.save(
+                step=self.global_step,
+                model=model,
+                optimizer_g=self.optimizer_g,
+                optimizer_d=self.optimizer_d,
+                scheduler_g=self.scheduler_g,
+                scheduler_d=self.scheduler_d,
+                loss=None,
+                config=self.config,
+                is_best=is_best,
+            )
 
     def load_checkpoint(self, path: str | Path | None = None, load_best: bool = False) -> None:
         if self.checkpoint_manager is None:
