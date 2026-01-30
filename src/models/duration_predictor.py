@@ -262,9 +262,10 @@ class StochasticDurationPredictor(nn.Module):
             u = torch.sigmoid(z_u_clamped) * x_mask
             z0 = (w - u) * x_mask
 
-            # More aggressive clamping for log input
-            z0_safe = torch.clamp(z0.abs(), min=1e-5) * torch.sign(z0 + 1e-8)
-            z0_safe = torch.clamp(z0_safe, min=1e-5)
+            # Prevent z0 collapse by using larger epsilon
+            # If z0 → 0 everywhere, the flow learns a delta function (bad for generalization)
+            z0_safe = torch.clamp(z0.abs(), min=1e-3) * torch.sign(z0 + 1e-8)
+            z0_safe = torch.clamp(z0_safe, min=1e-3)
 
             logdet_tot_q = torch.zeros(w.size(0), device=x.device, dtype=x.dtype)
 
@@ -292,9 +293,19 @@ class StochasticDurationPredictor(nn.Module):
             mask_sum_per_sample = torch.sum(x_mask, [1, 2]).clamp(min=1.0)  # [batch_size]
             nll_normalized = nll / mask_sum_per_sample  # Per-sample division
 
-            nll_clamped = torch.clamp(nll_normalized, min=0.0, max=30.0)
+            # Debug: Check for degenerate NLL values (should always be positive)
+            if (nll_normalized < 0.0).any():
+                import warnings
+                neg_count = (nll_normalized < 0.0).sum().item()
+                warnings.warn(f"SDP: {neg_count}/{nll_normalized.numel()} samples have negative NLL (min={nll_normalized.min().item():.4f})")
 
-            return nll_clamped
+            # Clamp but preserve small positive values - don't force to 0.0
+            # NLL should be positive, but allow small negatives to surface numerical issues
+            nll_clamped = torch.clamp(nll_normalized, min=-10.0, max=30.0)
+            # Convert any remaining negative values to small positive (prevents gradient death)
+            nll_final = torch.where(nll_clamped < 0.0, torch.abs(nll_clamped) + 0.1, nll_clamped)
+
+            return nll_final
 
         flows = list(reversed(self.flows))
         flows = flows[:-2] + [flows[-1]]
