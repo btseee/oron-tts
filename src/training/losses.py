@@ -45,7 +45,7 @@ def feature_loss(
 def discriminator_loss(
     disc_real_outputs: list[torch.Tensor],
     disc_generated_outputs: list[torch.Tensor],
-) -> tuple[torch.Tensor, list[torch.Tensor], list[torch.Tensor]]:
+) -> tuple[torch.Tensor, list[float], list[float]]:
     """Least-squares GAN discriminator loss with numerical stability.
 
     Uses label smoothing (0.9 instead of 1.0) for real samples
@@ -60,7 +60,7 @@ def discriminator_loss(
 
     for dr, dg in zip(disc_real_outputs, disc_generated_outputs, strict=False):
         dr_f = dr.float()
-        dg_f = dg.float().detach()  # Detach generated for disc update
+        dg_f = dg.float()  # Do NOT detach - discriminator needs gradients from both real and fake
 
         # Clamp outputs to prevent extreme values
         dr_f = torch.clamp(dr_f, min=-10.0, max=10.0)
@@ -73,7 +73,9 @@ def discriminator_loss(
         r_losses.append(r_loss.item())
         g_losses.append(g_loss.item())
 
-    return loss.squeeze(), r_losses, g_losses
+    # Normalize by number of discriminators for consistent loss scaling
+    num_discriminators = len(disc_real_outputs)
+    return (loss / num_discriminators).squeeze(), r_losses, g_losses
 
 
 def generator_loss(
@@ -92,7 +94,9 @@ def generator_loss(
         gen_losses.append(gen_loss)
         loss = loss + gen_loss
 
-    return loss.squeeze(), gen_losses
+    # Normalize by number of discriminators for consistent loss scaling
+    num_discriminators = len(disc_outputs)
+    return (loss / num_discriminators).squeeze(), gen_losses
 
 
 def kl_loss(
