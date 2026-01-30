@@ -427,6 +427,30 @@ class VITSTrainer:
             if self.ema:
                 self.ema.update()
             self.scaler.step(self.optimizer_g)
+            if not in_warmup and self.global_step % 2 == 0:
+                self.optimizer_g.zero_grad()
+                
+                with autocast("cuda", enabled=use_amp, dtype=torch.float16 if use_amp else torch.float32):
+                    # Re-run for second gen update
+                    y_d_hat_r, y_d_hat_g, fmap_r, fmap_g = self.discriminator(wav_slice, y_hat)
+                    loss_fm_2 = feature_loss(fmap_r, fmap_g)
+                    loss_gen_2, _ = generator_loss(y_d_hat_g)
+                    
+                    # Only adversarial losses, skip mel/kl/dur
+                    w = self.loss_weights
+                    loss_gen_extra = w["gen"] * loss_gen_2 + w["fm"] * loss_fm_2
+                
+                if not _check_nan_inf(loss_gen_extra, "loss_gen_extra"):
+                    _safe_backward(
+                        loss_gen_extra,
+                        self.scaler,
+                        self.optimizer_g,
+                        self.model,
+                        max_grad_norm=self.max_grad_norm,
+                        clip_value=self.grad_clip_value,
+                    )
+                    self.scaler.step(self.optimizer_g)
+                self.scaler.update()
             optimizer_g_stepped = True
         else:
             if self.is_main and self.logger:

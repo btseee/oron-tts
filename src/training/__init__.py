@@ -1,6 +1,7 @@
 from src.training.losses import (
     discriminator_loss,
     feature_loss,
+    duration_loss,
     generator_loss,
     kl_loss,
 )
@@ -12,4 +13,5 @@ __all__ = [
     "discriminator_loss",
     "feature_loss",
     "kl_loss",
+    "duration_loss",
 ]

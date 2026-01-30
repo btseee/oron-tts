@@ -172,26 +172,23 @@ def mel_loss(
     # L1 loss with moderate weight
     # Original VITS uses 45x, but for training from scratch 35x is more stable
     loss = F.l1_loss(y_mel_f, y_g_hat_mel_f)
-    return loss * 35.0
+    return loss * 25.0
 
 
 def duration_loss(
-    l_length: torch.Tensor,
+    logw: torch.Tensor,
+    logw_gt: torch.Tensor, 
     x_mask: torch.Tensor,
 ) -> torch.Tensor:
-    """Duration prediction loss with proper normalization.
-
-    Normalizes by sequence length and applies clamping to prevent
-    duration loss from dominating early in training.
+    """Duration prediction loss.
+    
+    Args:
+        logw: Predicted log durations [B, 1, T]
+        logw_gt: Ground truth log durations [B, 1, T]
+        x_mask: Text mask [B, 1, T]
     """
-    l_length_f = l_length.float()
-
-    # Clamp individual values before summing
-    l_length_clamped = torch.clamp(l_length_f, min=-50.0, max=50.0)
-
-    # Normalize by sequence length
-    mask_sum = torch.sum(x_mask).clamp(min=1.0)
-    dur_loss = torch.sum(l_length_clamped) / mask_sum
-
-    # Final clamp
-    return torch.clamp(dur_loss, min=0.0, max=50.0)
+    if not torch.isfinite(logw).all() or not torch.isfinite(logw_gt).all():
+        return torch.zeros(1, device=logw.device, requires_grad=True).squeeze()
+    
+    loss = torch.sum((logw - logw_gt) ** 2, [1, 2]) / torch.sum(x_mask, [1, 2])
+    return torch.mean(loss)

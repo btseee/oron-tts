@@ -15,7 +15,7 @@ fmax: 8000.0
 # Optimized for training from scratch - prioritizes stability
 batch_size: 12  # Reduced for stability
 num_epochs: 1500
-learning_rate: 0.0001  # Lower LR for stable training from scratch
+learning_rate: 0.0002
 betas: [0.8, 0.99]
 eps: 1.0e-8  # Larger epsilon for numerical stability
 lr_decay: 0.9995  # Slower decay
@@ -36,10 +36,10 @@ grad_clip_value: 3.0  # Clip individual gradient values
 
 # Loss Weights (balanced for stable training)
 loss_weight_mel: 1.0
-loss_weight_kl: 0.5  # Reduce KL weight initially
-loss_weight_dur: 1.0
-loss_weight_fm: 1.0
-loss_weight_gen: 1.0
+loss_weight_kl: 0.1  
+loss_weight_dur: 1.5      
+loss_weight_fm: 2.0     
+loss_weight_gen: 3.0  
 
 # CUDA 12.4 / PyTorch 2.4.0 Optimizations
 compile_model: false  # Disable for stability during initial training
