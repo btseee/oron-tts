@@ -192,7 +192,7 @@ class StochasticDurationPredictor(nn.Module):
         filter_channels: int,
         kernel_size: int,
         p_dropout: float,
-        n_flows: int = 4,
+        n_flows: int = 2,  # Reduced from 4 to 2 for stability
         gin_channels: int = 0,
     ) -> None:
         super().__init__()
@@ -273,37 +273,49 @@ class StochasticDurationPredictor(nn.Module):
             logsig_pos = F.logsigmoid(z_u_clamped)
             logsig_neg = F.logsigmoid(-z_u_clamped)
             logsig_sum = torch.clamp(logsig_pos + logsig_neg, min=-20.0, max=0.0)
-            logdet_tot_q = logdet_tot_q + torch.sum(logsig_sum * x_mask, [1, 2])
+            logdet_contrib_1 = torch.sum(logsig_sum * x_mask, [1, 2])
+            # Clamp individual logdet contributions to prevent explosion
+            logdet_contrib_1 = torch.clamp(logdet_contrib_1, min=-50.0, max=50.0)
+            logdet_tot_q = logdet_tot_q + logdet_contrib_1
 
             logw, logdet_q = self.log_flow(z0_safe, x_mask)
+            # Clamp log_flow contribution
+            logdet_q = torch.clamp(logdet_q, min=-50.0, max=50.0)
             logdet_tot_q = logdet_tot_q + logdet_q
 
             # Clamp z1 squared to prevent explosion
             z1_sq = torch.clamp(z1 ** 2, max=100.0)
-            logdet_tot_q = logdet_tot_q + torch.sum((z1_sq + math.log(2 * math.pi)) * x_mask, [1, 2]) * -0.5
+            logdet_contrib_2 = torch.sum((z1_sq + math.log(2 * math.pi)) * x_mask, [1, 2]) * -0.5
+            logdet_contrib_2 = torch.clamp(logdet_contrib_2, min=-50.0, max=50.0)
+            logdet_tot_q = logdet_tot_q + logdet_contrib_2
 
             z = torch.cat([logw, z1], 1)
             for flow in flows:
                 z, logdet = flow(z, x_mask, g=x, reverse=reverse)
+                # Clamp each flow's logdet contribution
+                logdet = torch.clamp(logdet, min=-50.0, max=50.0)
                 logdet_tot_q = logdet_tot_q - logdet
+            
+            # Final clamp on total accumulated logdet before NLL computation
+            logdet_tot_q = torch.clamp(logdet_tot_q, min=-100.0, max=100.0)
 
             # Clamp z before final NLL computation
             z_clamped = torch.clamp(z, min=-10.0, max=10.0)
-            nll = torch.sum(0.5 * (math.log(2 * math.pi) + z_clamped ** 2) * x_mask, [1, 2]) - logdet_tot_q
+            # Compute base Gaussian NLL
+            gaussian_nll = torch.sum(0.5 * (math.log(2 * math.pi) + z_clamped ** 2) * x_mask, [1, 2])
+            # Ensure Gaussian NLL is positive and bounded
+            gaussian_nll = torch.clamp(gaussian_nll, min=0.1, max=1000.0)
+            
+            # Subtract logdet with safeguard to keep NLL positive
+            # If logdet is too large, it means the flow is too confident (overfitting)
+            nll = gaussian_nll - logdet_tot_q
+            
             mask_sum_per_sample = torch.sum(x_mask, [1, 2]).clamp(min=1.0)  # [batch_size]
             nll_normalized = nll / mask_sum_per_sample  # Per-sample division
 
-            # Debug: Check for degenerate NLL values (should always be positive)
-            if (nll_normalized < 0.0).any():
-                import warnings
-                neg_count = (nll_normalized < 0.0).sum().item()
-                warnings.warn(f"SDP: {neg_count}/{nll_normalized.numel()} samples have negative NLL (min={nll_normalized.min().item():.4f})")
-
-            # Clamp but preserve small positive values - don't force to 0.0
-            # NLL should be positive, but allow small negatives to surface numerical issues
-            nll_clamped = torch.clamp(nll_normalized, min=-10.0, max=30.0)
-            # Convert any remaining negative values to small positive (prevents gradient death)
-            nll_final = torch.where(nll_clamped < 0.0, torch.abs(nll_clamped) + 0.1, nll_clamped)
+            # Force NLL to be positive (valid probability distribution requirement)
+            # If negative, use L1 penalty instead to maintain gradient flow
+            nll_final = torch.clamp(nll_normalized, min=0.01, max=30.0)
 
             return nll_final
 

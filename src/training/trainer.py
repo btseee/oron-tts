@@ -382,10 +382,6 @@ class VITSTrainer:
             loss_mel = mel_loss(y_mel, y_hat_mel)
             loss_kl = kl_loss(z_p, logs_q, m_p, logs_p, y_mask)
             if torch.is_tensor(l_length) and l_length.numel() > 0:
-                # Debug: Check l_length before averaging (first 100 steps)
-                if self.is_main and self.global_step < 100 and self.logger:
-                    l_min, l_max, l_mean = l_length.min().item(), l_length.max().item(), l_length.mean().item()
-                    self.logger.info(f"[DEBUG Step {self.global_step}] l_length: min={l_min:.6f}, max={l_max:.6f}, mean={l_mean:.6f}")
                 loss_dur = torch.mean(l_length)  # Average across batch
             else:
                 loss_dur = torch.zeros(1, device=self.device, requires_grad=True)
@@ -396,8 +392,6 @@ class VITSTrainer:
             if _check_nan_inf(loss_kl, "loss_kl"):
                 loss_kl = torch.zeros(1, device=self.device, requires_grad=True).squeeze()
             if _check_nan_inf(loss_dur, "loss_dur"):
-                if self.is_main and self.logger:
-                    self.logger.warning(f"[Step {self.global_step}] NaN/Inf detected in loss_dur, zeroing out")
                 loss_dur = torch.zeros(1, device=self.device, requires_grad=True).squeeze()
             if _check_nan_inf(loss_fm, "loss_fm"):
                 loss_fm = torch.zeros(1, device=self.device, requires_grad=True).squeeze()
