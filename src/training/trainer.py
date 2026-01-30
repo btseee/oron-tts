@@ -327,6 +327,9 @@ class VITSTrainer:
             wav_segment_length = segment_size * hop_length
             wav_slice = self._slice_audio_segments(wav, ids_slice, wav_segment_length, hop_length)
             wav_slice = wav_slice.unsqueeze(1)  # Add channel dim: [B, 1, T]
+            # Detach real audio - we never compute gradients w.r.t. real samples
+            # This prevents "backward through graph twice" error when discriminator is called twice
+            wav_slice = wav_slice.detach()
 
         except RuntimeError as e:
             if self.is_main and self.logger:
