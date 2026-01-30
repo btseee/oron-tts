@@ -80,10 +80,7 @@ class CheckpointManager:
         device: str = "cpu",
     ) -> dict[str, Any]:
         if path is None:
-            if load_best:
-                path = self._get_best_checkpoint_path()
-            else:
-                path = self._get_latest_checkpoint()
+            path = self._get_best_checkpoint_path() if load_best else self._get_latest_checkpoint()
 
         if path is None or not Path(path).exists():
             return {"step": 0, "loss": None}

@@ -1,6 +1,5 @@
 """Common neural network modules for VITS."""
 
-import math
 from typing import Final
 
 import torch
@@ -70,10 +69,7 @@ class WN(nn.Module):
             in_layer = nn.utils.parametrizations.weight_norm(in_layer)
             self.in_layers.append(in_layer)
 
-            if i < n_layers - 1:
-                res_skip_channels = 2 * hidden_channels
-            else:
-                res_skip_channels = hidden_channels
+            res_skip_channels = 2 * hidden_channels if i < n_layers - 1 else hidden_channels
 
             res_skip_layer = nn.Conv1d(hidden_channels, res_skip_channels, 1)
             res_skip_layer = nn.utils.parametrizations.weight_norm(res_skip_layer)
@@ -155,7 +151,7 @@ class ConvReluNorm(nn.Module):
             self.proj.bias.data.zero_()
 
     def forward(self, x: torch.Tensor, x_mask: torch.Tensor) -> torch.Tensor:
-        for conv, norm in zip(self.conv_layers, self.norm_layers):
+        for conv, norm in zip(self.conv_layers, self.norm_layers, strict=False):
             x = conv(x * x_mask)
             x = norm(x)
             x = F.relu(x)
@@ -198,7 +194,7 @@ class DDSConv(nn.Module):
             x = x + g
 
         for conv_sep, conv_1x1, norm_1, norm_2 in zip(
-            self.convs_sep, self.convs_1x1, self.norms_1, self.norms_2
+            self.convs_sep, self.convs_1x1, self.norms_1, self.norms_2, strict=False
         ):
             y = conv_sep(x * x_mask)
             y = norm_1(y)
@@ -288,7 +284,7 @@ class ResBlock1(nn.Module):
         ])
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        for c1, c2 in zip(self.convs1, self.convs2):
+        for c1, c2 in zip(self.convs1, self.convs2, strict=False):
             xt = F.leaky_relu(x, LRELU_SLOPE)
             xt = c1(xt)
             xt = F.leaky_relu(xt, LRELU_SLOPE)

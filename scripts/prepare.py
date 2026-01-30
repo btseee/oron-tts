@@ -80,7 +80,7 @@ def create_metadata(
     output_path: Path,
 ) -> None:
     metadata = []
-    for audio_path, text, sid in zip(audio_paths, texts, speaker_ids):
+    for audio_path, text, sid in zip(audio_paths, texts, speaker_ids, strict=False):
         metadata.append({
             "audio_path": str(audio_path),
             "text": text,

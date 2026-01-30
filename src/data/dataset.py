@@ -71,10 +71,10 @@ class TTSDataset(Dataset):
 
             if self.max_audio_len and len(audio) > self.max_audio_len:
                 audio = audio[: self.max_audio_len]
-            
+
             if torch.isnan(audio).any() or torch.isinf(audio).any():
                 raise ValueError(f"Invalid audio at {audio_path}")
-            
+
             if len(audio) < self.min_audio_len:
                 raise ValueError(f"Audio too short: {len(audio)} < {self.min_audio_len}")
 
@@ -89,7 +89,7 @@ class TTSDataset(Dataset):
                 "audio_path": audio_path,
                 "text": text,
             }
-        except Exception as e:
+        except Exception:
             return self.__getitem__((idx + 1) % len(self))
 
     @classmethod

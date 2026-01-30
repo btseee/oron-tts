@@ -101,7 +101,7 @@ PHONEME_SET: Final[list[str]] = [
 class MongolianPhonemizer:
     def __init__(self) -> None:
         self._phoneme_to_id: dict[str, int] = {p: i for i, p in enumerate(PHONEME_SET)}
-        self._id_to_phoneme: dict[int, str] = {i: p for i, p in enumerate(PHONEME_SET)}
+        self._id_to_phoneme: dict[int, str] = dict(enumerate(PHONEME_SET))
 
     @property
     def vocab_size(self) -> int:

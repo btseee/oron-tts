@@ -8,7 +8,6 @@ import torchaudio
 
 from src.models.vits import VITS
 from src.utils.audio import AudioProcessor
-from src.utils.checkpoint import CheckpointManager
 from src.utils.phonemizer import MongolianPhonemizer
 from src.utils.text_cleaner import TextCleaner
 
