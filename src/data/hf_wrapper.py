@@ -1,10 +1,10 @@
 """Hugging Face Dataset wrappers for Common Voice and MBSpeech."""
 
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 from datasets import Audio, Dataset, DatasetDict, load_dataset
-from huggingface_hub import HfApi
 
 
 class HFDatasetWrapper:

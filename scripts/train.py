@@ -200,14 +200,14 @@ def main() -> None:
     # Handle --from-local override
     if args.from_local:
         args.from_hf = False
-    
+
     # Load HF token from environment if not provided
     if args.hf_token is None:
         import os
         args.hf_token = os.getenv("HF_TOKEN")
 
     config = load_config(args.config)
-    
+
     # Override num_epochs if specified
     if args.num_epochs is not None:
         config["num_epochs"] = args.num_epochs

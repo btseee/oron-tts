@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from src.models.modules import LRELU_SLOPE, ResBlock1, ResBlock2, get_padding, init_weights
+from src.models.modules import LRELU_SLOPE, ResBlock1, ResBlock2, init_weights
 
 
 class Generator(nn.Module):
@@ -27,7 +27,7 @@ class Generator(nn.Module):
         resblock_module = ResBlock1 if resblock == "1" else ResBlock2
 
         self.ups = nn.ModuleList()
-        for i, (u, k) in enumerate(zip(upsample_rates, upsample_kernel_sizes)):
+        for i, (u, k) in enumerate(zip(upsample_rates, upsample_kernel_sizes, strict=False)):
             self.ups.append(
                 nn.utils.parametrizations.weight_norm(
                     nn.ConvTranspose1d(
@@ -43,7 +43,7 @@ class Generator(nn.Module):
         self.resblocks = nn.ModuleList()
         for i in range(len(self.ups)):
             ch = upsample_initial_channel // (2 ** (i + 1))
-            for j, (k, d) in enumerate(zip(resblock_kernel_sizes, resblock_dilation_sizes)):
+            for _j, (k, d) in enumerate(zip(resblock_kernel_sizes, resblock_dilation_sizes, strict=False)):
                 dilation = tuple(d) if isinstance(d, list) else d
                 self.resblocks.append(resblock_module(ch, k, dilation))  # type: ignore
 

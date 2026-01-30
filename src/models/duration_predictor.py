@@ -274,7 +274,7 @@ class StochasticDurationPredictor(nn.Module):
             nll_normalized = nll / torch.clamp(torch.sum(x_mask), min=1.0)
             # Cap NLL to prevent explosion
             nll_clamped = torch.clamp(nll_normalized, min=0.0, max=50.0)
-            
+
             return nll_clamped
 
         flows = list(reversed(self.flows))

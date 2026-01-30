@@ -6,7 +6,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from src.models.modules import WN, LayerNorm
+from src.models.modules import LayerNorm
 
 
 class MultiHeadAttention(nn.Module):

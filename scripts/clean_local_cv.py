@@ -10,7 +10,6 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 import torch
-import torchaudio
 from tqdm import tqdm
 
 from src.data.denoiser import AudioDenoiser
@@ -195,7 +194,7 @@ def save_metadata(
     import json
 
     metadata = []
-    for audio_path, text, sid in zip(audio_paths, texts, speaker_ids):
+    for audio_path, text, sid in zip(audio_paths, texts, speaker_ids, strict=False):
         metadata.append({
             "audio_path": str(audio_path),
             "text": text,

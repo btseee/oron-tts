@@ -2,7 +2,6 @@
 
 import logging
 import sys
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -11,7 +10,7 @@ import torch.nn as nn
 from torch.amp.autocast_mode import autocast
 from torch.amp.grad_scaler import GradScaler
 from torch.nn.parallel import DistributedDataParallel as DDP
-from torch.utils.data import DataLoader, DistributedSampler
+from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
@@ -69,7 +68,7 @@ class VITSTrainer:
         self.ema = ExponentialMovingAverage(
             self.model.parameters(), decay=0.9999
         ) if self.is_main else None
-        
+
         if self.is_main:
             self.writer = SummaryWriter(log_dir)
             self.checkpoint_manager = CheckpointManager(checkpoint_dir)
@@ -79,7 +78,7 @@ class VITSTrainer:
 
         self.global_step = 0
         self.epoch = 0
-        
+
         # Setup logging for container logs (RunPod)
         self.use_tqdm = config.get("use_tqdm", True)
         if self.is_main:
@@ -107,31 +106,31 @@ class VITSTrainer:
 
     def _setup_schedulers(self) -> None:
         gamma = self.config.get("lr_decay", 0.999)
-        
+
         warmup_epochs = 2
         def lr_lambda(epoch):
             if epoch < warmup_epochs:
                 return (epoch + 1) / warmup_epochs
             return gamma ** (epoch - warmup_epochs)
-        
+
         self.scheduler_g = torch.optim.lr_scheduler.LambdaLR(
             self.optimizer_g, lr_lambda=lr_lambda
         )
         self.scheduler_d = torch.optim.lr_scheduler.LambdaLR(
             self.optimizer_d, lr_lambda=lr_lambda
         )
-    
+
     def _setup_logger(self) -> logging.Logger:
         logger = logging.getLogger("OronTTS")
         logger.setLevel(logging.INFO)
-        
+
         # Remove existing handlers
         logger.handlers.clear()
-        
+
         # Console handler for container logs
         handler = logging.StreamHandler(sys.stdout)
         handler.setLevel(logging.INFO)
-        
+
         # Format with timestamp for RunPod logs
         formatter = logging.Formatter(
             "[%(asctime)s] [%(levelname)s] %(message)s",
@@ -139,7 +138,7 @@ class VITSTrainer:
         )
         handler.setFormatter(formatter)
         logger.addHandler(handler)
-        
+
         return logger
 
     def train_step(self, batch: dict[str, torch.Tensor]) -> dict[str, float]:
@@ -185,14 +184,14 @@ class VITSTrainer:
         self.scaler.unscale_(self.optimizer_d)
         nn.utils.clip_grad_norm_(self.discriminator.parameters(), max_norm=1.0)
         self.scaler.step(self.optimizer_d)
-        self.scaler.update()  
-        
+        self.scaler.update()
+
         with autocast("cuda", enabled=self.config.get("fp16", True)):
             y_d_hat_r, y_d_hat_g, fmap_r, fmap_g = self.discriminator(wav_slice, y_hat)
 
             l_length_safe = torch.clamp(l_length.float(), min=-100.0, max=100.0)
             loss_dur = torch.sum(l_length_safe) / torch.clamp(torch.sum(x_mask), min=1.0)
-            
+
             loss_mel = mel_loss(y_mel, y_hat_mel)
             loss_kl = kl_loss(z_p, logs_q, m_p, logs_p, y_mask)
             loss_fm = feature_loss(fmap_r, fmap_g)
@@ -202,7 +201,7 @@ class VITSTrainer:
 
         self.optimizer_g.zero_grad()
         self.scaler.scale(loss_gen_all).backward()
-        
+
         if torch.isnan(loss_gen_all) or torch.isinf(loss_gen_all):
             self.optimizer_g.zero_grad()
             self.optimizer_d.zero_grad()
@@ -220,7 +219,7 @@ class VITSTrainer:
             loss_mel = torch.tensor(0.0, device=loss_mel.device, requires_grad=True)
         if torch.isnan(loss_kl):
             loss_kl = torch.tensor(0.0, device=loss_kl.device, requires_grad=True)
-            
+
         self.scaler.unscale_(self.optimizer_g)
         nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
         if self.ema:
@@ -267,14 +266,14 @@ class VITSTrainer:
     def train_epoch(self) -> dict[str, float]:
         epoch_losses = {}
         num_batches = 0
-        
+
         if self.is_main and self.logger:
             self.logger.info(f"Starting Epoch {self.epoch + 1}")
 
         # Use tqdm if enabled, otherwise plain iterator
         disable_tqdm = not self.is_main or not self.use_tqdm
         pbar = tqdm(self.train_loader, desc=f"Epoch {self.epoch}", disable=disable_tqdm)
-        
+
         for batch_idx, batch in enumerate(pbar):
             losses = self.train_step(batch)
 
@@ -284,7 +283,7 @@ class VITSTrainer:
 
             if self.is_main and self.global_step % self.config.get("log_interval", 100) == 0:
                 self._log_training(losses)
-                
+
                 # Log to container logs (RunPod)
                 if self.logger and not self.use_tqdm:
                     lr = self.optimizer_g.param_groups[0]['lr']
@@ -389,12 +388,12 @@ class VITSTrainer:
         if self.checkpoint_manager is None:
             return None
         model: nn.Module = self.model.module if hasattr(self.model, "module") else self.model  # type: ignore
-        
+
         if self.ema:
             with self.ema.average_parameters():
                 return self.checkpoint_manager.save(
                     step=self.global_step,
-                    model=model, 
+                    model=model,
                     optimizer_g=self.optimizer_g,
                     optimizer_d=self.optimizer_d,
                     scheduler_g=self.scheduler_g,

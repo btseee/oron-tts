@@ -1,10 +1,10 @@
-from src.training.trainer import VITSTrainer
 from src.training.losses import (
-    generator_loss,
     discriminator_loss,
     feature_loss,
+    generator_loss,
     kl_loss,
 )
+from src.training.trainer import VITSTrainer
 
 __all__ = [
     "VITSTrainer",

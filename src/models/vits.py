@@ -5,6 +5,7 @@ import math
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from src.models.decoder import Generator
 from src.models.duration_predictor import StochasticDurationPredictor
@@ -30,9 +31,6 @@ def generate_path(duration: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
     path = path - F.pad(path, (0, 0, 1, 0, 0, 0))[:, :-1]
     path = path.unsqueeze(1).transpose(2, 3) * mask
     return path
-
-
-import torch.nn.functional as F
 
 
 class VITS(nn.Module):
@@ -147,10 +145,7 @@ class VITS(nn.Module):
         tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
     ]:
         x, m_p, logs_p, x_mask = self.enc_p(x, x_lengths)
-        if self.n_speakers > 1:
-            g = self.emb_g(sid).unsqueeze(-1)
-        else:
-            g = None
+        g = self.emb_g(sid).unsqueeze(-1) if self.n_speakers > 1 else None
 
         z, m_q, logs_q, y_mask = self.enc_q(y, y_lengths, g=g)
         z_p = self.flow(z, y_mask, g=g)
@@ -195,10 +190,7 @@ class VITS(nn.Module):
         max_len: int | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]]:
         x, m_p, logs_p, x_mask = self.enc_p(x, x_lengths)
-        if self.n_speakers > 1:
-            g = self.emb_g(sid).unsqueeze(-1)
-        else:
-            g = None
+        g = self.emb_g(sid).unsqueeze(-1) if self.n_speakers > 1 else None
 
         if self.use_sdp:
             logw = self.dp(x, x_mask, g=g, reverse=True, noise_scale=noise_scale_w)
@@ -266,7 +258,6 @@ class VITS(nn.Module):
         for j in range(t_s - 1, -1, -1):
             for k in range(b):
                 path[k, index[k], j] = 1
-                if j > 0:
-                    if direction[k, index[k], j] == 0 and index[k] > 0:
-                        index[k] -= 1
+                if j > 0 and direction[k, index[k], j] == 0 and index[k] > 0:
+                    index[k] -= 1
         return path
