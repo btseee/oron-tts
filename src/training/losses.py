@@ -1,4 +1,10 @@
-"""Loss functions for VITS training."""
+"""Loss functions for VITS training.
+
+Implements numerically stable loss functions following best practices from:
+- Original VITS paper (Kim et al., 2021)
+- NaturalSpeech / VITS2 improvements
+- Practical stability fixes for training from scratch
+"""
 
 import torch
 import torch.nn.functional as F
@@ -8,41 +14,85 @@ def feature_loss(
     fmap_r: list[list[torch.Tensor]],
     fmap_g: list[list[torch.Tensor]],
 ) -> torch.Tensor:
-    loss = torch.tensor(0.0, device=fmap_r[0][0].device, requires_grad=True)
+    """Feature matching loss between real and generated feature maps.
+
+    Uses float32 accumulation and detaches real features to prevent
+    gradients from flowing back through discriminator during generator update.
+    """
+    device = fmap_r[0][0].device
+    loss = torch.zeros(1, device=device, dtype=torch.float32)
     count = 0
+
     for dr, dg in zip(fmap_r, fmap_g, strict=False):
         for rl, gl in zip(dr, dg, strict=False):
-            if torch.isnan(rl).any() or torch.isnan(gl).any():
+            # Skip if either contains NaN/Inf
+            if not torch.isfinite(rl).all() or not torch.isfinite(gl).all():
                 continue
-            loss = loss + torch.mean(torch.abs(rl - gl).clamp(max=100.0))
+            # Detach real features - only train generator to match
+            rl_det = rl.float().detach()
+            gl_f = gl.float()
+            # L1 loss with clamping for stability
+            diff = torch.abs(rl_det - gl_f)
+            loss = loss + torch.mean(diff.clamp(max=50.0))
             count += 1
-    return (loss / max(count, 1)) * 2
+
+    if count == 0:
+        return torch.zeros(1, device=device, requires_grad=True).squeeze()
+
+    return (loss / count).squeeze() * 2.0
 
 
 def discriminator_loss(
     disc_real_outputs: list[torch.Tensor],
     disc_generated_outputs: list[torch.Tensor],
 ) -> tuple[torch.Tensor, list[torch.Tensor], list[torch.Tensor]]:
-    loss = torch.tensor(0.0, device=disc_real_outputs[0].device)
-    r_losses = []
-    g_losses = []
+    """Least-squares GAN discriminator loss with numerical stability.
+
+    Uses label smoothing (0.9 instead of 1.0) for real samples
+    to improve training stability.
+    """
+    device = disc_real_outputs[0].device
+    loss = torch.zeros(1, device=device, dtype=torch.float32)
+    r_losses: list[float] = []
+    g_losses: list[float] = []
+
+    real_label = 0.9  # Label smoothing for stability
+
     for dr, dg in zip(disc_real_outputs, disc_generated_outputs, strict=False):
-        r_loss = torch.mean((1 - dr) ** 2)
-        g_loss = torch.mean(dg**2)
-        loss += r_loss + g_loss
+        dr_f = dr.float()
+        dg_f = dg.float().detach()  # Detach generated for disc update
+
+        # Clamp outputs to prevent extreme values
+        dr_f = torch.clamp(dr_f, min=-10.0, max=10.0)
+        dg_f = torch.clamp(dg_f, min=-10.0, max=10.0)
+
+        r_loss = torch.mean((real_label - dr_f) ** 2)
+        g_loss = torch.mean(dg_f ** 2)
+
+        loss = loss + r_loss + g_loss
         r_losses.append(r_loss.item())
         g_losses.append(g_loss.item())
-    return loss, r_losses, g_losses
+
+    return loss.squeeze(), r_losses, g_losses
 
 
-def generator_loss(disc_outputs: list[torch.Tensor]) -> tuple[torch.Tensor, list[torch.Tensor]]:
-    loss = torch.tensor(0.0, device=disc_outputs[0].device)
-    gen_losses = []
+def generator_loss(
+    disc_outputs: list[torch.Tensor],
+) -> tuple[torch.Tensor, list[torch.Tensor]]:
+    """Least-squares GAN generator loss with numerical stability."""
+    device = disc_outputs[0].device
+    loss = torch.zeros(1, device=device, dtype=torch.float32)
+    gen_losses: list[torch.Tensor] = []
+
     for dg in disc_outputs:
-        gen_loss = torch.mean((1 - dg) ** 2)
+        dg_f = dg.float()
+        # Clamp to prevent extreme gradients
+        dg_f = torch.clamp(dg_f, min=-10.0, max=10.0)
+        gen_loss = torch.mean((1.0 - dg_f) ** 2)
         gen_losses.append(gen_loss)
-        loss += gen_loss
-    return loss, gen_losses
+        loss = loss + gen_loss
+
+    return loss.squeeze(), gen_losses
 
 
 def kl_loss(
@@ -52,26 +102,96 @@ def kl_loss(
     logs_p: torch.Tensor,
     z_mask: torch.Tensor,
 ) -> torch.Tensor:
+    """KL divergence loss with comprehensive numerical stability.
+
+    Implements KL(q||p) where:
+    - q is the posterior (from audio encoder)
+    - p is the prior (from text encoder)
+
+    Uses log-space computations and aggressive clamping to prevent
+    overflow/underflow in exp() operations.
+    """
+    # Ensure float32 for numerical stability
     z_p = z_p.float()
     logs_q = logs_q.float()
     m_p = m_p.float()
     logs_p = logs_p.float()
     z_mask = z_mask.float()
 
-    # Clamp log variances for numerical stability
-    logs_p = torch.clamp(logs_p, min=-10.0, max=10.0)
-    logs_q = torch.clamp(logs_q, min=-10.0, max=10.0)
+    # Aggressive clamping of log-variances (prevents exp overflow)
+    # log(var) in range [-7, 7] means var in range [~0.001, ~1100]
+    logs_p_clamped = torch.clamp(logs_p, min=-7.0, max=7.0)
+    logs_q_clamped = torch.clamp(logs_q, min=-7.0, max=7.0)
 
-    kl = logs_p - logs_q - 0.5
-    kl += 0.5 * ((z_p - m_p) ** 2) * torch.exp(-2.0 * logs_p)
-    kl = torch.clamp(kl, min=-100.0, max=100.0)  # Prevent extreme values
-    kl = torch.sum(kl * z_mask)
-    kl_loss_value = kl / torch.sum(z_mask).clamp(min=1.0)
-    return torch.clamp(kl_loss_value, min=0.0, max=1000.0)  # Final clamp
+    # KL divergence: 0.5 * (log(var_p/var_q) + var_q/var_p + (m_p-z_p)^2/var_p - 1)
+    # In log space: logs_p - logs_q - 0.5 + 0.5*(z_p-m_p)^2*exp(-2*logs_p)
+
+    # Compute variance ratio term in log space
+    log_var_ratio = logs_p_clamped - logs_q_clamped
+
+    # Compute squared difference term with stable exp
+    # exp(-2*logs_p) = 1/var_p
+    neg_2_logs_p = -2.0 * logs_p_clamped
+    neg_2_logs_p = torch.clamp(neg_2_logs_p, min=-14.0, max=14.0)
+    inv_var_p = torch.exp(neg_2_logs_p)
+
+    diff_sq = (z_p - m_p) ** 2
+    diff_sq = torch.clamp(diff_sq, max=100.0)  # Prevent extreme squared differences
+
+    # Combine KL terms
+    kl = log_var_ratio - 0.5 + 0.5 * diff_sq * inv_var_p
+
+    # Clamp individual KL values before summing
+    kl = torch.clamp(kl, min=-50.0, max=50.0)
+
+    # Apply mask and compute mean
+    kl_masked = kl * z_mask
+    mask_sum = torch.sum(z_mask).clamp(min=1.0)
+    kl_mean = torch.sum(kl_masked) / mask_sum
+
+    # Final clamp - KL should be non-negative in expectation
+    return torch.clamp(kl_mean, min=0.0, max=100.0)
 
 
 def mel_loss(
     y_mel: torch.Tensor,
     y_g_hat_mel: torch.Tensor,
 ) -> torch.Tensor:
-    return F.l1_loss(y_mel, y_g_hat_mel) * 45
+    """Mel spectrogram reconstruction loss with NaN handling.
+
+    Uses L1 loss with reduced weight (compared to original 45x) for
+    better balance with other losses during early training.
+    """
+    y_mel_f = y_mel.float()
+    y_g_hat_mel_f = y_g_hat_mel.float()
+
+    # Check for NaN/Inf and skip if present
+    if not torch.isfinite(y_mel_f).all() or not torch.isfinite(y_g_hat_mel_f).all():
+        return torch.zeros(1, device=y_mel.device, requires_grad=True).squeeze()
+
+    # L1 loss with moderate weight
+    # Original VITS uses 45x, but for training from scratch 35x is more stable
+    loss = F.l1_loss(y_mel_f, y_g_hat_mel_f)
+    return loss * 35.0
+
+
+def duration_loss(
+    l_length: torch.Tensor,
+    x_mask: torch.Tensor,
+) -> torch.Tensor:
+    """Duration prediction loss with proper normalization.
+
+    Normalizes by sequence length and applies clamping to prevent
+    duration loss from dominating early in training.
+    """
+    l_length_f = l_length.float()
+
+    # Clamp individual values before summing
+    l_length_clamped = torch.clamp(l_length_f, min=-50.0, max=50.0)
+
+    # Normalize by sequence length
+    mask_sum = torch.sum(x_mask).clamp(min=1.0)
+    dur_loss = torch.sum(l_length_clamped) / mask_sum
+
+    # Final clamp
+    return torch.clamp(dur_loss, min=0.0, max=50.0)

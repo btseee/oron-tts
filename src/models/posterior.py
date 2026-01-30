@@ -1,4 +1,7 @@
-"""Posterior encoder for VITS."""
+"""Posterior encoder for VITS.
+
+Encodes mel spectrograms into latent space with stable variance computation.
+"""
 
 import torch
 import torch.nn as nn
@@ -7,6 +10,11 @@ from src.models.modules import WN
 
 
 class PosteriorEncoder(nn.Module):
+    """Posterior encoder q(z|x) with numerical stability improvements.
+
+    Uses clamped log-variance and stable sampling for training from scratch.
+    """
+
     def __init__(
         self,
         in_channels: int,
@@ -45,12 +53,22 @@ class PosteriorEncoder(nn.Module):
         x_mask = torch.unsqueeze(
             self._sequence_mask(x_lengths, x.size(2)), 1
         ).to(x.dtype)
+
         x = self.pre(x) * x_mask
         x = self.enc(x, x_mask, g=g)
         stats = self.proj(x) * x_mask
         m, logs = torch.split(stats, self.out_channels, dim=1)
-        logs = torch.clamp(logs, min=-10.0, max=10.0)  # Prevent exp explosion
-        z = (m + torch.randn_like(m) * torch.exp(logs)) * x_mask
+
+        # Clamp log-variance to prevent exp overflow/underflow
+        # Range [-7, 7] means variance in [~0.001, ~1100]
+        logs = torch.clamp(logs, min=-7.0, max=7.0)
+
+        # Stable reparameterization sampling
+        # z = m + std * noise, where std = exp(logs)
+        noise = torch.randn_like(m)
+        std = torch.exp(logs)
+        z = (m + std * noise) * x_mask
+
         return z, m, logs, x_mask
 
     def _sequence_mask(self, length: torch.Tensor, max_length: int | None = None) -> torch.Tensor:

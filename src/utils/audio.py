@@ -119,11 +119,26 @@ class AudioProcessor:
         return mel.squeeze(0)
 
     def _amp_to_db(self, x: torch.Tensor, min_level: float = 1e-5) -> torch.Tensor:
+        """Convert amplitude to log scale (dB-like) with numerical stability.
+
+        Uses safe log computation with clamping to prevent:
+        - log(0) = -inf
+        - log(very_small) = very_negative which can overflow in later computations
+        """
+        # Clamp to minimum value to avoid log(0)
         x_clamped = torch.clamp(x, min=min_level)
+
+        # Use log in a numerically stable way
         log_spec = torch.log(x_clamped)
-        # Check for NaN/Inf in spectrogram
-        if torch.isnan(log_spec).any() or torch.isinf(log_spec).any():
-            log_spec = torch.nan_to_num(log_spec, nan=0.0, posinf=0.0, neginf=-11.5)
+
+        # Dynamic range limiting: clamp to reasonable range
+        # log(1e-5) ≈ -11.5, log(1e6) ≈ 13.8
+        log_spec = torch.clamp(log_spec, min=-11.5, max=15.0)
+
+        # Replace any remaining NaN/Inf with safe values
+        if not torch.isfinite(log_spec).all():
+            log_spec = torch.nan_to_num(log_spec, nan=0.0, posinf=15.0, neginf=-11.5)
+
         return log_spec
 
     def _db_to_amp(self, x: torch.Tensor) -> torch.Tensor:

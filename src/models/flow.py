@@ -55,7 +55,8 @@ class ResidualCouplingLayer(nn.Module):
 
         if not self.mean_only:
             m, logs = torch.split(stats, self.half_channels, 1)
-            logs = torch.clamp(logs, min=-10.0, max=10.0)  # Prevent exp explosion
+            # Clamp log-scale to prevent exp overflow/underflow
+            logs = torch.clamp(logs, min=-7.0, max=7.0)
         else:
             m = stats
             logs = torch.zeros_like(m)

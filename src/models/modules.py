@@ -209,6 +209,12 @@ class DDSConv(nn.Module):
 
 
 class Log(nn.Module):
+    """Log transform flow layer with numerical stability.
+
+    Transforms input x -> log(x) with proper clamping to prevent
+    log(0) and extreme gradients near zero.
+    """
+
     def forward(
         self,
         x: torch.Tensor,
@@ -216,10 +222,20 @@ class Log(nn.Module):
         reverse: bool = False,
     ) -> tuple[torch.Tensor, torch.Tensor] | torch.Tensor:
         if not reverse:
-            y = torch.log(torch.clamp(x, min=1e-5)) * x_mask
+            # Clamp input to prevent log(0) and very small values
+            x_clamped = torch.clamp(x, min=1e-5, max=1e5)
+            y = torch.log(x_clamped) * x_mask
+
+            # Clamp output to prevent extreme values
+            y = torch.clamp(y, min=-11.5, max=11.5)
+
+            # Log-det: -log(x) = -y (since y = log(x))
             logdet = torch.sum(-y, dim=[1, 2])
             return y, logdet
-        return torch.exp(x) * x_mask
+
+        # Reverse: exp(x) with clamping
+        x_clamped = torch.clamp(x, min=-11.5, max=11.5)
+        return torch.exp(x_clamped) * x_mask
 
 
 class Flip(nn.Module):
@@ -238,6 +254,13 @@ class Flip(nn.Module):
 
 
 class ElementwiseAffine(nn.Module):
+    """Elementwise affine transformation flow layer.
+
+    Applies: y = m + exp(logs) * x
+
+    Uses clamped logs to prevent exp overflow.
+    """
+
     def __init__(self, channels: int) -> None:
         super().__init__()
         self.channels = channels
@@ -251,7 +274,9 @@ class ElementwiseAffine(nn.Module):
         reverse: bool = False,
         g: torch.Tensor | None = None,  # Accept but ignore for compatibility
     ) -> tuple[torch.Tensor, torch.Tensor] | torch.Tensor:
-        logs_clamped = torch.clamp(self.logs, min=-10.0, max=10.0)
+        # Clamp logs to prevent exp overflow/underflow
+        logs_clamped = torch.clamp(self.logs, min=-7.0, max=7.0)
+
         if not reverse:
             y = self.m + torch.exp(logs_clamped) * x
             y = y * x_mask

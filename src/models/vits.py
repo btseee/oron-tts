@@ -151,13 +151,21 @@ class VITS(nn.Module):
         z_p = self.flow(z, y_mask, g=g)
 
         with torch.no_grad():
-            logs_p_clamped = torch.clamp(logs_p, min=-10.0, max=10.0)
+            # Use consistent clamping range [-7, 7]
+            logs_p_clamped = torch.clamp(logs_p, min=-7.0, max=7.0)
             s_p_sq_r = torch.exp(-2 * logs_p_clamped)
+
+            # Clamp intermediate values to prevent overflow
+            s_p_sq_r = torch.clamp(s_p_sq_r, min=1e-6, max=1e6)
+
             neg_cent1 = torch.sum(-0.5 * math.log(2 * math.pi) - logs_p_clamped, dim=1, keepdim=True)
             neg_cent2 = torch.matmul(-0.5 * (z_p**2).transpose(1, 2), s_p_sq_r)
             neg_cent3 = torch.matmul(z_p.transpose(1, 2), (m_p * s_p_sq_r))
             neg_cent4 = torch.sum(-0.5 * (m_p**2) * s_p_sq_r, dim=1, keepdim=True)
             neg_cent = neg_cent1 + neg_cent2 + neg_cent3 + neg_cent4
+
+            # Clamp neg_cent to prevent extreme alignment scores
+            neg_cent = torch.clamp(neg_cent, min=-1000.0, max=1000.0)
 
             attn_mask = torch.unsqueeze(x_mask, 2) * torch.unsqueeze(y_mask, -1)
             attn = self._maximum_path(neg_cent, attn_mask.squeeze(1)).unsqueeze(1).detach()
@@ -165,14 +173,17 @@ class VITS(nn.Module):
         w = attn.sum(2)
         if self.use_sdp:
             l_length = self.dp(x, x_mask, w, g=g)
-            l_length = l_length / torch.sum(x_mask)
+            l_length = l_length / torch.sum(x_mask).clamp(min=1.0)
         else:
             logw_ = torch.log(w + 1e-6) * x_mask
             logw = self.dp(x, x_mask, g=g)
-            l_length = torch.sum((logw - logw_) ** 2, [1, 2]) / torch.sum(x_mask)
+            l_length = torch.sum((logw - logw_) ** 2, [1, 2]) / torch.sum(x_mask).clamp(min=1.0)
 
         m_p = torch.matmul(attn.squeeze(1), m_p.transpose(1, 2)).transpose(1, 2)
         logs_p = torch.matmul(attn.squeeze(1), logs_p.transpose(1, 2)).transpose(1, 2)
+
+        # Re-clamp after matmul to ensure numerical stability
+        logs_p = torch.clamp(logs_p, min=-7.0, max=7.0)
 
         z_slice, ids_slice = self._rand_slice_segments(z, y_lengths, self.segment_size)
         o = self.dec(z_slice, g=g)
@@ -196,6 +207,9 @@ class VITS(nn.Module):
             logw = self.dp(x, x_mask, g=g, reverse=True, noise_scale=noise_scale_w)
         else:
             logw = self.dp(x, x_mask, g=g)
+
+        # Clamp logw to prevent exp overflow
+        logw = torch.clamp(logw, min=-10.0, max=10.0)
         w = torch.exp(logw) * x_mask * length_scale
         w_ceil = torch.ceil(w)
         y_lengths = torch.clamp_min(torch.sum(w_ceil, [1, 2]), 1).long()
@@ -206,7 +220,8 @@ class VITS(nn.Module):
         m_p = torch.matmul(attn.squeeze(1), m_p.transpose(1, 2)).transpose(1, 2)
         logs_p = torch.matmul(attn.squeeze(1), logs_p.transpose(1, 2)).transpose(1, 2)
 
-        logs_p_clamped = torch.clamp(logs_p, min=-10.0, max=10.0)
+        # Use consistent clamping range
+        logs_p_clamped = torch.clamp(logs_p, min=-7.0, max=7.0)
         z_p = m_p + torch.randn_like(m_p) * torch.exp(logs_p_clamped) * noise_scale
         z = self.flow(z_p, y_mask, g=g, reverse=True)
         o = self.dec((z * y_mask)[:, :, :max_len], g=g)
