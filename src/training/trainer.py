@@ -130,8 +130,6 @@ class VITSTrainer:
         self._setup_optimizers()
         self._setup_schedulers()
         
-        self._scheduler_step_count = 0
-        
         # Use separate scalers for generator and discriminator (more stable)
         use_amp = config.get("fp16", False)  # Default to FP32 for stability
         self.scaler = GradScaler("cuda", enabled=use_amp)
@@ -226,11 +224,13 @@ class VITSTrainer:
             return gamma ** (epoch - warmup_epochs)
 
         self.scheduler_g = torch.optim.lr_scheduler.LambdaLR(
-            self.optimizer_g, lr_lambda=lr_lambda
+            self.optimizer_g, lr_lambda=lr_lambda, last_epoch=-1
         )
         self.scheduler_d = torch.optim.lr_scheduler.LambdaLR(
-            self.optimizer_d, lr_lambda=lr_lambda
+            self.optimizer_d, lr_lambda=lr_lambda, last_epoch=-1
         )
+        
+        self._scheduler_initialized = True
 
     def _setup_logger(self) -> logging.Logger:
         logger = logging.getLogger("OronTTS")
@@ -265,11 +265,17 @@ class VITSTrainer:
         """
         self.model.train()
         self.discriminator.train()
+        
+        # Track whether optimizers actually stepped (for scheduler synchronization)
+        optimizer_g_stepped = False
+        optimizer_d_stepped = False
 
         # Zero result for NaN recovery
         zero_losses = {
             "loss_disc": 0.0, "loss_gen": 0.0, "loss_fm": 0.0,
             "loss_mel": 0.0, "loss_dur": 0.0, "loss_kl": 0.0, "loss_total": 0.0,
+            "_optimizer_g_stepped": False,
+            "_optimizer_d_stepped": False,
         }
 
         # Move batch to device with NaN checking
@@ -349,7 +355,9 @@ class VITSTrainer:
                     clip_value=self.grad_clip_value,
                 )
                 if success:
+                    # GradScaler.step() returns None, but we know it stepped if success=True
                     self.scaler_d.step(self.optimizer_d)
+                    optimizer_d_stepped = True
                 self.scaler_d.update()
             else:
                 loss_disc = torch.zeros(1, device=self.device)
@@ -419,6 +427,7 @@ class VITSTrainer:
             if self.ema:
                 self.ema.update()
             self.scaler.step(self.optimizer_g)
+            optimizer_g_stepped = True
         else:
             if self.is_main and self.logger:
                 self.logger.warning(f"Step {self.global_step}: NaN gradient, skipping update")
@@ -438,6 +447,8 @@ class VITSTrainer:
             "loss_dur": loss_dur.item() if torch.is_tensor(loss_dur) else loss_dur,
             "loss_kl": loss_kl.item() if torch.is_tensor(loss_kl) else loss_kl,
             "loss_total": loss_gen_all.item() if torch.is_tensor(loss_gen_all) else loss_gen_all,
+            "_optimizer_g_stepped": optimizer_g_stepped,
+            "_optimizer_d_stepped": optimizer_d_stepped,
         }
 
     def _slice_segments(
@@ -466,22 +477,33 @@ class VITSTrainer:
                 ret[i, :actual_len] = wav[i, idx_str:idx_end]
         return ret
 
-    def train_epoch(self) -> dict[str, float]:
+    def train_epoch(self, total_epochs: int) -> dict[str, float]:
         epoch_losses = {}
         num_batches = 0
+        
+        # Track optimizer steps for proper scheduler synchronization
+        epoch_optimizer_g_stepped = False
+        epoch_optimizer_d_stepped = False
 
         if self.is_main and self.logger:
-            self.logger.info(f"Starting Epoch {self.epoch + 1}")
+            self.logger.info(f"Starting Epoch {self.epoch + 1}/{total_epochs}")
 
         # Use tqdm if enabled, otherwise plain iterator
         disable_tqdm = not self.is_main or not self.use_tqdm
-        pbar = tqdm(self.train_loader, desc=f"Epoch {self.epoch}", disable=disable_tqdm)
+        pbar = tqdm(self.train_loader, desc=f"Epoch {self.epoch + 1}/{total_epochs}", disable=disable_tqdm)
 
         for batch_idx, batch in enumerate(pbar):
             losses = self.train_step(batch)
+            
+            # Track if optimizers stepped during this epoch
+            if losses.get("_optimizer_g_stepped", False):
+                epoch_optimizer_g_stepped = True
+            if losses.get("_optimizer_d_stepped", False):
+                epoch_optimizer_d_stepped = True
 
             for key, value in losses.items():
-                epoch_losses[key] = epoch_losses.get(key, 0) + value
+                if not key.startswith("_"):  # Skip internal tracking keys
+                    epoch_losses[key] = epoch_losses.get(key, 0) + value
             num_batches += 1
 
             if self.is_main and self.global_step % self.config.get("log_interval", 100) == 0:
@@ -506,13 +528,13 @@ class VITSTrainer:
 
         for key in epoch_losses:
             epoch_losses[key] /= num_batches
-            
-        if self._scheduler_step_count == 0:
-            pass
-        
-        self.scheduler_g.step()
-        self.scheduler_d.step()
+
         self.epoch += 1
+
+        if epoch_optimizer_g_stepped:
+            self.scheduler_g.step()
+        if epoch_optimizer_d_stepped:
+            self.scheduler_d.step()
 
         return epoch_losses
 
@@ -521,11 +543,11 @@ class VITSTrainer:
             if self.world_size > 1 and hasattr(self.train_loader.sampler, "set_epoch"):
                 self.train_loader.sampler.set_epoch(self.epoch)  # type: ignore
 
-            epoch_losses = self.train_epoch()
+            epoch_losses = self.train_epoch(total_epochs=num_epochs)
 
             if self.is_main:
                 epoch_summary = (
-                    f"Epoch {self.epoch} Complete | "
+                    f"Epoch {self.epoch}/{num_epochs} Complete | "
                     f"Avg Loss: {epoch_losses['loss_total']:.4f} | "
                     f"Mel: {epoch_losses['loss_mel']:.4f} | "
                     f"KL: {epoch_losses['loss_kl']:.4f} | "
