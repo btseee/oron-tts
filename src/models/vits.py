@@ -172,8 +172,7 @@ class VITS(nn.Module):
 
         w = attn.sum(2)
         if self.use_sdp:
-            l_length = self.dp(x, x_mask, w, g=g)
-            l_length = l_length / torch.sum(x_mask).clamp(min=1.0)
+            l_length = self.dp(x, x_mask, w, g=g) 
         else:
             logw_ = torch.log(w + 1e-6) * x_mask
             logw = self.dp(x, x_mask, g=g)

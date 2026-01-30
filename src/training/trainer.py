@@ -382,9 +382,7 @@ class VITSTrainer:
             loss_mel = mel_loss(y_mel, y_hat_mel)
             loss_kl = kl_loss(z_p, logs_q, m_p, logs_p, y_mask)
             if torch.is_tensor(l_length) and l_length.numel() > 0:
-                # Remove the extra normalization the model did
-                total_mask = torch.sum(x_mask)
-                loss_dur = torch.sum(l_length) * total_mask.clamp(min=1.0)
+                loss_dur = torch.mean(l_length)
             else:
                 loss_dur = torch.zeros(1, device=self.device, requires_grad=True)
 
