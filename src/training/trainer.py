@@ -381,7 +381,7 @@ class VITSTrainer:
             # Compute reconstruction losses
             loss_mel = mel_loss(y_mel, y_hat_mel)
             loss_kl = kl_loss(z_p, logs_q, m_p, logs_p, y_mask)
-            loss_dur = duration_loss(l_length, x_mask)
+            loss_dur = l_length
 
             # Check individual losses for NaN and replace with zeros
             if _check_nan_inf(loss_mel, "loss_mel"):
