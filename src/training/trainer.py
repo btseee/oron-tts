@@ -381,13 +381,12 @@ class VITSTrainer:
             # Compute reconstruction losses
             loss_mel = mel_loss(y_mel, y_hat_mel)
             loss_kl = kl_loss(z_p, logs_q, m_p, logs_p, y_mask)
-            if torch.is_tensor(l_length):
-                if l_length.dim() == 0:  # Scalar
-                    loss_dur = l_length
-                else:  # Batch of losses
-                    loss_dur = torch.sum(l_length)  # Sum instead of mean to amplify signal
+            if torch.is_tensor(l_length) and l_length.numel() > 0:
+                # Remove the extra normalization the model did
+                total_mask = torch.sum(x_mask)
+                loss_dur = torch.sum(l_length) * total_mask.clamp(min=1.0)
             else:
-                loss_dur = torch.tensor(0.0, device=self.device, requires_grad=True)
+                loss_dur = torch.zeros(1, device=self.device, requires_grad=True)
 
             # Check individual losses for NaN and replace with zeros
             if _check_nan_inf(loss_mel, "loss_mel"):
