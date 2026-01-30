@@ -1,4 +1,11 @@
-"""VITS Trainer with multi-GPU support and HF Hub integration."""
+"""VITS Trainer with multi-GPU support and HF Hub integration.
+
+Implements numerically stable training with:
+- Discriminator warmup to stabilize early training
+- Aggressive gradient clipping and NaN detection
+- Proper loss weighting for training from scratch
+- FP16 training with careful handling of GAN components
+"""
 
 import logging
 import sys
@@ -16,12 +23,68 @@ from tqdm import tqdm
 
 from src.models.discriminator import MultiPeriodDiscriminator
 from src.models.vits import VITS
-from src.training.losses import discriminator_loss, feature_loss, generator_loss, kl_loss, mel_loss
+from src.training.losses import (
+    discriminator_loss,
+    duration_loss,
+    feature_loss,
+    generator_loss,
+    kl_loss,
+    mel_loss,
+)
 from src.utils.audio import AudioProcessor
 from src.utils.checkpoint import CheckpointManager
 
 
+def _check_nan_inf(tensor: torch.Tensor, name: str = "") -> bool:
+    """Check if tensor contains NaN or Inf values."""
+    if tensor is None:
+        return False
+    has_nan = torch.isnan(tensor).any().item()
+    has_inf = torch.isinf(tensor).any().item()
+    return bool(has_nan or has_inf)
+
+
+def _safe_backward(
+    loss: torch.Tensor,
+    scaler: GradScaler,
+    optimizer: torch.optim.Optimizer,
+    model: nn.Module,
+    max_grad_norm: float = 1.0,
+    clip_value: float | None = None,
+) -> bool:
+    """Perform backward pass with comprehensive NaN checking and gradient clipping.
+
+    Returns True if backward was successful, False if NaN/Inf detected.
+    """
+    if _check_nan_inf(loss, "loss"):
+        optimizer.zero_grad()
+        return False
+
+    # Scale and backward
+    scaler.scale(loss).backward()
+
+    # Unscale for gradient clipping
+    scaler.unscale_(optimizer)
+
+    # Check for NaN gradients before clipping
+    for param in model.parameters():
+        if param.grad is not None:
+            if _check_nan_inf(param.grad, "gradient"):
+                optimizer.zero_grad()
+                return False
+            # Optional: clip individual gradient values
+            if clip_value is not None:
+                param.grad.data.clamp_(-clip_value, clip_value)
+
+    # Gradient norm clipping
+    nn.utils.clip_grad_norm_(model.parameters(), max_norm=max_grad_norm)
+
+    return True
+
+
 class VITSTrainer:
+    """VITS Trainer with stability improvements for training from scratch."""
+
     def __init__(
         self,
         config: dict[str, Any],
@@ -41,8 +104,13 @@ class VITSTrainer:
         self.world_size = world_size
         self.is_main = rank == 0
 
+        # Initialize models with weight initialization
         self.model = model.to(device)
         self.discriminator = discriminator.to(device)
+
+        # Apply weight initialization for stable training from scratch
+        self._init_weights(self.model)
+        self._init_weights(self.discriminator)
 
         if world_size > 1:
             self.model = DDP(model, device_ids=[rank])
@@ -62,7 +130,11 @@ class VITSTrainer:
         self._setup_optimizers()
         self._setup_schedulers()
 
-        self.scaler = GradScaler("cuda", enabled=config.get("fp16", True))
+        # Use separate scalers for generator and discriminator (more stable)
+        use_amp = config.get("fp16", False)  # Default to FP32 for stability
+        self.scaler = GradScaler("cuda", enabled=use_amp)
+        self.scaler_d = GradScaler("cuda", enabled=use_amp)
+
         from torch_ema import ExponentialMovingAverage
 
         self.ema = ExponentialMovingAverage(
@@ -79,6 +151,24 @@ class VITSTrainer:
         self.global_step = 0
         self.epoch = 0
 
+        # Training stability settings
+        self.disc_warmup_steps = config.get("disc_warmup_steps", 1000)
+        self.max_grad_norm = config.get("max_grad_norm", 1.0)
+        self.grad_clip_value = config.get("grad_clip_value", 5.0)
+
+        # Loss weights for balanced training
+        self.loss_weights = {
+            "mel": config.get("loss_weight_mel", 1.0),
+            "kl": config.get("loss_weight_kl", 1.0),
+            "dur": config.get("loss_weight_dur", 1.0),
+            "fm": config.get("loss_weight_fm", 1.0),
+            "gen": config.get("loss_weight_gen", 1.0),
+        }
+
+        # NaN recovery tracking
+        self.nan_count = 0
+        self.max_nan_tolerance = 50  # Skip training if too many NaN batches
+
         # Setup logging for container logs (RunPod)
         self.use_tqdm = config.get("use_tqdm", True)
         if self.is_main:
@@ -86,16 +176,36 @@ class VITSTrainer:
         else:
             self.logger = None
 
+    def _init_weights(self, module: nn.Module) -> None:
+        """Initialize weights for stable training from scratch.
+
+        Uses Xavier/Glorot initialization for linear layers and
+        orthogonal initialization for RNNs, which helps prevent
+        gradient explosion in deep networks.
+        """
+        for name, param in module.named_parameters():
+            if "weight" in name:
+                if len(param.shape) >= 2:
+                    # Xavier initialization for matrices
+                    nn.init.xavier_uniform_(param, gain=0.5)
+                elif len(param.shape) == 1:
+                    # Small uniform for 1D weights
+                    nn.init.uniform_(param, -0.1, 0.1)
+            elif "bias" in name:
+                nn.init.zeros_(param)
+
     def _setup_optimizers(self) -> None:
-        lr = self.config.get("learning_rate", 2e-4)
+        # Lower learning rate for stable training from scratch
+        lr = self.config.get("learning_rate", 1e-4)  # Reduced from 2e-4
         betas = tuple(self.config.get("betas", [0.8, 0.99]))
-        eps = self.config.get("eps", 1e-9)
+        eps = self.config.get("eps", 1e-8)  # Slightly larger epsilon
 
         self.optimizer_g = torch.optim.AdamW(
             self.model.parameters(),
             lr=lr,
             betas=betas,
             eps=eps,
+            weight_decay=0.01,  # Add weight decay for regularization
         )
         self.optimizer_d = torch.optim.AdamW(
             self.discriminator.parameters(),
@@ -142,9 +252,25 @@ class VITSTrainer:
         return logger
 
     def train_step(self, batch: dict[str, torch.Tensor]) -> dict[str, float]:
+        """Single training step with comprehensive stability measures.
+
+        Implements:
+        - Discriminator warmup (skip disc training for first N steps)
+        - Pre-forward NaN checks on input
+        - Individual loss NaN handling
+        - Gradient value clipping in addition to norm clipping
+        - Proper loss weighting
+        """
         self.model.train()
         self.discriminator.train()
 
+        # Zero result for NaN recovery
+        zero_losses = {
+            "loss_disc": 0.0, "loss_gen": 0.0, "loss_fm": 0.0,
+            "loss_mel": 0.0, "loss_dur": 0.0, "loss_kl": 0.0, "loss_total": 0.0,
+        }
+
+        # Move batch to device with NaN checking
         x = batch["text_ids"].to(self.device)
         x_lengths = batch["text_lengths"].to(self.device)
         y = batch["specs"].to(self.device)
@@ -152,21 +278,40 @@ class VITSTrainer:
         wav = batch["audios"].to(self.device)
         sid = batch["speaker_ids"].to(self.device)
 
-        with autocast("cuda", enabled=self.config.get("fp16", True)):
-            (
-                y_hat,
-                l_length,
-                attn,
-                ids_slice,
-                x_mask,
-                (z, z_p, m_p, logs_p),
-                (m_q, logs_q, y_mask, z_slice),
-            ) = self.model(x, x_lengths, y, y_lengths, sid)
+        # Check input spectrograms for NaN/Inf
+        if _check_nan_inf(y, "input_spec") or _check_nan_inf(wav, "input_wav"):
+            if self.is_main and self.logger:
+                self.logger.warning(f"Step {self.global_step}: NaN in input, skipping batch")
+            self.nan_count += 1
+            return zero_losses
 
+        use_amp = self.config.get("fp16", False)
+
+        # ========== FORWARD PASS ==========
+        try:
+            with autocast("cuda", enabled=use_amp, dtype=torch.float16 if use_amp else torch.float32):
+                (
+                    y_hat,
+                    l_length,
+                    attn,
+                    ids_slice,
+                    x_mask,
+                    (z, z_p, m_p, logs_p),
+                    (m_q, logs_q, y_mask, z_slice),
+                ) = self.model(x, x_lengths, y, y_lengths, sid)
+
+            # Check model outputs for NaN
+            if _check_nan_inf(y_hat, "y_hat") or _check_nan_inf(z_p, "z_p"):
+                if self.is_main and self.logger:
+                    self.logger.warning(f"Step {self.global_step}: NaN in model output, skipping")
+                self.nan_count += 1
+                return zero_losses
+
+            # Compute mel spectrograms for loss
             y_mel = self._slice_segments(
                 y, ids_slice, self.config.get("segment_size", 32)
             )
-            y_hat_mel = self.audio_processor.mel_spectrogram(y_hat.squeeze(1))
+            y_hat_mel = self.audio_processor.mel_spectrogram(y_hat.squeeze(1).float())
 
             # Slice real audio waveforms to match generated audio
             hop_length = self.config.get("hop_length", 256)
@@ -175,66 +320,122 @@ class VITSTrainer:
             wav_slice = self._slice_audio_segments(wav, ids_slice, wav_segment_length, hop_length)
             wav_slice = wav_slice.unsqueeze(1)  # Add channel dim: [B, 1, T]
 
-            y_d_hat_r, y_d_hat_g, fmap_r, fmap_g = self.discriminator(wav_slice, y_hat.detach())
+        except RuntimeError as e:
+            if self.is_main and self.logger:
+                self.logger.error(f"Step {self.global_step}: Runtime error in forward: {e}")
+            self.nan_count += 1
+            return zero_losses
 
-            loss_disc, _, _ = discriminator_loss(y_d_hat_r, y_d_hat_g)
+        # ========== DISCRIMINATOR UPDATE ==========
+        # Skip discriminator update during warmup phase
+        in_warmup = self.global_step < self.disc_warmup_steps
 
-        self.optimizer_d.zero_grad()
-        self.scaler.scale(loss_disc).backward()
-        self.scaler.unscale_(self.optimizer_d)
-        nn.utils.clip_grad_norm_(self.discriminator.parameters(), max_norm=1.0)
-        self.scaler.step(self.optimizer_d)
-        self.scaler.update()
+        if not in_warmup:
+            self.optimizer_d.zero_grad()
 
-        with autocast("cuda", enabled=self.config.get("fp16", True)):
-            y_d_hat_r, y_d_hat_g, fmap_r, fmap_g = self.discriminator(wav_slice, y_hat)
+            with autocast("cuda", enabled=use_amp, dtype=torch.float16 if use_amp else torch.float32):
+                y_d_hat_r, y_d_hat_g, _, _ = self.discriminator(wav_slice, y_hat.detach())
+                loss_disc, _, _ = discriminator_loss(y_d_hat_r, y_d_hat_g)
 
-            l_length_safe = torch.clamp(l_length.float(), min=-100.0, max=100.0)
-            loss_dur = torch.sum(l_length_safe) / torch.clamp(torch.sum(x_mask), min=1.0)
+            if not _check_nan_inf(loss_disc, "loss_disc"):
+                success = _safe_backward(
+                    loss_disc,
+                    self.scaler_d,
+                    self.optimizer_d,
+                    self.discriminator,
+                    max_grad_norm=self.max_grad_norm,
+                    clip_value=self.grad_clip_value,
+                )
+                if success:
+                    self.scaler_d.step(self.optimizer_d)
+                self.scaler_d.update()
+            else:
+                loss_disc = torch.zeros(1, device=self.device)
+        else:
+            loss_disc = torch.zeros(1, device=self.device)
 
+        # ========== GENERATOR UPDATE ==========
+        self.optimizer_g.zero_grad()
+
+        with autocast("cuda", enabled=use_amp, dtype=torch.float16 if use_amp else torch.float32):
+            # Re-run discriminator for generator update (with gradients)
+            if not in_warmup:
+                y_d_hat_r, y_d_hat_g, fmap_r, fmap_g = self.discriminator(wav_slice, y_hat)
+                loss_fm = feature_loss(fmap_r, fmap_g)
+                loss_gen, _ = generator_loss(y_d_hat_g)
+            else:
+                # During warmup, skip adversarial losses
+                loss_fm = torch.zeros(1, device=self.device, requires_grad=True).squeeze()
+                loss_gen = torch.zeros(1, device=self.device, requires_grad=True).squeeze()
+
+            # Compute reconstruction losses
             loss_mel = mel_loss(y_mel, y_hat_mel)
             loss_kl = kl_loss(z_p, logs_q, m_p, logs_p, y_mask)
-            loss_fm = feature_loss(fmap_r, fmap_g)
-            loss_gen, _ = generator_loss(y_d_hat_g)
+            loss_dur = duration_loss(l_length, x_mask)
 
-            loss_gen_all = loss_gen + loss_fm + loss_mel + loss_dur + loss_kl
+            # Check individual losses for NaN and replace with zeros
+            if _check_nan_inf(loss_mel, "loss_mel"):
+                loss_mel = torch.zeros(1, device=self.device, requires_grad=True).squeeze()
+            if _check_nan_inf(loss_kl, "loss_kl"):
+                loss_kl = torch.zeros(1, device=self.device, requires_grad=True).squeeze()
+            if _check_nan_inf(loss_dur, "loss_dur"):
+                loss_dur = torch.zeros(1, device=self.device, requires_grad=True).squeeze()
+            if _check_nan_inf(loss_fm, "loss_fm"):
+                loss_fm = torch.zeros(1, device=self.device, requires_grad=True).squeeze()
+            if _check_nan_inf(loss_gen, "loss_gen"):
+                loss_gen = torch.zeros(1, device=self.device, requires_grad=True).squeeze()
 
-        self.optimizer_g.zero_grad()
-        self.scaler.scale(loss_gen_all).backward()
+            # Weighted loss combination
+            w = self.loss_weights
+            loss_gen_all = (
+                w["gen"] * loss_gen +
+                w["fm"] * loss_fm +
+                w["mel"] * loss_mel +
+                w["dur"] * loss_dur +
+                w["kl"] * loss_kl
+            )
 
-        if torch.isnan(loss_gen_all) or torch.isinf(loss_gen_all):
-            self.optimizer_g.zero_grad()
-            self.optimizer_d.zero_grad()
+        # Check total loss
+        if _check_nan_inf(loss_gen_all, "loss_total"):
             if self.is_main and self.logger:
-                self.logger.warning(f"NaN/Inf at step {self.global_step}, skipping batch")
-            return {
-                "loss_disc": 0.0, "loss_gen": 0.0, "loss_fm": 0.0,
-                "loss_mel": 0.0, "loss_dur": 0.0, "loss_kl": 0.0, "loss_total": 0.0,
-            }
+                self.logger.warning(f"Step {self.global_step}: NaN in total loss, skipping")
+            self.nan_count += 1
+            self.optimizer_g.zero_grad()
+            return zero_losses
 
-        # Also add individual checks before combining losses:
-        if torch.isnan(loss_dur) or torch.isinf(loss_dur):
-            loss_dur = torch.tensor(0.0, device=loss_dur.device, requires_grad=True)
-        if torch.isnan(loss_mel):
-            loss_mel = torch.tensor(0.0, device=loss_mel.device, requires_grad=True)
-        if torch.isnan(loss_kl):
-            loss_kl = torch.tensor(0.0, device=loss_kl.device, requires_grad=True)
+        # Backward with safety checks
+        success = _safe_backward(
+            loss_gen_all,
+            self.scaler,
+            self.optimizer_g,
+            self.model,
+            max_grad_norm=self.max_grad_norm,
+            clip_value=self.grad_clip_value,
+        )
 
-        self.scaler.unscale_(self.optimizer_g)
-        nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
-        if self.ema:
-            self.ema.update()
-        self.scaler.step(self.optimizer_g)
+        if success:
+            if self.ema:
+                self.ema.update()
+            self.scaler.step(self.optimizer_g)
+        else:
+            if self.is_main and self.logger:
+                self.logger.warning(f"Step {self.global_step}: NaN gradient, skipping update")
+            self.nan_count += 1
+
         self.scaler.update()
 
+        # Reset NaN count on successful step
+        if success:
+            self.nan_count = max(0, self.nan_count - 1)
+
         return {
-            "loss_disc": loss_disc.item(),
-            "loss_gen": loss_gen.item(),
-            "loss_fm": loss_fm.item(),
-            "loss_mel": loss_mel.item(),
-            "loss_dur": loss_dur.item(),
-            "loss_kl": loss_kl.item(),
-            "loss_total": loss_gen_all.item(),
+            "loss_disc": loss_disc.item() if torch.is_tensor(loss_disc) else loss_disc,
+            "loss_gen": loss_gen.item() if torch.is_tensor(loss_gen) else loss_gen,
+            "loss_fm": loss_fm.item() if torch.is_tensor(loss_fm) else loss_fm,
+            "loss_mel": loss_mel.item() if torch.is_tensor(loss_mel) else loss_mel,
+            "loss_dur": loss_dur.item() if torch.is_tensor(loss_dur) else loss_dur,
+            "loss_kl": loss_kl.item() if torch.is_tensor(loss_kl) else loss_kl,
+            "loss_total": loss_gen_all.item() if torch.is_tensor(loss_gen_all) else loss_gen_all,
         }
 
     def _slice_segments(

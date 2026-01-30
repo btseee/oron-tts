@@ -12,24 +12,37 @@ fmin: 0.0
 fmax: 8000.0
 
 # Training Settings (RTX 4090 24GB VRAM)
-batch_size: 16
+# Optimized for training from scratch - prioritizes stability
+batch_size: 12  # Reduced for stability
 num_epochs: 1500
-learning_rate: 0.0001
+learning_rate: 0.0001  # Lower LR for stable training from scratch
 betas: [0.8, 0.99]
-eps: 1.0e-9
-lr_decay: 0.999
+eps: 1.0e-8  # Larger epsilon for numerical stability
+lr_decay: 0.9995  # Slower decay
 segment_size: 32
-fp16: false
-num_workers: 12  # 16 vCPU available
+fp16: false  # Disable FP16 for stability when training from scratch
+num_workers: 8
 log_interval: 50
-save_interval: 10
+save_interval: 5  # Save more frequently
 grad_accumulation_steps: 2
 prefetch_factor: 4
 pin_memory: true
 use_tqdm: false  # Disable tqdm for cleaner RunPod container logs
 
+# Stability Settings (critical for training from scratch)
+disc_warmup_steps: 2000  # Skip discriminator training for first N steps
+max_grad_norm: 0.5  # Aggressive gradient clipping
+grad_clip_value: 3.0  # Clip individual gradient values
+
+# Loss Weights (balanced for stable training)
+loss_weight_mel: 1.0
+loss_weight_kl: 0.5  # Reduce KL weight initially
+loss_weight_dur: 1.0
+loss_weight_fm: 1.0
+loss_weight_gen: 1.0
+
 # CUDA 12.4 / PyTorch 2.4.0 Optimizations
-compile_model: true  # torch.compile for speedup
+compile_model: false  # Disable for stability during initial training
 cudnn_benchmark: true
 use_tf32: true  # TensorFloat-32 for Ampere+
 

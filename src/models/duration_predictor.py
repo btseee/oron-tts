@@ -256,24 +256,43 @@ class StochasticDurationPredictor(nn.Module):
             for flow in self.post_flows:
                 z_q, _ = flow(z_q, x_mask, g=(x + h_w))
             z_u, z1 = torch.split(z_q, [1, 1], 1)
-            u = torch.sigmoid(z_u) * x_mask
+
+            # Clamp sigmoid input to prevent saturation
+            z_u_clamped = torch.clamp(z_u, min=-10.0, max=10.0)
+            u = torch.sigmoid(z_u_clamped) * x_mask
             z0 = (w - u) * x_mask
-            z0_safe = torch.clamp(z0, min=1e-8)
-            logdet_tot_q = 0.0
-            logdet_tot_q += torch.sum((F.logsigmoid(z_u) + F.logsigmoid(-z_u)) * x_mask, [1, 2])
+
+            # More aggressive clamping for log input
+            z0_safe = torch.clamp(z0.abs(), min=1e-5) * torch.sign(z0 + 1e-8)
+            z0_safe = torch.clamp(z0_safe, min=1e-5)
+
+            logdet_tot_q = torch.zeros(w.size(0), device=x.device, dtype=x.dtype)
+
+            # Stable logsigmoid computation
+            logsig_pos = F.logsigmoid(z_u_clamped)
+            logsig_neg = F.logsigmoid(-z_u_clamped)
+            logsig_sum = torch.clamp(logsig_pos + logsig_neg, min=-20.0, max=0.0)
+            logdet_tot_q = logdet_tot_q + torch.sum(logsig_sum * x_mask, [1, 2])
+
             logw, logdet_q = self.log_flow(z0_safe, x_mask)
-            logdet_tot_q += logdet_q
-            logdet_tot_q += torch.sum((z1**2 + math.log(2 * math.pi)) * x_mask, [1, 2]) * -0.5
+            logdet_tot_q = logdet_tot_q + logdet_q
+
+            # Clamp z1 squared to prevent explosion
+            z1_sq = torch.clamp(z1 ** 2, max=100.0)
+            logdet_tot_q = logdet_tot_q + torch.sum((z1_sq + math.log(2 * math.pi)) * x_mask, [1, 2]) * -0.5
 
             z = torch.cat([logw, z1], 1)
             for flow in flows:
                 z, logdet = flow(z, x_mask, g=x, reverse=reverse)
-                logdet_tot_q -= logdet
+                logdet_tot_q = logdet_tot_q - logdet
 
-            nll = torch.sum(0.5 * (math.log(2 * math.pi) + z**2) * x_mask, [1, 2]) - logdet_tot_q
+            # Clamp z before final NLL computation
+            z_clamped = torch.clamp(z, min=-10.0, max=10.0)
+            nll = torch.sum(0.5 * (math.log(2 * math.pi) + z_clamped ** 2) * x_mask, [1, 2]) - logdet_tot_q
             nll_normalized = nll / torch.clamp(torch.sum(x_mask), min=1.0)
+
             # Cap NLL to prevent explosion
-            nll_clamped = torch.clamp(nll_normalized, min=0.0, max=50.0)
+            nll_clamped = torch.clamp(nll_normalized, min=0.0, max=30.0)
 
             return nll_clamped
 

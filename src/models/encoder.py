@@ -265,7 +265,9 @@ class TextEncoder(nn.Module):
 
         stats = self.proj(x) * x_mask
         m, logs = torch.split(stats, self.out_channels, dim=1)
-        logs = torch.clamp(logs, min=-10.0, max=10.0)  # Prevent exp explosion
+        # Clamp log-variance to prevent exp overflow/underflow
+        # Consistent with posterior encoder range
+        logs = torch.clamp(logs, min=-7.0, max=7.0)
         return x, m, logs, x_mask
 
     def _sequence_mask(self, length: torch.Tensor, max_length: int | None = None) -> torch.Tensor:
