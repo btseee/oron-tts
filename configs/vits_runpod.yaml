@@ -30,17 +30,16 @@ pin_memory: true
 use_tqdm: false  # Disable tqdm for cleaner RunPod container logs
 
 # Stability Settings (critical for training from scratch)
-disc_warmup_steps: 5000  # Skip discriminator training for first N steps (increased from 2000)
-disc_update_ratio: 2  # Train generator 2x per 1x discriminator update
-max_grad_norm: 1.0  # Gradient clipping (increased from 0.5)
-grad_clip_value: 5.0  # Clip individual gradient values (increased from 3.0)
+disc_warmup_steps: 2000  # Skip discriminator training for first N steps
+max_grad_norm: 0.5  # Aggressive gradient clipping
+grad_clip_value: 3.0  # Clip individual gradient values
 
-# Loss Weights - Rebalanced for GAN training
-loss_weight_mel: 45.0  # Match VITS paper (mel dominance is correct)
-loss_weight_kl: 1.0  # Restore to prevent posterior collapse (was 0.1)
-loss_weight_dur: 1.0  # Reduce from 1.5
-loss_weight_fm: 2.0  # Keep feature matching weight
-loss_weight_gen: 1.0  # Reduce from 3.0 (discriminator is too strong)
+# Loss Weights (balanced for stable training)
+loss_weight_mel: 1.0
+loss_weight_kl: 0.1  
+loss_weight_dur: 1.5      
+loss_weight_fm: 2.0     
+loss_weight_gen: 3.0  
 
 # CUDA 12.4 / PyTorch 2.4.0 Optimizations
 compile_model: false  # Disable for stability during initial training
