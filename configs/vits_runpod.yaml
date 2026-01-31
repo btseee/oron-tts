@@ -1,6 +1,6 @@
-# OronTTS RunPod Training Configuration
+# OronTTS RunPod Training Configuration - OPTIMIZED FOR RTX 4090
 # Container: runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04
-# Hardware: RTX 4090 24GB, 16 vCPU, 62GB RAM, 50GB Disk
+# Hardware: RTX 4090 24GB VRAM, 21 vCPU, 41GB RAM
 
 # Audio Settings
 sample_rate: 22050
@@ -11,42 +11,42 @@ n_mels: 80
 fmin: 0.0
 fmax: 8000.0
 
-# Training Settings (RTX 4090 24GB VRAM)
-# Optimized for training from scratch - prioritizes stability
-batch_size: 12  # Reduced for stability
-num_epochs: 1500
-learning_rate: 0.0002
+# Training Settings - MAXIMIZED FOR RTX 4090
+batch_size: 18              # Increased from 12 - max VRAM utilization
+num_epochs: 500             # Realistic for 3,846 samples
+learning_rate: 0.0002       # Standard VITS learning rate
 betas: [0.8, 0.99]
-eps: 1.0e-8  # Larger epsilon for numerical stability
-lr_decay: 0.9995  # Slower decay
-segment_size: 32
-fp16: false  # Disable FP16 for stability when training from scratch
-num_workers: 8
+eps: 1.0e-8
+lr_decay: 0.9995
+segment_size: 64            # Doubled from 32 - better audio quality
+fp16: true                  # ENABLED - 2x speedup on Ampere+ GPUs
+num_workers: 16             # Increased from 8 - utilize all 21 vCPUs
 log_interval: 50
-save_interval: 5  # Save more frequently
-grad_accumulation_steps: 2
+save_interval: 5
+grad_accumulation_steps: 1  # Disabled - batch_size now large enough
 prefetch_factor: 4
 pin_memory: true
-use_tqdm: false  # Disable tqdm for cleaner RunPod container logs
+use_tqdm: false
 
-# Stability Settings (critical for training from scratch)
-disc_warmup_steps: 2000  # Skip discriminator training for first N steps
-max_grad_norm: 0.5  # Aggressive gradient clipping
-grad_clip_value: 3.0  # Clip individual gradient values
+# Stability Settings
+disc_warmup_steps: 2000
+max_grad_norm: 1.0
+grad_clip_value: 5.0        # Slightly increased for fp16
 
-# Loss Weights (balanced for stable training)
-loss_weight_mel: 1.0
-loss_weight_kl: 0.1  
-loss_weight_dur: 1.5      
-loss_weight_fm: 2.0     
-loss_weight_gen: 3.0  
+# Loss Weights - CRITICAL FIX (mel_loss × 25 in code)
+# Effective: mel=25, kl=1.5, dur=1.0, fm=2.0, gen=1.0
+loss_weight_mel: 1.0        # × 25 in losses.py
+loss_weight_kl: 1.5         # CRITICAL - prevents encoder divergence
+loss_weight_dur: 1.0
+loss_weight_fm: 2.0
+loss_weight_gen: 1.0
 
-# CUDA 12.4 / PyTorch 2.4.0 Optimizations
-compile_model: false  # Disable for stability during initial training
-cudnn_benchmark: true
-use_tf32: true  # TensorFloat-32 for Ampere+
+# CUDA Optimizations for RTX 4090
+compile_model: false        # Stable baseline
+cudnn_benchmark: true       # Auto-tune kernels
+use_tf32: true              # TensorFloat-32 acceleration
 
-# Model Settings
+# Model Architecture
 model:
   inter_channels: 192
   hidden_channels: 192
@@ -54,7 +54,7 @@ model:
   n_heads: 2
   n_layers: 6
   kernel_size: 3
-  p_dropout: 0.1
+  p_dropout: 0.1            # Standard dropout
   resblock: "1"
   resblock_kernel_sizes: [3, 7, 11]
   resblock_dilation_sizes: [[1, 3, 5], [1, 3, 5], [1, 3, 5]]
@@ -62,9 +62,9 @@ model:
   upsample_initial_channel: 512
   upsample_kernel_sizes: [16, 16, 4, 4]
   gin_channels: 256
-  use_sdp: true  # Fixed: Reduced flows (2→4), clamped logdets, enforced positive NLL
+  use_sdp: true
 
-# Dataset Settings
+# Dataset Filtering
 data:
   min_audio_length: 0.5
   max_audio_length: 15.0

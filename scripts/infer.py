@@ -34,7 +34,20 @@ class OronTTSSynthesizer:
         config = checkpoint.get("config", {})
         model_config = config.get("model", {})
 
-        n_speakers = model_config.get("n_speakers", 2)
+        # Auto-detect n_speakers from checkpoint if not in config
+        n_speakers = model_config.get("n_speakers", None)
+        if n_speakers is None:
+            # Check if emb_g exists in checkpoint to determine if multi-speaker
+            state_dict = checkpoint.get("model_state_dict", {})
+            if "emb_g.weight" in state_dict:
+                n_speakers = state_dict["emb_g.weight"].shape[0]
+                print(f"Detected {n_speakers} speakers from checkpoint")
+            else:
+                # Single speaker model (no embedding layer)
+                n_speakers = 0
+                print("Detected single-speaker model (no speaker embedding)")
+        else:
+            print(f"Using n_speakers={n_speakers} from config")
 
         model = VITS(
             n_vocab=self.phonemizer.vocab_size,
