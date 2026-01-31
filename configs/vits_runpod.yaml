@@ -12,14 +12,14 @@ fmin: 0.0
 fmax: 8000.0
 
 # Training Settings - MAXIMIZED FOR RTX 4090
-batch_size: 18              # Increased from 12 - max VRAM utilization
+batch_size: 16              # Optimized for stability + performance
 num_epochs: 500             # Realistic for 3,846 samples
 learning_rate: 0.0002       # Standard VITS learning rate
 betas: [0.8, 0.99]
 eps: 1.0e-8
 lr_decay: 0.9995
 segment_size: 64            # Doubled from 32 - better audio quality
-fp16: true                  # ENABLED - 2x speedup on Ampere+ GPUs
+fp16: false                 # DISABLED - critical for GAN stability from scratch
 num_workers: 16             # Increased from 8 - utilize all 21 vCPUs
 log_interval: 50
 save_interval: 5
