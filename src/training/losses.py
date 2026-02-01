@@ -173,10 +173,10 @@ def mel_loss(
     if not torch.isfinite(y_mel_f).all() or not torch.isfinite(y_g_hat_mel_f).all():
         return torch.zeros(1, device=y_mel.device, requires_grad=True).squeeze()
 
-    # L1 loss with moderate weight
-    # Original VITS uses 45x, but for training from scratch 35x is more stable
+    # L1 loss with reduced weight for small datasets
+    # Original VITS uses 45x, reduced to 10x for better KL balance
     loss = F.l1_loss(y_mel_f, y_g_hat_mel_f)
-    return loss * 25.0
+    return loss * 10.0
 
 
 def duration_loss(

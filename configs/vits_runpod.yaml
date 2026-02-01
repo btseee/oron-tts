@@ -33,13 +33,14 @@ disc_warmup_steps: 2000
 max_grad_norm: 1.0
 grad_clip_value: 5.0        # Slightly increased for fp16
 
-# Loss Weights - CRITICAL FIX (mel_loss × 25 in code)
-# Effective: mel=25, kl=1.5, dur=1.0, fm=2.0, gen=1.0
-loss_weight_mel: 1.0        # × 25 in losses.py
-loss_weight_kl: 1.5         # CRITICAL - prevents encoder divergence
-loss_weight_dur: 1.0
-loss_weight_fm: 2.0
-loss_weight_gen: 1.0
+# Loss Weights - FINAL BALANCED (mel_loss × 10 in code)
+# Target ratio: Mel contribution ≈ KL contribution for proper alignment
+# Effective: mel=15, kl=6, dur=1.5, fm=3, gen=1
+loss_weight_mel: 1.5        # × 10 in code → total 15 (for raw_mel ~0.4)
+loss_weight_kl: 6.0         # CRITICAL - target KL ~1.0 → contribution 6
+loss_weight_dur: 1.5        # Duration alignment
+loss_weight_fm: 3.0         # Feature matching
+loss_weight_gen: 1.0        # Generator adversarial
 
 # CUDA Optimizations for RTX 4090
 compile_model: false        # Stable baseline
