@@ -1,5 +1,6 @@
 """Audio processing utilities for F5-TTS."""
 
+import logging
 from pathlib import Path
 from typing import Final
 
@@ -8,6 +9,8 @@ import numpy as np
 import soundfile as sf
 import torch
 import torchaudio
+
+_logger = logging.getLogger(__name__)
 
 # F5-TTS default audio settings
 DEFAULT_SAMPLE_RATE: Final[int] = 24000
@@ -146,6 +149,8 @@ class AudioProcessor:
 
         # Replace any remaining NaN/Inf with safe values
         if not torch.isfinite(log_spec).all():
+            n_bad = int((~torch.isfinite(log_spec)).sum().item())
+            _logger.warning("mel_spectrogram: %d non-finite values replaced", n_bad)
             log_spec = torch.nan_to_num(log_spec, nan=0.0, posinf=15.0, neginf=-11.5)
 
         return log_spec

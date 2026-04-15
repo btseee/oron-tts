@@ -40,7 +40,7 @@ model:
   dim: 1024
   depth: 22
   heads: 16
-  ff_mult: 2
+  ff_mult: 4
   text_dim: 512
   conv_layers: 4
   p_dropout: 0.1
@@ -48,9 +48,3 @@ model:
   vocos_layers: 8
   vocos_intermediate: 1536
 
-# == Dataset ================================================================
-data:
-  min_audio_length: 0.5
-  max_audio_length: 20.0
-  min_text_length: 2
-  max_text_length: 500

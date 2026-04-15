@@ -37,7 +37,6 @@ dependencies = [
     "tqdm>=4.66.0",
     "wandb>=0.16.0",
     "python-dotenv>=1.0.0",
-    "einops>=0.7.0",
     "torch-ema>=0.3.0",
 ]
 

@@ -1,113 +1,280 @@
-"""Optimal-Transport Conditional Flow Matching for F5-TTS."""
+"""Optimal-Transport Conditional Flow Matching for F5-TTS.
+
+Matches the official SWivid/F5-TTS CFM implementation with:
+  - Random span masking for infilling training
+  - Classifier-free guidance (CFG) training dropout
+  - CFG inference with configurable strength
+  - Sway sampling for adaptive timestep scheduling
+  - Euler ODE integration with variable step sizes
+"""
+
+from random import random
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.nn.utils.rnn import pad_sequence
+
+
+def _lens_to_mask(lens: torch.Tensor, length: int | None = None) -> torch.Tensor:
+    """Convert sequence lengths to boolean mask [B, N]."""
+    if length is None:
+        length = int(lens.amax().item())
+    seq = torch.arange(length, device=lens.device)
+    return seq[None, :] < lens[:, None]
+
+
+def _mask_from_frac_lengths(
+    lens: torch.Tensor, frac_lengths: torch.Tensor
+) -> torch.Tensor:
+    """Generate random span masks from fractional lengths.
+
+    For each sample, masks a contiguous span of frac_lengths[i] * lens[i] frames
+    starting at a random position within the valid region.
+    """
+    lengths = (frac_lengths * lens).long()
+    max_start = lens - lengths
+    rand = torch.rand_like(frac_lengths)
+    start = (max_start * rand).long().clamp(min=0)
+    end = start + lengths
+
+    max_len = int(lens.max().item())
+    seq = torch.arange(max_len, device=lens.device).long()
+    return (seq[None, :] >= start[:, None]) & (seq[None, :] < end[:, None])
 
 
 class CFM(nn.Module):
-    """Wraps a DiT backbone with OT-CFM training and Euler-ODE inference.
+    """Conditional Flow Matching with infilling training and CFG.
 
-    Training path (Lipman et al. 2022, rectified flow convention):
-        x_t = (1 - t) * noise + t * data,   t ~ U[0, 1]
-        target velocity  v = data - noise
-        loss = MSE(predicted_v, v)     (mean over non-padding positions)
+    Training:
+      - Randomly masks 70-100% of mel frames (frac_lengths_mask)
+      - Conditioning = unmasked portion of ground truth mel
+      - OT-CFM interpolation: x_t = (1-t)*noise + t*data
+      - Loss: MSE on velocity field, computed only on masked span
+      - CFG dropout: randomly drops audio conditioning and/or text
 
     Inference:
-        Start at z_0 = noise, integrate dz/dt = v_θ(z_t, t, cond) from t=0→1
-        using simple Euler steps or higher-order ODE solvers.
+      - Euler ODE integration from noise to mel
+      - Optional classifier-free guidance with configurable strength
+      - Optional sway sampling for adaptive timestep scheduling
     """
 
-    def __init__(self, backbone: nn.Module, sigma_min: float = 1e-4) -> None:
+    def __init__(
+        self,
+        backbone: nn.Module,
+        sigma: float = 0.0,
+        audio_drop_prob: float = 0.3,
+        cond_drop_prob: float = 0.2,
+        frac_lengths_mask: tuple[float, float] = (0.7, 1.0),
+        n_mels: int = 100,
+    ) -> None:
         super().__init__()
         self.backbone = backbone
-        self.sigma_min = sigma_min
+        self.sigma = sigma
+        self.audio_drop_prob = audio_drop_prob
+        self.cond_drop_prob = cond_drop_prob
+        self.frac_lengths_mask = frac_lengths_mask
+        self.n_mels = n_mels
 
     def forward(
         self,
-        x1: torch.Tensor,
+        inp: torch.Tensor,
         text_ids: torch.Tensor,
-        mask: torch.Tensor | None = None,
+        *,
+        lens: torch.Tensor | None = None,
     ) -> torch.Tensor:
-        """Compute CFM training loss.
+        """Training forward pass with random span masking and CFG dropout.
 
         Args:
-            x1: Clean mel spectrograms [B, n_mels, T] (data distribution).
-            text_ids: Token IDs zero-padded to length T [B, T].
-            mask: Boolean mask [B, T], True = valid mel frame.
+            inp: Mel spectrograms [B, n_mels, T] (channels-first).
+            text_ids: Token IDs [B, Nt].
+            lens: Mel lengths [B] (long). If None, all frames are valid.
 
         Returns:
-            Scalar CFM MSE loss averaged over valid frames.
+            Scalar CFM loss (MSE on masked span).
         """
-        B, C, T = x1.shape
-        x1_t = x1.transpose(1, 2)  # [B, T, C]
+        # [B, n_mels, T] → [B, T, n_mels]
+        if inp.ndim == 3 and inp.shape[1] == self.n_mels:
+            inp = inp.transpose(1, 2)
 
-        noise = torch.randn_like(x1_t)
-        t = torch.rand(B, device=x1.device, dtype=x1.dtype)
+        batch, seq_len, dtype, device = (
+            inp.shape[0],
+            inp.shape[1],
+            inp.dtype,
+            inp.device,
+        )
 
-        # Interpolate: x_t = (1-t)*noise + t*data
-        t_expand = t[:, None, None]
-        x_t = (1.0 - t_expand) * noise + t_expand * x1_t
+        # Lengths → mask
+        if lens is None:
+            lens = torch.full((batch,), seq_len, device=device, dtype=torch.long)
+        mask = _lens_to_mask(lens, length=seq_len)
 
-        # Target velocity
-        v_target = x1_t - noise  # [B, T, C]
+        # Random span mask for infilling (mask 70-100% of frames)
+        frac_lengths = torch.zeros(batch, device=device).float().uniform_(
+            *self.frac_lengths_mask
+        )
+        rand_span_mask = _mask_from_frac_lengths(lens, frac_lengths)
+        rand_span_mask = rand_span_mask & mask
 
-        # Predict velocity via backbone
-        v_pred = self.backbone(x_t, t, text_ids, mask)  # [B, T, C]
+        # Conditioning = unmasked portion of ground truth
+        x1 = inp
+        cond = torch.where(rand_span_mask[..., None], torch.zeros_like(x1), x1)
 
-        if mask is not None:
-            m = mask[:, :, None].float()  # [B, T, 1]
-            loss = F.mse_loss(v_pred * m, v_target * m, reduction="sum") / (m.sum() * C + 1e-8)
+        # Gaussian noise
+        x0 = torch.randn_like(x1)
+
+        # Timestep
+        time = torch.rand(batch, dtype=dtype, device=device)
+
+        # OT-CFM interpolation: x_t = (1-t) * x0 + t * x1
+        t = time[:, None, None]
+        phi = (1 - t) * x0 + t * x1
+        flow = x1 - x0  # target velocity
+
+        # CFG dropout
+        drop_audio_cond = random() < self.audio_drop_prob
+        if random() < self.cond_drop_prob:
+            drop_audio_cond = True
+            drop_text = True
         else:
-            loss = F.mse_loss(v_pred, v_target)
+            drop_text = False
 
-        return loss
+        # Predict velocity
+        pred = self.backbone(
+            x=phi,
+            cond=cond,
+            text=text_ids,
+            time=time,
+            drop_audio_cond=drop_audio_cond,
+            drop_text=drop_text,
+            mask=mask,
+        )
+
+        # Loss on masked span only
+        loss = F.mse_loss(pred, flow, reduction="none")
+        loss = loss[rand_span_mask]
+
+        return loss.mean()
 
     @torch.inference_mode()
     def sample(
         self,
+        cond: torch.Tensor,
         text_ids: torch.Tensor,
-        n_mels: int,
-        target_len: int,
-        n_steps: int = 32,
-        mask: torch.Tensor | None = None,
-        ref_mel: torch.Tensor | None = None,
-        ref_len: int = 0,
-    ) -> torch.Tensor:
-        """Generate mel spectrogram via Euler ODE integration.
+        duration: torch.Tensor | int,
+        *,
+        lens: torch.Tensor | None = None,
+        steps: int = 32,
+        cfg_strength: float = 1.0,
+        sway_sampling_coef: float | None = None,
+        seed: int | None = None,
+        max_duration: int = 65536,
+    ) -> tuple[torch.Tensor, list[torch.Tensor]]:
+        """Generate mel spectrogram via Euler ODE with optional CFG.
 
         Args:
-            text_ids: Token IDs [B, T_total] (ref + target, zero-padded).
-            n_mels: Number of mel bins.
-            target_len: Number of target frames to generate.
-            n_steps: Number of Euler integration steps.
-            mask: Valid frame mask [B, T_total].
-            ref_mel: Reference clean mel [B, n_mels, T_ref] for voice cloning.
-            ref_len: Number of reference frames (T_ref).
+            cond: Conditioning mel [B, T_ref, n_mels] (reference audio region).
+            text_ids: Token IDs [B, Nt].
+            duration: Target total sequence length [B] or scalar int.
+            lens: Reference audio lengths [B]; frames [0:lens[i]] are conditioning.
+            steps: Number of ODE integration steps.
+            cfg_strength: CFG strength (0 = no guidance).
+            sway_sampling_coef: Sway sampling coefficient (None = uniform timesteps).
+            seed: Random seed for reproducible noise.
+            max_duration: Maximum allowed duration.
 
         Returns:
-            Generated mel [B, n_mels, target_len].
+            (output_mel, trajectory) where output_mel is [B, T, n_mels].
         """
-        B = text_ids.shape[0]
-        T_total = ref_len + target_len
-        device = text_ids.device
+        self.eval()
 
-        # Initialise: reference is clean, target starts as noise
-        x = torch.randn(B, T_total, n_mels, device=device)
-        if ref_mel is not None and ref_len > 0:
-            x[:, :ref_len, :] = ref_mel.transpose(1, 2)[:, :ref_len, :]
+        batch, cond_seq_len, device = cond.shape[0], cond.shape[1], cond.device
 
-        dt = 1.0 / n_steps
-        for i in range(n_steps):
-            t_val = i / n_steps
-            t = torch.full((B,), t_val, device=device, dtype=x.dtype)
-            v = self.backbone(x, t, text_ids, mask)
+        if lens is None:
+            lens = torch.full(
+                (batch,), cond_seq_len, device=device, dtype=torch.long
+            )
 
-            # Only update target frames (not reference region)
-            if ref_len > 0:
-                x[:, ref_len:, :] = x[:, ref_len:, :] + v[:, ref_len:, :] * dt
-            else:
-                x = x + v * dt
+        # Conditioning mask: True where reference audio exists
+        cond_mask = _lens_to_mask(lens)
 
-        # Return target portion only, transposed to [B, n_mels, T]
-        return x[:, ref_len:, :].transpose(1, 2)
+        if isinstance(duration, int):
+            duration = torch.full(
+                (batch,), duration, device=device, dtype=torch.long
+            )
+        duration = duration.clamp(max=max_duration)
+        max_dur = int(duration.amax().item())
+
+        # Pad conditioning to max duration
+        cond = F.pad(cond, (0, 0, 0, max_dur - cond_seq_len), value=0.0)
+        cond_mask = F.pad(
+            cond_mask, (0, max_dur - cond_mask.shape[-1]), value=False
+        )
+        cond_mask_3d = cond_mask.unsqueeze(-1)  # [B, T, 1]
+        step_cond = torch.where(cond_mask_3d, cond, torch.zeros_like(cond))
+
+        # Attention mask for padding
+        attn_mask = _lens_to_mask(duration) if batch > 1 else None
+
+        # ODE velocity function
+        def fn(t_val: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
+            if cfg_strength < 1e-5:
+                return self.backbone(
+                    x=x,
+                    cond=step_cond,
+                    text=text_ids,
+                    time=t_val,
+                    mask=attn_mask,
+                    drop_audio_cond=False,
+                    drop_text=False,
+                    cache=True,
+                )
+            # CFG: predict conditioned + unconditioned
+            pred_cfg = self.backbone(
+                x=x,
+                cond=step_cond,
+                text=text_ids,
+                time=t_val,
+                mask=attn_mask,
+                cfg_infer=True,
+                cache=True,
+            )
+            pred, null_pred = torch.chunk(pred_cfg, 2, dim=0)
+            return pred + (pred - null_pred) * cfg_strength
+
+        # Initial noise (per-sample seeding for batch consistency)
+        y0_list: list[torch.Tensor] = []
+        for dur in duration:
+            if seed is not None:
+                torch.manual_seed(seed)
+            y0_list.append(
+                torch.randn(
+                    int(dur.item()),
+                    self.n_mels,
+                    device=device,
+                    dtype=step_cond.dtype,
+                )
+            )
+        y0 = pad_sequence(y0_list, padding_value=0, batch_first=True)
+
+        # Timestep schedule
+        t = torch.linspace(0, 1, steps + 1, device=device, dtype=step_cond.dtype)
+        if sway_sampling_coef is not None:
+            t = t + sway_sampling_coef * (torch.cos(torch.pi / 2 * t) - 1 + t)
+
+        # Euler ODE integration
+        trajectory: list[torch.Tensor] = [y0]
+        x = y0
+        for i in range(len(t) - 1):
+            dt = t[i + 1] - t[i]
+            t_batch = t[i].expand(batch)
+            v = fn(t_batch, x)
+            x = x + v * dt
+            trajectory.append(x)
+
+        self.backbone.clear_cache()
+
+        # Replace conditioning region with original
+        out = torch.where(cond_mask_3d, cond, x)
+
+        return out, trajectory

@@ -1,5 +1,6 @@
 """Mongolian number-to-text transliteration for Khalkha Cyrillic."""
 
+import re
 from typing import Final
 
 ONES: Final[dict[int, str]] = {
@@ -173,8 +174,6 @@ class NumberNormalizer:
         return f"{cardinal}{suffix}"
 
     def normalize_text(self, text: str) -> str:
-        import re
-
         def replace_ordinal(match: re.Match[str]) -> str:
             num = int(match.group(1))
             return self.convert_ordinal(num)

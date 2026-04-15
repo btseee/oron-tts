@@ -1,34 +1,41 @@
 #!/usr/bin/env bash
 # RunPod environment setup for OronTTS
-# Run once after the pod starts: bash scripts/setup/runpod_setup.sh
+# Recommended image: runpod/pytorch:1.0.3-cu1290-torch280-ubuntu2404
+#   (Ubuntu 24.04 → system Python IS 3.12 → venv inherits pre-installed PyTorch)
+# Run once after the pod starts:
+#   bash scripts/setup/runpod_setup.sh
 set -euo pipefail
 
+echo "[INFO] Setting up OronTTS training environment..."
+
 # ── Python 3.12 ────────────────────────────────────────────────────────────────
-# RunPod templates may ship Python 3.10/3.11; pyproject.toml requires >=3.12.
-if ! python3.12 --version &>/dev/null 2>&1; then
-    apt-get update && apt upgrade -y --no-install-recommends
-    echo "[INFO] Installing Python 3.12..."
-    # Remove any stale/malformed deadsnakes entry from previous attempts
-    rm -f /etc/apt/sources.list.d/deadsnakes.list /etc/apt/trusted.gpg.d/deadsnakes.gpg
-    apt-get update -qq
-    apt-get install -y --no-install-recommends curl gnupg lsb-release
-    # Add deadsnakes PPA manually — avoids add-apt-repository's broken apt_pkg dep
-    curl -fsSL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0xF23C5A6CF475977595C89F51BA6932366A755776" \
-        | gpg --dearmor > /etc/apt/trusted.gpg.d/deadsnakes.gpg
-    echo "deb https://ppa.launchpadcontent.net/deadsnakes/ppa/ubuntu $(lsb_release -cs) main" \
-        > /etc/apt/sources.list.d/deadsnakes.list
-    apt-get update -qq
-    apt-get install -y --no-install-recommends python3.12 python3.12-venv python3.12-dev
+# RunPod base images (Ubuntu 22.04 & 24.04) ship Python 3.12 pre-installed
+# via deadsnakes. No manual installation needed.
+if ! python3.12 --version &>/dev/null; then
+    echo "[ERROR] Python 3.12 not found. Use a RunPod PyTorch image (Ubuntu 24.04 recommended)."
+    exit 1
 fi
 python3.12 --version
 
 # ── Virtual environment ────────────────────────────────────────────────────────
-python3.12 -m venv .venv
+# Use --system-site-packages to inherit the pre-installed PyTorch + CUDA stack.
+# This avoids re-downloading torch (~2.5 GB) and ensures CUDA version match.
+VENV_ARGS="--system-site-packages"
+if ! python3.12 -c "import torch" 2>/dev/null; then
+    echo "[WARN] System PyTorch not found for Python 3.12; creating isolated venv."
+    echo "       (This will download PyTorch from PyPI — use Ubuntu 24.04 image to avoid this.)"
+    VENV_ARGS=""
+fi
+
+python3.12 -m venv ${VENV_ARGS} .venv
 source .venv/bin/activate
 
 # ── Python dependencies ────────────────────────────────────────────────────────
 pip install --upgrade pip --quiet
 pip install -e ".[dev]"
+
+# Verify torch + CUDA
+python -c "import torch; print(f'PyTorch {torch.__version__}, CUDA available: {torch.cuda.is_available()}')"
 
 # ── Weights & Biases ───────────────────────────────────────────────────────────
 # Set WANDB_API_KEY in RunPod → Secrets (env var) — then this auto-authenticates.

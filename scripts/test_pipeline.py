@@ -221,8 +221,11 @@ def step_model_forward(cfg: dict) -> object:
         if not cfg:
             # Fallback mini config if config loading failed
             cfg = {
-                "audio": {"sample_rate": 24000, "n_mels": 100, "n_fft": 1024, "hop_length": 256},
-                "model": {"dim": 64, "depth": 2, "heads": 2, "vocab_size": 67},
+                "sample_rate": 24000,
+                "n_mels": 100,
+                "n_fft": 1024,
+                "hop_length": 256,
+                "model": {"dim": 64, "depth": 2, "heads": 2, "vocab_size": 65},
             }
 
         # Use tiny overrides so test is fast on CPU
@@ -231,12 +234,12 @@ def step_model_forward(cfg: dict) -> object:
         tiny_cfg["model"]["dim"] = 64
         tiny_cfg["model"]["depth"] = 2
         tiny_cfg["model"]["heads"] = 2
-        tiny_cfg["model"]["ff_mult"] = 2
+        tiny_cfg["model"]["ff_mult"] = 4
         tiny_cfg["model"]["conv_layers"] = 2
-        tiny_cfg.setdefault("audio", {})
-        tiny_cfg["audio"]["vocos_dim"] = 64
-        tiny_cfg["audio"]["vocos_layers"] = 2
-        tiny_cfg["audio"]["vocos_intermediate"] = 128
+        tiny_cfg["model"]["text_dim"] = 64
+        tiny_cfg["model"]["vocos_dim"] = 64
+        tiny_cfg["model"]["vocos_layers"] = 2
+        tiny_cfg["model"]["vocos_intermediate"] = 128
 
         model = F5TTS.from_config(tiny_cfg)
         n_params = sum(p.numel() for p in model.parameters())

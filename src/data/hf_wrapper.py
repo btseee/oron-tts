@@ -35,10 +35,8 @@ class HFDatasetWrapper:
 
         self._dataset = load_dataset(**kwargs)
 
-        if not streaming and self._dataset is not None and hasattr(self._dataset, "cast_column"):
-            self._dataset = self._dataset.cast_column(
-                "audio", Audio(sampling_rate=self.sample_rate)
-            )
+        # NOTE: audio decoding is deferred to TTSDataset.from_hf_dataset()
+        # which uses Audio(decode=False) for lazy, pickle-friendly loading.
 
         if self._dataset is None:
             raise ValueError(f"Failed to load dataset: {self.dataset_name}")

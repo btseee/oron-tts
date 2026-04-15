@@ -116,13 +116,13 @@ class F5Trainer:
         """Single forward+backward step; returns loss on final accum step, else None."""
         mel = batch["mel"].to(self.device)  # [B, n_mels, T]
         text_ids = batch["text_ids"].to(self.device)  # [B, T]
-        mask = batch["mask"].to(self.device)  # [B, T]
+        mel_lengths = batch["mel_lengths"].to(self.device)  # [B]
 
         if torch.isnan(mel).any() or torch.isinf(mel).any():
             return None
 
         self.model.train()
-        loss = self.model(mel, text_ids, mask) / self.grad_accum
+        loss = self.model(mel, text_ids, mel_lengths) / self.grad_accum
         loss.backward()
 
         if (accum_step + 1) % self.grad_accum == 0:
@@ -223,8 +223,8 @@ class F5Trainer:
             for batch in self.val_loader:
                 mel = batch["mel"].to(self.device)
                 text_ids = batch["text_ids"].to(self.device)
-                mask = batch["mask"].to(self.device)
-                loss = self.model(mel, text_ids, mask)
+                mel_lengths = batch["mel_lengths"].to(self.device)
+                loss = self.model(mel, text_ids, mel_lengths)
                 total_loss += loss.item()
                 n += 1
         return total_loss / max(n, 1)

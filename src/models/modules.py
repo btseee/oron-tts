@@ -1,4 +1,11 @@
-"""DiT building blocks for F5-TTS: RMSNorm, RoPE, AdaLN, Attention, FFN, DiTBlock."""
+"""DiT building blocks for F5-TTS.
+
+Components: RMSNorm, SinusoidalEmbedding, TimestepEmbedding, RotaryEmbedding,
+ConvPositionEmbedding, GRN, ConvNeXtV2Block, AdaLayerNorm (6-param with gating),
+AdaLayerNormFinal, Attention, FeedForward (GELU), DiTBlock.
+
+Architecture matches the official SWivid/F5-TTS implementation.
+"""
 
 import math
 
@@ -10,51 +17,61 @@ import torch.nn.functional as F
 
 
 class RMSNorm(nn.Module):
-    def __init__(self, dim: int, eps: float = 1e-8) -> None:
+    def __init__(self, dim: int, eps: float = 1e-6) -> None:
         super().__init__()
-        self.gamma = nn.Parameter(torch.ones(dim))
         self.eps = eps
+        self.weight = nn.Parameter(torch.ones(dim))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # Standard RMSNorm: x / sqrt(mean(x^2)) * gamma
-        rms = x.norm(dim=-1, keepdim=True) * (x.shape[-1] ** -0.5)
-        return x / (rms + self.eps) * self.gamma
+        variance = x.to(torch.float32).pow(2).mean(-1, keepdim=True)
+        x = x * torch.rsqrt(variance + self.eps)
+        if self.weight.dtype in (torch.float16, torch.bfloat16):
+            x = x.to(self.weight.dtype)
+        return x * self.weight
 
 
-# ── Timestep embedding ────────────────────────────────────────────────────────
+# ── Timestep embeddings ──────────────────────────────────────────────────────
 
 
 class SinusoidalEmbedding(nn.Module):
-    """Sinusoidal timestep embedding → MLP → conditioning vector."""
+    """Sinusoidal position embedding (no MLP)."""
 
     def __init__(self, dim: int) -> None:
         super().__init__()
-        assert dim % 2 == 0
-        self.half_dim = dim // 2
-        self.mlp = nn.Sequential(
-            nn.Linear(dim, dim * 4),
+        self.dim = dim
+
+    def forward(self, x: torch.Tensor, scale: float = 1000.0) -> torch.Tensor:
+        device = x.device
+        half_dim = self.dim // 2
+        emb = math.log(10000) / (half_dim - 1)
+        emb = torch.exp(torch.arange(half_dim, device=device).float() * -emb)
+        emb = scale * x.unsqueeze(1) * emb.unsqueeze(0)
+        return torch.cat([emb.sin(), emb.cos()], dim=-1)
+
+
+class TimestepEmbedding(nn.Module):
+    """Sinusoidal embedding + MLP for timestep conditioning."""
+
+    def __init__(self, dim: int, freq_embed_dim: int = 256) -> None:
+        super().__init__()
+        self.time_embed = SinusoidalEmbedding(freq_embed_dim)
+        self.time_mlp = nn.Sequential(
+            nn.Linear(freq_embed_dim, dim),
             nn.SiLU(),
-            nn.Linear(dim * 4, dim),
+            nn.Linear(dim, dim),
         )
 
-    def forward(self, t: torch.Tensor) -> torch.Tensor:
-        # t: [B] values in [0, 1]
-        device = t.device
-        freqs = torch.exp(
-            -math.log(10000) * torch.arange(self.half_dim, device=device) / (self.half_dim - 1)
-        )
-        emb = t[:, None] * freqs[None, :]  # [B, half_dim]
-        emb = torch.cat([emb.sin(), emb.cos()], dim=-1)  # [B, dim]
-        return self.mlp(emb)
+    def forward(self, timestep: torch.Tensor) -> torch.Tensor:
+        time_hidden = self.time_embed(timestep)
+        return self.time_mlp(time_hidden.to(timestep.dtype))
 
 
 # ── Rotary Positional Embedding (RoPE) ────────────────────────────────────────
 
 
 class RotaryEmbedding(nn.Module):
-    def __init__(self, dim: int, max_len: int = 4096) -> None:
+    def __init__(self, dim: int) -> None:
         super().__init__()
-        assert dim % 2 == 0
         inv_freq = 1.0 / (10000 ** (torch.arange(0, dim, 2).float() / dim))
         self.register_buffer("inv_freq", inv_freq)
         self._cached_cos: torch.Tensor | None = None
@@ -66,113 +83,253 @@ class RotaryEmbedding(nn.Module):
         if seq_len <= self._cached_len and device == self._cached_device:
             return
         t = torch.arange(seq_len, device=device).float()
-        freqs = torch.outer(t, self.inv_freq.to(device))  # type: ignore[arg-type]
+        freqs = torch.outer(t, self.inv_freq.to(device))
         emb = torch.cat([freqs, freqs], dim=-1)
-        self._cached_cos = emb.cos()[None, None, :, :]  # [1,1,T,D]
+        self._cached_cos = emb.cos()[None, None, :, :]
         self._cached_sin = emb.sin()[None, None, :, :]
         self._cached_len = seq_len
         self._cached_device = device
 
-    def rotate_half(self, x: torch.Tensor) -> torch.Tensor:
+    @staticmethod
+    def _rotate_half(x: torch.Tensor) -> torch.Tensor:
         half = x.shape[-1] // 2
         return torch.cat([-x[..., half:], x[..., :half]], dim=-1)
 
     def forward(self, q: torch.Tensor, k: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        # q, k: [B, heads, T, head_dim]
         seq_len = q.shape[2]
         self._build_cache(seq_len, q.device)
         assert self._cached_cos is not None and self._cached_sin is not None
         cos = self._cached_cos[:, :, :seq_len, :]
         sin = self._cached_sin[:, :, :seq_len, :]
-        q_rot = q * cos + self.rotate_half(q) * sin
-        k_rot = k * cos + self.rotate_half(k) * sin
+        q_rot = q * cos + self._rotate_half(q) * sin
+        k_rot = k * cos + self._rotate_half(k) * sin
         return q_rot, k_rot
 
 
-# ── Adaptive Layer Norm (AdaLN) ───────────────────────────────────────────────
+# ── Convolutional Position Embedding ─────────────────────────────────────────
 
 
-class AdaLN(nn.Module):
-    """Adaptive Layer Norm: scale & shift conditioned on timestep embedding."""
+class ConvPositionEmbedding(nn.Module):
+    """Convolutional position embedding (from official F5-TTS)."""
+
+    def __init__(self, dim: int, kernel_size: int = 31, groups: int = 16) -> None:
+        super().__init__()
+        assert kernel_size % 2 != 0
+        self.conv1d = nn.Sequential(
+            nn.Conv1d(dim, dim, kernel_size, groups=groups, padding=kernel_size // 2),
+            nn.Mish(),
+            nn.Conv1d(dim, dim, kernel_size, groups=groups, padding=kernel_size // 2),
+            nn.Mish(),
+        )
+
+    def forward(self, x: torch.Tensor, mask: torch.Tensor | None = None) -> torch.Tensor:
+        x = x.permute(0, 2, 1)  # [B, N, D] → [B, D, N]
+        if mask is not None:
+            mask_3d = mask.unsqueeze(1)
+            x = x.masked_fill(~mask_3d, 0.0)
+        x = self.conv1d(x)
+        if mask is not None:
+            x = x.masked_fill(~mask_3d, 0.0)
+        return x.permute(0, 2, 1)
+
+
+# ── Global Response Normalization (ConvNeXt V2) ──────────────────────────────
+
+
+class GRN(nn.Module):
+    def __init__(self, dim: int) -> None:
+        super().__init__()
+        self.gamma = nn.Parameter(torch.zeros(1, 1, dim))
+        self.beta = nn.Parameter(torch.zeros(1, 1, dim))
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        gx = torch.norm(x, p=2, dim=1, keepdim=True)
+        nx = gx / (gx.mean(dim=-1, keepdim=True) + 1e-6)
+        return self.gamma * (x * nx) + self.beta + x
+
+
+# ── ConvNeXt V2 Block ────────────────────────────────────────────────────────
+
+
+class ConvNeXtV2Block(nn.Module):
+    def __init__(self, dim: int, intermediate_dim: int, dilation: int = 1) -> None:
+        super().__init__()
+        padding = (dilation * (7 - 1)) // 2
+        self.dwconv = nn.Conv1d(
+            dim, dim, kernel_size=7, padding=padding, groups=dim, dilation=dilation
+        )
+        self.norm = nn.LayerNorm(dim, eps=1e-6)
+        self.pwconv1 = nn.Linear(dim, intermediate_dim)
+        self.act = nn.GELU()
+        self.grn = GRN(intermediate_dim)
+        self.pwconv2 = nn.Linear(intermediate_dim, dim)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        residual = x
+        x = x.transpose(1, 2)
+        x = self.dwconv(x)
+        x = x.transpose(1, 2)
+        x = self.norm(x)
+        x = self.pwconv1(x)
+        x = self.act(x)
+        x = self.grn(x)
+        x = self.pwconv2(x)
+        return residual + x
+
+
+# ── Precompute sinusoidal freqs for text encoder ─────────────────────────────
+
+
+def precompute_freqs_cis(dim: int, end: int) -> torch.Tensor:
+    """Precompute sinusoidal position frequencies for text encoder."""
+    freqs = 1.0 / (10000 ** (torch.arange(0, dim, 2)[: (dim // 2)].float() / dim))
+    t = torch.arange(end)
+    freqs = torch.outer(t, freqs).float()
+    return torch.cat([torch.cos(freqs), torch.sin(freqs)], dim=-1)
+
+
+# ── Adaptive Layer Norm (6-parameter with gating) ────────────────────────────
+
+
+class AdaLayerNorm(nn.Module):
+    """6-parameter AdaLN: shift, scale, gate for both attention and FFN paths."""
 
     def __init__(self, dim: int) -> None:
         super().__init__()
-        self.norm = RMSNorm(dim)
-        self.proj = nn.Linear(dim, dim * 2)
-        nn.init.zeros_(self.proj.weight)
-        nn.init.zeros_(self.proj.bias)
+        self.silu = nn.SiLU()
+        self.linear = nn.Linear(dim, dim * 6)
+        self.norm = nn.LayerNorm(dim, elementwise_affine=False, eps=1e-6)
 
-    def forward(self, x: torch.Tensor, cond: torch.Tensor) -> torch.Tensor:
-        # x: [B, T, D], cond: [B, D]
-        scale, shift = self.proj(cond).unsqueeze(1).chunk(2, dim=-1)
-        return self.norm(x) * (1.0 + scale) + shift
+    def forward(
+        self, x: torch.Tensor, emb: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        emb = self.linear(self.silu(emb))
+        shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = torch.chunk(
+            emb, 6, dim=1
+        )
+        x = self.norm(x) * (1 + scale_msa[:, None]) + shift_msa[:, None]
+        return x, gate_msa, shift_mlp, scale_mlp, gate_mlp
+
+
+class AdaLayerNormFinal(nn.Module):
+    """Final layer AdaLN: only scale + shift, no gating."""
+
+    def __init__(self, dim: int) -> None:
+        super().__init__()
+        self.silu = nn.SiLU()
+        self.linear = nn.Linear(dim, dim * 2)
+        self.norm = nn.LayerNorm(dim, elementwise_affine=False, eps=1e-6)
+
+    def forward(self, x: torch.Tensor, emb: torch.Tensor) -> torch.Tensor:
+        emb = self.linear(self.silu(emb))
+        scale, shift = torch.chunk(emb, 2, dim=1)
+        return self.norm(x) * (1 + scale)[:, None, :] + shift[:, None, :]
 
 
 # ── Attention ─────────────────────────────────────────────────────────────────
 
 
 class Attention(nn.Module):
-    def __init__(self, dim: int, heads: int, rope: RotaryEmbedding) -> None:
+    def __init__(
+        self, dim: int, heads: int, dim_head: int = 64, dropout: float = 0.0
+    ) -> None:
         super().__init__()
-        assert dim % heads == 0
         self.heads = heads
-        self.head_dim = dim // heads
-        self.scale = self.head_dim**-0.5
-        self.rope = rope
+        self.inner_dim = dim_head * heads
 
-        self.qkv = nn.Linear(dim, dim * 3, bias=False)
-        self.out_proj = nn.Linear(dim, dim, bias=False)
+        self.to_q = nn.Linear(dim, self.inner_dim)
+        self.to_k = nn.Linear(dim, self.inner_dim)
+        self.to_v = nn.Linear(dim, self.inner_dim)
+        self.to_out = nn.Sequential(
+            nn.Linear(self.inner_dim, dim), nn.Dropout(dropout)
+        )
 
-    def forward(self, x: torch.Tensor, mask: torch.Tensor | None = None) -> torch.Tensor:
+    def forward(
+        self,
+        x: torch.Tensor,
+        mask: torch.Tensor | None = None,
+        rope: RotaryEmbedding | None = None,
+    ) -> torch.Tensor:
         B, T, _ = x.shape
-        qkv = self.qkv(x).reshape(B, T, 3, self.heads, self.head_dim)
-        q, k, v = qkv.permute(2, 0, 3, 1, 4).unbind(0)  # each [B, H, T, D_h]
+        head_dim = self.inner_dim // self.heads
 
-        q, k = self.rope(q, k)
+        q = self.to_q(x).view(B, T, self.heads, head_dim).transpose(1, 2)
+        k = self.to_k(x).view(B, T, self.heads, head_dim).transpose(1, 2)
+        v = self.to_v(x).view(B, T, self.heads, head_dim).transpose(1, 2)
 
-        attn = torch.matmul(q, k.transpose(-2, -1)) * self.scale  # [B, H, T, T]
+        if rope is not None:
+            q, k = rope(q, k)
+
+        attn_mask = None
+        if mask is not None:
+            attn_mask = mask[:, None, None, :].expand(B, self.heads, T, T)
+
+        out = F.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask, dropout_p=0.0)
+        out = out.transpose(1, 2).reshape(B, T, self.inner_dim)
+        out = self.to_out(out)
 
         if mask is not None:
-            # mask: [B, T] bool, True = valid; expand for broadcasting
-            attn = attn.masked_fill(~mask[:, None, None, :], float("-inf"))
+            out = out.masked_fill(~mask.unsqueeze(-1), 0.0)
 
-        attn = F.softmax(attn, dim=-1)
-        out = torch.matmul(attn, v).transpose(1, 2).reshape(B, T, -1)
-        return self.out_proj(out)
+        return out
 
 
-# ── FeedForward (SwiGLU) ──────────────────────────────────────────────────────
+# ── FeedForward (GELU, matching official F5-TTS) ─────────────────────────────
 
 
 class FeedForward(nn.Module):
-    def __init__(self, dim: int, ff_mult: int = 2) -> None:
+    def __init__(self, dim: int, mult: int = 4, dropout: float = 0.0) -> None:
         super().__init__()
-        inner_dim = dim * ff_mult
-        self.gate_proj = nn.Linear(dim, inner_dim, bias=False)
-        self.up_proj = nn.Linear(dim, inner_dim, bias=False)
-        self.down_proj = nn.Linear(inner_dim, dim, bias=False)
+        inner_dim = int(dim * mult)
+        self.ff = nn.Sequential(
+            nn.Linear(dim, inner_dim),
+            nn.GELU(approximate="tanh"),
+            nn.Dropout(dropout),
+            nn.Linear(inner_dim, dim),
+        )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.down_proj(F.silu(self.gate_proj(x)) * self.up_proj(x))
+        return self.ff(x)
 
 
 # ── DiT Block ─────────────────────────────────────────────────────────────────
 
 
 class DiTBlock(nn.Module):
-    def __init__(self, dim: int, heads: int, ff_mult: int, rope: RotaryEmbedding) -> None:
+    """DiT block with 6-parameter AdaLN modulation and gating."""
+
+    def __init__(
+        self,
+        dim: int,
+        heads: int,
+        dim_head: int = 64,
+        ff_mult: int = 4,
+        dropout: float = 0.1,
+    ) -> None:
         super().__init__()
-        self.adaLN_attn = AdaLN(dim)
-        self.attn = Attention(dim, heads, rope)
-        self.adaLN_ff = AdaLN(dim)
-        self.ff = FeedForward(dim, ff_mult)
+        self.attn_norm = AdaLayerNorm(dim)
+        self.attn = Attention(dim=dim, heads=heads, dim_head=dim_head, dropout=dropout)
+
+        self.ff_norm = nn.LayerNorm(dim, elementwise_affine=False, eps=1e-6)
+        self.ff = FeedForward(dim=dim, mult=ff_mult, dropout=dropout)
 
     def forward(
         self,
         x: torch.Tensor,
-        t_emb: torch.Tensor,
+        t: torch.Tensor,
         mask: torch.Tensor | None = None,
+        rope: RotaryEmbedding | None = None,
     ) -> torch.Tensor:
-        x = x + self.attn(self.adaLN_attn(x, t_emb), mask)
-        x = x + self.ff(self.adaLN_ff(x, t_emb))
+        # Pre-norm & modulation
+        norm, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.attn_norm(x, emb=t)
+
+        # Attention with gating
+        attn_output = self.attn(norm, mask=mask, rope=rope)
+        x = x + gate_msa.unsqueeze(1) * attn_output
+
+        # FFN with modulation and gating
+        norm = self.ff_norm(x) * (1 + scale_mlp[:, None]) + shift_mlp[:, None]
+        ff_output = self.ff(norm)
+        x = x + gate_mlp.unsqueeze(1) * ff_output
+
         return x

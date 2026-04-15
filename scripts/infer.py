@@ -15,7 +15,12 @@ def load_model(checkpoint_path: str, device: str) -> F5TTS:
     ckpt = torch.load(checkpoint_path, map_location=device, weights_only=False)
     config = cm.load_config() or {}
     model = F5TTS.from_config(config)
-    model.load_state_dict(ckpt.get("model_state_dict", ckpt), strict=False)
+    state = ckpt.get("model_state_dict", ckpt)
+    missing, unexpected = model.load_state_dict(state, strict=False)
+    if missing:
+        print(f"[WARN] Missing keys: {len(missing)} (e.g. {missing[:3]})")
+    if unexpected:
+        print(f"[WARN] Unexpected keys: {len(unexpected)} (e.g. {unexpected[:3]})")
     model.eval()
     return model.to(device)
 
