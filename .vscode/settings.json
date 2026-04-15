@@ -40,12 +40,10 @@
     "editor.insertSpaces": true,
     
     "terminal.integrated.env.windows": {
-        "PYTHONPATH": "${workspaceFolder}",
-        "WANDB_PROJECT": "oron-tts"
+        "PYTHONPATH": "${workspaceFolder}"
     },
     "terminal.integrated.env.linux": {
-        "PYTHONPATH": "${workspaceFolder}",
-        "WANDB_PROJECT": "oron-tts"
+        "PYTHONPATH": "${workspaceFolder}"
     },
     
     "yaml.schemas": {

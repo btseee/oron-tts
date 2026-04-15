@@ -56,8 +56,7 @@
             "cwd": "${workspaceFolder}",
             "env": {
                 "PYTHONPATH": "${workspaceFolder}",
-                "CUDA_VISIBLE_DEVICES": "0",
-                "WANDB_PROJECT": "oron-tts"
+                "CUDA_VISIBLE_DEVICES": "0"
             }
         },
         {
@@ -75,8 +74,7 @@
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}",
             "env": {
-                "PYTHONPATH": "${workspaceFolder}",
-                "WANDB_PROJECT": "oron-tts"
+                "PYTHONPATH": "${workspaceFolder}"
             }
         },
         {

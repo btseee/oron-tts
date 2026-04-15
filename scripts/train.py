@@ -85,25 +85,66 @@ def train_worker(rank: int, world_size: int, config: dict, args: argparse.Namesp
     if rank == 0:
         print(f"[Rank {rank}] Dataset size: {len(train_dataset)}")
 
+    # Train/val split (90/10) for validation loss tracking
+    val_loader = None
+    val_size = int(len(train_dataset) * 0.1)
+    if val_size >= 2:
+        from torch.utils.data import random_split
+
+        train_subset, val_subset = random_split(
+            train_dataset,
+            [len(train_dataset) - val_size, val_size],
+            generator=torch.Generator().manual_seed(42),
+        )
+    else:
+        train_subset = train_dataset
+        val_subset = None
+
+    num_workers = config.get("num_workers", 4)
+    use_persistent = num_workers > 0
+
     sampler = (
-        DistributedSampler(train_dataset, num_replicas=world_size, rank=rank)
+        DistributedSampler(train_subset, num_replicas=world_size, rank=rank)
         if world_size > 1
         else None
     )
     train_loader = DataLoader(
-        train_dataset,
+        train_subset,
         batch_size=config.get("batch_size", 16),
         shuffle=(sampler is None),
         sampler=sampler,
-        num_workers=config.get("num_workers", 4),
+        num_workers=num_workers,
         collate_fn=TTSCollator(),
         pin_memory=config.get("pin_memory", True) and torch.cuda.is_available(),
+        prefetch_factor=config.get("prefetch_factor", 2) if num_workers > 0 else None,
+        persistent_workers=use_persistent,
         drop_last=True,
     )
+
+    if val_subset is not None:
+        val_loader = DataLoader(
+            val_subset,
+            batch_size=config.get("batch_size", 16),
+            shuffle=False,
+            num_workers=max(num_workers // 2, 1),
+            collate_fn=TTSCollator(),
+            pin_memory=config.get("pin_memory", True) and torch.cuda.is_available(),
+            persistent_workers=False,
+        )
 
     model = F5TTS.from_config(config)
     if rank == 0:
         print(f"[Rank {rank}] Model parameters: {sum(p.numel() for p in model.parameters()):,}")
+
+    # torch.compile for PyTorch 2.x speedup (skip if unavailable or disabled)
+    if config.get("compile", True) and hasattr(torch, "compile"):
+        try:
+            model = torch.compile(model)  # type: ignore[assignment]
+            if rank == 0:
+                print("[INFO] torch.compile enabled")
+        except Exception as e:
+            if rank == 0:
+                print(f"[WARN] torch.compile failed, using eager mode: {e}")
 
     # Optionally load pretrained F5-TTS checkpoint
     if args.pretrain_ckpt:
@@ -120,6 +161,7 @@ def train_worker(rank: int, world_size: int, config: dict, args: argparse.Namesp
         config=config,
         model=model,
         train_loader=train_loader,
+        val_loader=val_loader,
         device=device,
         rank=rank,
         world_size=world_size,

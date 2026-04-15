@@ -139,7 +139,6 @@ Create `.env` at the repo root (never commit — already in `.gitignore`):
 
 ```
 HF_TOKEN=hf_...       # HuggingFace token — read + write scope
-WANDB_API_KEY=...     # get from wandb.ai/settings
 ```
 
 `train.py` and `prepare.py` load it automatically via `python-dotenv`.
@@ -158,7 +157,6 @@ WANDB_API_KEY=...     # get from wandb.ai/settings
 | Volume disk | **50 GB** |
 | Volume mount | `/workspace` |
 | `HF_TOKEN` env var | your HuggingFace token (read + write) |
-| `WANDB_API_KEY` env var | your W&B key from [wandb.ai/settings](https://wandb.ai/settings) |
 
 The Base config peaks at ~13 GB VRAM; the L40S 48 GB gives a 3.5× margin. Add the env vars in the **Environment Variables** section of the pod creation form.
 
@@ -175,14 +173,13 @@ cd oron-tts
 bash scripts/setup/runpod_setup.sh
 ```
 
-The script creates `.venv` with `--system-site-packages` (inherits pre-installed PyTorch + CUDA), installs project deps, authenticates wandb, and runs a 10-step smoke test. Close the tab at any time — re-attach with `tmux attach -t setup`.
+The script creates `.venv` with `--system-site-packages` (inherits pre-installed PyTorch + CUDA), installs project deps, and runs a 10-step smoke test. Close the tab at any time — re-attach with `tmux attach -t setup`.
 
 If you skipped the env vars form, create `.env` instead (auto-loaded by `train.py`):
 
 ```bash
 cat > /workspace/oron-tts/.env <<'EOF'
 HF_TOKEN=hf_...
-WANDB_API_KEY=...
 EOF
 ```
 
@@ -197,7 +194,7 @@ python scripts/train.py \
     --hf-repo btsee/orontts
 ```
 
-Metrics stream to **wandb.ai → project oron-tts**. Checkpoints land on the 50 GB volume and survive pod restarts — re-run the same command to resume.
+Metrics are logged to console (loss, val_loss, samples/s, ETA). Checkpoints land on the 50 GB volume and survive pod restarts — re-run the same command to resume.
 
 ### Cost
 
@@ -218,9 +215,6 @@ sample_rate: 24000
 n_mels: 100
 n_fft: 1024
 hop_length: 256
-
-wandb_project: "oron-tts"   # remove to disable logging
-wandb_run_name: null
 
 batch_size: 16
 warmup_steps: 1000

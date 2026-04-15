@@ -35,7 +35,6 @@ dependencies = [
     "safetensors>=0.4.0",    # loading official F5-TTS pretrained checkpoints
     "pyyaml>=6.0",
     "tqdm>=4.66.0",
-    "wandb>=0.16.0",
     "python-dotenv>=1.0.0",
     "torch-ema>=0.3.0",
 ]

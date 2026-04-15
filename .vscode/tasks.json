@@ -18,14 +18,7 @@
             "group": "build",
             "problemMatcher": []
         },
-        {
-            "label": "Setup: wandb login",
-            "type": "shell",
-            "command": ".venv/Scripts/python -m wandb login",
-            "options": { "cwd": "${workspaceFolder}" },
-            "group": "none",
-            "problemMatcher": []
-        },
+
         // ── Test ───────────────────────────────────────────────────────────────
         {
             "label": "Test: Smoke test (synthetic)",

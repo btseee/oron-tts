@@ -37,14 +37,6 @@ pip install -e ".[dev]"
 # Verify torch + CUDA
 python -c "import torch; print(f'PyTorch {torch.__version__}, CUDA available: {torch.cuda.is_available()}')"
 
-# ── Weights & Biases ───────────────────────────────────────────────────────────
-# Set WANDB_API_KEY in RunPod → Secrets (env var) — then this auto-authenticates.
-# If running interactively, run `wandb login` instead.
-if [[ -n "${WANDB_API_KEY:-}" ]]; then
-    wandb login --relogin
-else
-    echo "[WARN] WANDB_API_KEY not set — charts will be offline. Add it to RunPod Secrets."
-fi
 
 # ── Smoke test ─────────────────────────────────────────────────────────────────
 python scripts/test_pipeline.py

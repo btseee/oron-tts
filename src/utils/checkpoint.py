@@ -39,6 +39,7 @@ class CheckpointManager:
         loss: float | None = None,
         config: dict[str, Any] | None = None,
         is_best: bool = False,
+        extra_state: dict[str, Any] | None = None,
     ) -> Path:
         checkpoint: dict[str, Any] = {
             "step": step,
@@ -50,6 +51,8 @@ class CheckpointManager:
             checkpoint["scheduler_state_dict"] = scheduler.state_dict()
         if ema_state is not None:
             checkpoint["ema_state_dict"] = ema_state
+        if extra_state is not None:
+            checkpoint.update(extra_state)
 
         path = self._get_checkpoint_path(step)
         torch.save(checkpoint, path)
@@ -91,6 +94,8 @@ class CheckpointManager:
             "step": checkpoint.get("step", 0),
             "loss": checkpoint.get("loss"),
             "ema_state_dict": checkpoint.get("ema_state_dict"),
+            "epoch": checkpoint.get("epoch", 0),
+            "best_val": checkpoint.get("best_val", float("inf")),
         }
 
     def load_pretrained_f5tts(

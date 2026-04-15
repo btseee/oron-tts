@@ -90,7 +90,7 @@ scripts/
   infer.py           # Run synthesis
   clean_local_cv.py  # Process local Common Voice tar.gz without HF
   setup/
-    runpod_setup.sh  # RunPod: install deps, auth wandb, smoke test
+    runpod_setup.sh  # RunPod: install deps, smoke test
 ```
 
 ## Configs
@@ -98,7 +98,6 @@ scripts/
 Both YAML configs use the same keys. Critical keys:
 - `model.dim`, `model.depth`, `model.heads`, `model.ff_mult`, `model.vocab_size` (must match tokenizer = 65)
 - `sample_rate` (must be 24000), `n_mels` (must be 100) — top-level YAML keys, not nested
-- `wandb_project: "oron-tts"` — Weights & Biases project name (activates logging when set)
 - `batch_size`, `warmup_steps`, `num_epochs` — top-level YAML keys, not nested under `training`
 
 ## Checkpoints
@@ -120,7 +119,7 @@ Both YAML configs use the same keys. Critical keys:
    - Loads from HF → cleans text → denoises audio → saves WAV + metadata.json
    - Or use `scripts/clean_local_cv.py --input cv_mn.tar.gz` for local archives.
 2. **Cloud training:** `python scripts/train.py --config configs/runpod.yaml`
-   - Pulls dataset from HF → trains F5-TTS → saves checkpoints → logs metrics to wandb.
+   - Pulls dataset from HF → trains F5-TTS → saves checkpoints → logs metrics to console.
 3. **Inference:** `python scripts/infer.py --text "Сайн байна уу" --lang mn --output out.wav`
    - Optionally `--ref-audio ref.wav` for voice cloning.
 
@@ -133,10 +132,6 @@ py -3.12 -m venv .venv
 
 # Secrets — create .env at repo root (never commit)
 # HF_TOKEN=hf_...         (HuggingFace personal access token)
-# WANDB_API_KEY=...        (Weights & Biases — get from wandb.ai/settings)
-
-# First-time wandb login (writes token to ~/.netrc)
-.venv\Scripts\python -m wandb login
 
 # Verify
 .venv\Scripts\python scripts/test_pipeline.py        # synthetic only
