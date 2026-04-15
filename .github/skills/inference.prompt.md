@@ -33,8 +33,9 @@ audio = model.synthesize(
     lang="mn",
     ref_audio_path="ref.wav",
     ref_text="Энэ бол жишээ өгүүлбэр",
-    steps=32,
+    n_steps=32,
     cfg_strength=2.0,
+    sway_sampling_coef=-1.0,
 )
 # audio: torch.Tensor [T] at 24 000 Hz
 ```
@@ -48,7 +49,7 @@ audio = model.synthesize(
     text="Сайн байна уу",
     lang="mn",
     attr_tokens=["[FEMALE]", "[YOUNG]"],
-    steps=32,
+    n_steps=32,
 )
 ```
 
@@ -93,9 +94,10 @@ python scripts/infer.py \
 | Arg | Default | Notes |
 |-----|---------|-------|
 | `--steps` | 32 | Euler ODE integration steps; more = slower but smoother |
-| `--cfg-strength` | 2.0 | Classifier-free guidance scale |
 | `--duration` | `None` | Override predicted duration in seconds |
 | `--lang` | `mn` | `mn` (Mongolian) or `kz` (Kazakh) |
+
+> **Note**: `cfg_strength` (default 2.0) and `sway_sampling_coef` (default -1.0) are available in the Python API via `F5TTS.synthesize()` but not yet exposed as CLI args.
 
 ## F5TTS.synthesize() signature
 
@@ -107,10 +109,11 @@ def synthesize(
     attr_tokens: list[str] | None = None,
     ref_audio_path: str | Path | None = None,
     ref_text: str | None = None,
-    steps: int = 32,
+    n_steps: int = 32,
     cfg_strength: float = 2.0,
-    target_duration: float | None = None,
-    device: str | torch.device = "cpu",
+    sway_sampling_coef: float | None = -1.0,
+    target_duration_s: float | None = None,
+    device: str = "cuda",
 ) -> torch.Tensor:  # [T] at sample_rate
 ```
 

@@ -69,7 +69,7 @@ ids = cleaner.text_to_sequence(
     attr_tokens=["[FEMALE]"],
 )
 
-print(cleaner.vocab_size)  # 67
+print(cleaner.vocab_size)  # 65
 ```
 
 Normalisation pipeline inside `clean()`:
@@ -87,7 +87,7 @@ If you extend the vocabulary, you **must**:
 1. Add the new token string to `SPECIAL_TOKENS` in `tokenizer.py` (before the character vocab).
 2. Increment `vocab_size` — it is `len(_VOCAB)`, computed automatically.
 3. Update `model.vocab_size` in both YAML configs to match the new total.
-4. Re-initialise or resize the text embedding layer in `TextConvEmbed` and `DiT`.
+4. Re-initialise or resize the text embedding layer in `TextEmbedding` and `DiT`.
 
 ## Language support
 

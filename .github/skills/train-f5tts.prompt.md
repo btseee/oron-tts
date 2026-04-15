@@ -9,7 +9,9 @@ Use this skill when the user asks about training, fine-tuning, resuming, or conf
 
 ## Architecture constraints
 
-- **Single loss**: `cfm_loss(v_pred, v_target, mask)` — MSE on the velocity field only. Never add discriminator, duration, or KL losses.
+- **Loss**: Flow matching MSE on velocity field, computed inline in `CFM.forward()` — no separate loss function.
+- **Infilling training**: random 70–100% span masking. Unmasked portion is the conditioning signal.
+- **CFG dropout**: `audio_drop_prob=0.3`, `cond_drop_prob=0.2` during training.
 - **Optimizer**: AdamW. **Scheduler**: LinearLR warmup then constant.
 - **EMA**: maintained on rank-0 only via `torch_ema.ExponentialMovingAverage`.
 - **No GAN**, no HiFi-GAN, no `optimizer_d`.
@@ -28,7 +30,7 @@ trainer = F5Trainer(
     rank=0,
     world_size=1,
 )
-trainer.train(total_epochs=config["training"]["epochs"])
+trainer.train(num_epochs=config["num_epochs"])
 ```
 
 `F5Trainer` saves checkpoints via `CheckpointManager` every `save_interval` steps and at the end of each epoch.
@@ -36,33 +38,37 @@ trainer.train(total_epochs=config["training"]["epochs"])
 ## Config keys (both YAML configs)
 
 ```yaml
+# == Audio (top-level, not nested) ==
+sample_rate: 24000  # never change
+n_mels: 100         # never change
+n_fft: 1024
+hop_length: 256
+
+# == Training (top-level, not nested) ==
+batch_size: 16
+learning_rate: 1.0e-4
+warmup_steps: 1000
+max_grad_norm: 1.0
+ema_decay: 0.9999
+grad_accumulation_steps: 1
+log_interval: 100
+save_interval: 5
+use_tqdm: true      # false for RunPod container logs
+num_epochs: 500
+
+# == Model (nested under model:) ==
 model:
   dim: 512           # 1024 for Base
   depth: 12          # 22 for Base
   heads: 8           # 16 for Base
   vocab_size: 65     # fixed — must match CyrillicTokenizer
-  ff_mult: 2
-  text_dim: 256
+  ff_mult: 4
+  text_dim: 256      # 512 for Base
   conv_layers: 4
-
-audio:
-  sample_rate: 24000  # never change
-  n_mels: 100         # never change
-  n_fft: 1024
-  hop_length: 256
-
-training:
-  batch_size: 16
-  learning_rate: 1.0e-4
-  warmup_steps: 1000
-  max_steps: 500000
-  grad_accum: 1
-  max_grad_norm: 1.0
-  ema_decay: 0.9999
-  save_interval: 5000
-  log_interval: 100
-  use_tqdm: true      # false for RunPod container logs
-  epochs: 100
+  p_dropout: 0.1
+  vocos_dim: 384     # 512 for Base
+  vocos_layers: 6    # 8 for Base
+  vocos_intermediate: 1024  # 1536 for Base
 ```
 
 ## CLI
@@ -71,7 +77,7 @@ Local training from metadata.json:
 
 ```bash
 python scripts/train.py \
-    --config configs/vits_local.yaml \
+    --config configs/local.yaml \
     --from-local \
     --data-dir data/processed
 ```
@@ -80,7 +86,7 @@ Cloud training, pulling dataset from HF:
 
 ```bash
 python scripts/train.py \
-    --config configs/vits_runpod.yaml \
+    --config configs/runpod.yaml \
     --dataset btsee/mbspeech_mn \
     --lang mn \
     --push-to-hub \
@@ -91,7 +97,7 @@ Fine-tune on top of an official F5-TTS pretrained checkpoint:
 
 ```bash
 python scripts/train.py \
-    --config configs/vits_runpod.yaml \
+    --config configs/runpod.yaml \
     --dataset btsee/mbspeech_mn \
     --pretrain-ckpt F5TTS_Base.safetensors
 ```
@@ -100,7 +106,7 @@ Resume from latest checkpoint:
 
 ```bash
 python scripts/train.py \
-    --config configs/vits_runpod.yaml \
+    --config configs/runpod.yaml \
     --from-local \
     --data-dir data/processed \
     --resume
@@ -139,7 +145,7 @@ TensorBoard scalars: `train/loss`, `lr`.
 bash scripts/setup/runpod_setup.sh
 ```
 
-The script installs dependencies into the container and configures the environment for A100/L40 training.
+The script creates `.venv` with `--system-site-packages` (inherits pre-installed PyTorch + CUDA), installs project deps, and configures the environment for A100/L40 training. Recommended image: `runpod/pytorch:1.0.3-cu1290-torch280-ubuntu2404`.
 
 ## Environment (local)
 

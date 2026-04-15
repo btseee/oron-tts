@@ -32,8 +32,7 @@ Each entry produced by `prepare.py` or `clean_local_cv.py`:
 ```json
 {
   "audio_path": "data/processed/cv_mn/audio/cv_000042.wav",
-  "text": "сайн байна уу",
-  "speaker_id": 0
+  "text": "сайн байна уу"
 }
 ```
 

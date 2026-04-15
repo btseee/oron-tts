@@ -14,21 +14,24 @@ OronTTS is a non-autoregressive TTS system for Mongolian (Khalkha Cyrillic) and 
 ### Model stack
 | Component | Class | File |
 |-----------|-------|------|
-| Text encoder | `TextConvEmbed` | `src/models/encoder.py` |
+| Text encoder | `TextEmbedding` | `src/models/encoder.py` |
 | Backbone | `DiT` (Diffusion Transformer) | `src/models/dit.py` |
 | Flow matching | `CFM` (OT-Conditional Flow Matching) | `src/models/flow.py` |
 | Vocoder | `VocosDecoder` (ConvNeXt + iSTFT) | `src/models/decoder.py` |
 | Top-level | `F5TTS` | `src/models/f5tts.py` |
-| DiT blocks | `RMSNorm, AdaLN, Attention, DiTBlock, ...` | `src/models/modules.py` |
+| DiT blocks | `RMSNorm, AdaLayerNorm, Attention, DiTBlock, ...` | `src/models/modules.py` |
 
 ### Training
-- Single loss: `cfm_loss(v_pred, v_target, mask)` — MSE on the velocity field (no adversarial loss).
+- Flow matching loss (MSE on velocity field) is computed inline in `CFM.forward()` — no separate loss function.
+- **Infilling training**: random 70–100% span masking. The unmasked portion is the conditioning signal.
+- **CFG dropout**: `audio_drop_prob=0.3`, `cond_drop_prob=0.2` (drops audio/conditioning during training for classifier-free guidance).
 - Optimizer: AdamW. Scheduler: LinearLR warmup. EMA maintained via `torch_ema`.
 - Trainer class: `F5Trainer` (`src/training/trainer.py`).
 
 ### Inference modes
 1. **Voice cloning** — pass `ref_audio_path` to `F5TTS.synthesize()`, uses reference mel as conditioning.
 2. **Attribute tokens** — pass `attr_tokens` list (e.g. `["[FEMALE]", "[YOUNG]"]`), embedded as prefix.
+3. **Inference params**: `cfg_strength` (classifier-free guidance, default 2.0), `sway_sampling_coef` (sway sampling, default -1.0), `n_steps` (ODE steps, default 32).
 
 ## Tokenizer
 
@@ -66,12 +69,11 @@ src/
   models/
     dit.py           # DiT backbone
     decoder.py       # VocosDecoder (Vocos iSTFT vocoder)
-    encoder.py       # TextConvEmbed
-    flow.py          # CFM (OT-CFM)
+    encoder.py       # TextEmbedding
+    flow.py          # CFM (OT-CFM) with infilling + CFG
     f5tts.py         # F5TTS top-level model
     modules.py       # DiT building blocks
   training/
-    losses.py        # cfm_loss
     trainer.py       # F5Trainer
   utils/
     audio.py         # AudioProcessor
@@ -94,10 +96,10 @@ scripts/
 ## Configs
 
 Both YAML configs use the same keys. Critical keys:
-- `model.dim`, `model.depth`, `model.heads`, `model.vocab_size` (must match tokenizer = 65)
-- `sample_rate` (must be 24000), `n_mels` (must be 100) — top-level YAML keys, not nested under `audio`
+- `model.dim`, `model.depth`, `model.heads`, `model.ff_mult`, `model.vocab_size` (must match tokenizer = 65)
+- `sample_rate` (must be 24000), `n_mels` (must be 100) — top-level YAML keys, not nested
 - `wandb_project: "oron-tts"` — Weights & Biases project name (activates logging when set)
-- `training.batch_size`, `training.warmup_steps`, `training.num_epochs`
+- `batch_size`, `warmup_steps`, `num_epochs` — top-level YAML keys, not nested under `training`
 
 ## Checkpoints
 

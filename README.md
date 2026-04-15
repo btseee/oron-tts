@@ -4,7 +4,7 @@ Non-autoregressive TTS for Mongolian (Khalkha Cyrillic) and Kazakh (Cyrillic) us
 
 ## Features
 
-- **F5-TTS**: OT-CFM + DiT backbone. No GAN, no duration predictor, single MSE loss.
+- **F5-TTS**: OT-CFM + DiT backbone. No GAN, no duration predictor. Flow matching loss computed inline in CFM.
 - **Voice cloning**: pass a 3–10 s reference WAV at inference time.
 - **Attribute tokens**: `[FEMALE]`, `[MALE]`, `[YOUNG]`, `[MIDDLE]`, `[ELDERLY]`.
 - **Bilingual**: Mongolian + Kazakh Cyrillic, character-level tokenizer (vocab 65).
@@ -33,8 +33,8 @@ pip install -e ".[dev]"
 ```
 src/
   data/       # TTSDataset, AudioDenoiser, HF wrappers
-  models/     # DiT, CFM, VocosDecoder, F5TTS, TextConvEmbed
-  training/   # F5Trainer, cfm_loss
+  models/     # DiT, CFM, VocosDecoder, F5TTS, TextEmbedding
+  training/   # F5Trainer
   utils/      # AudioProcessor, CyrillicTokenizer, TextCleaner, CheckpointManager
 configs/
   local.yaml    # Small (dim=512, depth=12) — local dev
@@ -153,7 +153,7 @@ WANDB_API_KEY=...     # get from wandb.ai/settings
 | GPU | **L40S** |
 | GPU count | **1** |
 | Cloud tier | **Secure Cloud** |
-| Template | **RunPod PyTorch 2.4.0** |
+| Template | **RunPod PyTorch** (`runpod/pytorch:1.0.3-cu1290-torch280-ubuntu2404`) |
 | Container disk | **20 GB** |
 | Volume disk | **50 GB** |
 | Volume mount | `/workspace` |
@@ -167,8 +167,7 @@ The Base config peaks at ~13 GB VRAM; the L40S 48 GB gives a 3.5× margin. Add t
 Connect via **Web Terminal**, then:
 
 ```bash
-apt-get install -y tmux
-tmux new-session -s setup 
+tmux new-session -s setup
 
 cd /workspace
 git clone https://github.com/btseee/oron-tts.git
@@ -176,7 +175,7 @@ cd oron-tts
 bash scripts/setup/runpod_setup.sh
 ```
 
-The script installs Python 3.12, creates `.venv`, installs deps, authenticates wandb, and runs a 10-step smoke test. Close the tab at any time — re-attach with `tmux attach -t setup`.
+The script creates `.venv` with `--system-site-packages` (inherits pre-installed PyTorch + CUDA), installs project deps, authenticates wandb, and runs a 10-step smoke test. Close the tab at any time — re-attach with `tmux attach -t setup`.
 
 If you skipped the env vars form, create `.env` instead (auto-loaded by `train.py`):
 
