@@ -97,7 +97,7 @@ def train_worker(rank: int, world_size: int, config: dict, args: argparse.Namesp
         sampler=sampler,
         num_workers=config.get("num_workers", 4),
         collate_fn=TTSCollator(),
-        pin_memory=True,
+        pin_memory=config.get("pin_memory", True) and torch.cuda.is_available(),
         drop_last=True,
     )
 
