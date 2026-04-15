@@ -8,8 +8,12 @@ set -euo pipefail
 if ! python3.12 --version &>/dev/null 2>&1; then
     echo "[INFO] Installing Python 3.12..."
     apt-get update -qq
-    apt-get install -y --no-install-recommends software-properties-common
-    add-apt-repository -y ppa:deadsnakes/ppa
+    apt-get install -y --no-install-recommends curl gnupg lsb-release
+    # Add deadsnakes PPA manually — avoids add-apt-repository's broken apt_pkg dep
+    curl -fsSL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0xF23C5A6CF475977595C89F51BA6932366A755776" \
+        | gpg --dearmor > /etc/apt/trusted.gpg.d/deadsnakes.gpg
+    echo "deb https://ppa.launchpadcontent.net/deadsnakes/ppa/ubuntu/$(lsb_release -cs) main" \
+        > /etc/apt/sources.list.d/deadsnakes.list
     apt-get update -qq
     apt-get install -y --no-install-recommends python3.12 python3.12-venv python3.12-dev
 fi
