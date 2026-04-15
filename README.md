@@ -167,10 +167,11 @@ The Base config peaks at ~13 GB VRAM; the L40S 48 GB gives a 3.5× margin. Add t
 Connect via **Web Terminal**, then:
 
 ```bash
-tmux new-session -s setup   # keeps running if you close the browser tab
+apt-get install -y tmux
+tmux new-session -s setup 
 
 cd /workspace
-git clone https://github.com/btsee/oron-tts.git
+git clone https://github.com/btseee/oron-tts.git
 cd oron-tts
 bash scripts/setup/runpod_setup.sh
 ```
@@ -178,6 +179,7 @@ bash scripts/setup/runpod_setup.sh
 The script installs Python 3.12, creates `.venv`, installs deps, authenticates wandb, and runs a 10-step smoke test. Close the tab at any time — re-attach with `tmux attach -t setup`.
 
 If you skipped the env vars form, create `.env` instead (auto-loaded by `train.py`):
+
 ```bash
 cat > /workspace/oron-tts/.env <<'EOF'
 HF_TOKEN=hf_...
@@ -193,7 +195,7 @@ python scripts/train.py \
     --config configs/runpod.yaml \
     --dataset btsee/mbspeech_mn \
     --push-to-hub \
-    --hf-repo YOUR_HF_USERNAME/orontts
+    --hf-repo btsee/orontts
 ```
 
 Metrics stream to **wandb.ai → project oron-tts**. Checkpoints land on the 50 GB volume and survive pod restarts — re-run the same command to resume.
