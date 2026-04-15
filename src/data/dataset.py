@@ -1,10 +1,13 @@
 """F5-TTS Dataset and Collator supporting reference-audio conditioning."""
 
+import io
 from pathlib import Path
 from typing import Any
 
 import numpy as np
+import soundfile as sf
 import torch
+import torchaudio
 from datasets import Audio
 from torch.utils.data import Dataset
 
@@ -121,10 +124,9 @@ class TTSDataset(Dataset):
         langs: list[str] = []
         speaker_ids: list[int] = []
 
-        hf_dataset = hf_dataset.cast_column(
-            audio_column,
-            Audio(sampling_rate=sample_rate, decode=True),
-        )
+        # decode=False avoids the torchcodec dependency in newer datasets versions.
+        # We decode the raw bytes manually using soundfile + torchaudio.
+        hf_dataset = hf_dataset.cast_column(audio_column, Audio(decode=False))
 
         if text_column is None:
             candidates = ["text", "sentence_norm", "sentence", "transcript", "transcription"]
@@ -139,10 +141,21 @@ class TTSDataset(Dataset):
 
         for item in hf_dataset:
             audio_info = item[audio_column]
-            if isinstance(audio_info, dict):
-                audio_array = audio_info["array"]
-                if not isinstance(audio_array, np.ndarray):
-                    audio_array = np.array(audio_array, dtype=np.float32)
+            raw_bytes: bytes | None = audio_info.get("bytes") if isinstance(audio_info, dict) else None
+            if raw_bytes:
+                audio_array, sr = sf.read(io.BytesIO(raw_bytes))
+                audio_array = audio_array.astype(np.float32)
+                if audio_array.ndim > 1:  # stereo → mono
+                    audio_array = audio_array.mean(axis=1)
+                if sr != sample_rate:
+                    t = torchaudio.functional.resample(
+                        torch.from_numpy(audio_array).unsqueeze(0),
+                        orig_freq=sr,
+                        new_freq=sample_rate,
+                    )
+                    audio_array = t.squeeze(0).numpy()
+            elif isinstance(audio_info, dict) and audio_info.get("array") is not None:
+                audio_array = np.array(audio_info["array"], dtype=np.float32)
             else:
                 audio_array = np.array(audio_info, dtype=np.float32)
 

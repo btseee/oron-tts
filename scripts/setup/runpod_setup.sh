@@ -6,6 +6,7 @@ set -euo pipefail
 # ── Python 3.12 ────────────────────────────────────────────────────────────────
 # RunPod templates may ship Python 3.10/3.11; pyproject.toml requires >=3.12.
 if ! python3.12 --version &>/dev/null 2>&1; then
+    apt-get update && apt upgrade -y --no-install-recommends
     echo "[INFO] Installing Python 3.12..."
     # Remove any stale/malformed deadsnakes entry from previous attempts
     rm -f /etc/apt/sources.list.d/deadsnakes.list /etc/apt/trusted.gpg.d/deadsnakes.gpg
