@@ -1,11 +1,11 @@
-"""Text cleaning and normalization for Mongolian TTS."""
+"""Text cleaning and normalization for Mongolian + Kazakh TTS."""
 
 import re
 import unicodedata
 from typing import Final
 
 from src.utils.number_norm import NumberNormalizer
-from src.utils.phonemizer import MongolianPhonemizer
+from src.utils.tokenizer import CyrillicTokenizer
 
 PUNCTUATION_MAP: Final[dict[str, str]] = {
     "…": "...",
@@ -20,8 +20,12 @@ PUNCTUATION_MAP: Final[dict[str, str]] = {
 }
 
 ALLOWED_CHARS: Final[set[str]] = set(
+    # Mongolian Cyrillic (Khalkha)
     "абвгдеёжзийклмноөпрстуүфхцчшщъыьэюя"
     "АБВГДЕЁЖЗИЙКЛМНОӨПРСТУҮФХЦЧШЩЪЫЬЭЮЯ"
+    # Kazakh-specific
+    "әғқңұһіӘҒҚҢҰҺІ"
+    # Punctuation
     " .,!?-:;\"'()"
 )
 
@@ -29,7 +33,7 @@ ALLOWED_CHARS: Final[set[str]] = set(
 class TextCleaner:
     def __init__(self) -> None:
         self._number_normalizer = NumberNormalizer()
-        self._phonemizer = MongolianPhonemizer()
+        self._tokenizer = CyrillicTokenizer()
         self._whitespace_re = re.compile(r"\s+")
         self._multi_punct_re = re.compile(r"([.!?,]){2,}")
 
@@ -84,10 +88,15 @@ class TextCleaner:
         text = self.normalize_punctuation(text)
         return text.lower()
 
-    def text_to_sequence(self, text: str) -> list[int]:
+    def text_to_sequence(
+        self,
+        text: str,
+        lang: str = "mn",
+        attr_tokens: list[str] | None = None,
+    ) -> list[int]:
         cleaned = self.clean(text)
-        return self._phonemizer.text_to_ids(cleaned)
+        return self._tokenizer.encode(cleaned, lang=lang, attr_tokens=attr_tokens)
 
     @property
     def vocab_size(self) -> int:
-        return self._phonemizer.vocab_size
+        return self._tokenizer.vocab_size

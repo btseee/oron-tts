@@ -1,0 +1,26 @@
+# Contributing to OronTTS
+
+We love your input! We want to make contributing to this project as easy and transparent as possible.
+
+## Pull Requests
+
+1. Fork the repo and create your branch from `main`.
+2. If you've added code that should be tested, add tests.
+3. If you've changed APIs, update the documentation.
+4. Ensure the test suite passes.
+5. Make sure your code lints (`ruff check .`).
+
+## Architecture Constraints
+
+- **No VITS, no GAN, no HiFi-GAN, no discriminators.** The architecture is F5-TTS (Flow Matching + DiT).
+- **No Coqui, no ESPnet.** All model code must be native PyTorch.
+- The single training loss is `cfm_loss` (MSE on the velocity field). Do not add adversarial or duration losses.
+- Audio defaults: **24 000 Hz sample rate**, **100 mel bins**.
+- Tokenizer vocab size is fixed at **67** (`CyrillicTokenizer`). Extending it requires updating `model.vocab_size` in both YAML configs.
+
+## Style Guide
+
+- **Type hinting**: Strict static typing on every function. No bare `Any`.
+- **Formatting**: `ruff format` + `isort` (profiles configured in `pyproject.toml`).
+- **Linting**: `ruff check src/ scripts/` must pass with zero errors.
+- **Architecture**: No global state. Functional and modular. Avoid monolithic files.

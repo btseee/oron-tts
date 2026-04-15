@@ -1,4 +1,4 @@
-"""TTS Dataset and Collator for VITS training."""
+"""F5-TTS Dataset and Collator supporting reference-audio conditioning."""
 
 from pathlib import Path
 from typing import Any
@@ -13,17 +13,27 @@ from src.utils.text_cleaner import TextCleaner
 
 
 class TTSDataset(Dataset):
+    """Dataset for F5-TTS training.
+
+    Each sample provides:
+      - mel: full log-mel spectrogram [n_mels, T]
+      - text_ids: token IDs padded to T (zero-padded to mel length)
+      - mask: bool mask [T], all True for real frames
+      - lang: "mn" or "kz"
+    """
+
     def __init__(
         self,
         audio_paths: list[Path] | list[str] | None = None,
         texts: list[str] | None = None,
+        langs: list[str] | None = None,
         speaker_ids: list[int] | None = None,
-        sample_rate: int = 22050,
+        sample_rate: int = 24000,
+        n_mels: int = 100,
         max_audio_len: int | None = None,
-        min_audio_len: int = 1024,
+        min_audio_len: int = 2048,
         audio_arrays: list[np.ndarray] | None = None,
     ) -> None:
-        # Support either file paths or pre-loaded audio arrays
         if audio_paths is not None:
             self.audio_paths: list[Path] | None = [Path(p) for p in audio_paths]
             self.audio_arrays: list[np.ndarray] | None = None
@@ -37,18 +47,17 @@ class TTSDataset(Dataset):
 
         if texts is None:
             raise ValueError("texts must be provided")
-
         assert self._len == len(texts), "Audio and text lengths must match"
-        if speaker_ids:
-            assert len(speaker_ids) == len(texts)
 
         self.texts = texts
-        self.speaker_ids = speaker_ids or [0] * len(texts)
+        self.langs = langs or ["mn"] * self._len
+        self.speaker_ids = speaker_ids or [0] * self._len
         self.sample_rate = sample_rate
+        self.n_mels = n_mels
         self.max_audio_len = max_audio_len
         self.min_audio_len = min_audio_len
 
-        self.audio_processor = AudioProcessor(sample_rate=sample_rate)
+        self.audio_processor = AudioProcessor(sample_rate=sample_rate, n_mels=n_mels)
         self.text_cleaner = TextCleaner()
 
     def __len__(self) -> int:
@@ -57,14 +66,12 @@ class TTSDataset(Dataset):
     def __getitem__(self, idx: int) -> dict[str, Any]:
         try:
             text = self.texts[idx]
-            speaker_id = self.speaker_ids[idx]
+            lang = self.langs[idx]
 
             if self.audio_arrays is not None:
                 audio = torch.from_numpy(self.audio_arrays[idx]).float()
-                audio_path = f"sample_{idx}"
             else:
                 assert self.audio_paths is not None
-                audio_path = str(self.audio_paths[idx])
                 audio, _ = self.audio_processor.load_audio(self.audio_paths[idx])
 
             audio = self.audio_processor.normalize_audio(audio)
@@ -73,20 +80,25 @@ class TTSDataset(Dataset):
                 audio = audio[: self.max_audio_len]
 
             if torch.isnan(audio).any() or torch.isinf(audio).any():
-                raise ValueError(f"Invalid audio at {audio_path}")
-
+                raise ValueError("Invalid audio values")
             if len(audio) < self.min_audio_len:
-                raise ValueError(f"Audio too short: {len(audio)} < {self.min_audio_len}")
+                raise ValueError(f"Audio too short: {len(audio)}")
 
-            spec = self.audio_processor.mel_spectrogram(audio)
-            text_ids = self.text_cleaner.text_to_sequence(text)
+            mel = self.audio_processor.mel_spectrogram(audio)  # [n_mels, T]
+            T = mel.shape[-1]
+
+            # Encode text and zero-pad to mel length
+            raw_ids = self.text_cleaner.text_to_sequence(text, lang=lang)
+            if len(raw_ids) > T:
+                raw_ids = raw_ids[:T]
+            text_ids = raw_ids + [0] * (T - len(raw_ids))
 
             return {
-                "audio": audio,
-                "spec": spec,
+                "mel": mel,
                 "text_ids": torch.LongTensor(text_ids),
-                "speaker_id": speaker_id,
-                "audio_path": audio_path,
+                "mask": torch.ones(T, dtype=torch.bool),
+                "lang": lang,
+                "speaker_id": self.speaker_ids[idx],
                 "text": text,
             }
         except Exception:
@@ -98,110 +110,93 @@ class TTSDataset(Dataset):
         hf_dataset: Any,
         audio_column: str = "audio",
         text_column: str | None = None,
+        lang_column: str | None = None,
         speaker_column: str | None = "speaker_id",
-        sample_rate: int = 22050,
+        sample_rate: int = 24000,
+        n_mels: int = 100,
+        default_lang: str = "mn",
     ) -> "TTSDataset":
         audio_arrays: list[np.ndarray] = []
         texts: list[str] = []
+        langs: list[str] = []
         speaker_ids: list[int] = []
 
-        # Cast audio column to ensure correct sample rate
         hf_dataset = hf_dataset.cast_column(
             audio_column,
             Audio(sampling_rate=sample_rate, decode=True),
         )
 
-        # Auto-detect text column if not specified
         if text_column is None:
-            columns = hf_dataset.column_names
-            text_candidates = ["text", "sentence", "sentence_norm", "transcript", "transcription"]
-            for candidate in text_candidates:
-                if candidate in columns:
-                    text_column = candidate
+            candidates = ["text", "sentence_norm", "sentence", "transcript", "transcription"]
+            for c in candidates:
+                if c in hf_dataset.column_names:
+                    text_column = c
                     break
             if text_column is None:
-                raise ValueError(f"Could not find text column. Available: {columns}")
+                raise ValueError(f"No text column found. Available: {hf_dataset.column_names}")
 
         print(f"Using text column: {text_column}")
 
         for item in hf_dataset:
             audio_info = item[audio_column]
-
-            # Handle different audio data types from HF datasets
             if isinstance(audio_info, dict):
-                # Old-style HF datasets with dict containing 'array'
                 audio_array = audio_info["array"]
                 if not isinstance(audio_array, np.ndarray):
                     audio_array = np.array(audio_array, dtype=np.float32)
-            elif hasattr(audio_info, "get_all_samples"):
-                # torchcodec AudioDecoder (newer datasets library)
-                samples = audio_info.get_all_samples()
-                audio_array = samples.data.squeeze(0).numpy()
             else:
-                # Fallback: try to convert directly
                 audio_array = np.array(audio_info, dtype=np.float32)
 
             audio_arrays.append(audio_array.astype(np.float32))
-
             texts.append(item[text_column])
 
+            lang = default_lang
+            if lang_column and lang_column in item:
+                lang = item[lang_column]
+            langs.append(lang)
+
+            sid = 0
             if speaker_column and speaker_column in item:
-                speaker_ids.append(item[speaker_column])
-            else:
-                speaker_ids.append(0)
+                sid = item[speaker_column]
+            speaker_ids.append(sid)
 
         return cls(
             audio_arrays=audio_arrays,
             texts=texts,
-            speaker_ids=speaker_ids if speaker_column else None,
+            langs=langs,
+            speaker_ids=speaker_ids,
             sample_rate=sample_rate,
+            n_mels=n_mels,
         )
 
 
 class TTSCollator:
-    def __init__(self, return_ids: bool = False) -> None:
-        self.return_ids = return_ids
+    """Pads a batch of TTSDataset samples to uniform mel/text length."""
 
     def __call__(self, batch: list[dict[str, Any]]) -> dict[str, torch.Tensor]:
-        text_ids = [item["text_ids"] for item in batch]
-        specs = [item["spec"] for item in batch]
-        audios = [item["audio"] for item in batch]
+        mels = [item["mel"] for item in batch]
+        text_ids_list = [item["text_ids"] for item in batch]
+        masks = [item["mask"] for item in batch]
+
+        mel_lengths = torch.LongTensor([m.shape[-1] for m in mels])
+        max_T = int(mel_lengths.max().item())
+        n_mels = mels[0].shape[0]
+
+        mels_padded = torch.zeros(len(batch), n_mels, max_T)
+        text_ids_padded = torch.zeros(len(batch), max_T, dtype=torch.long)
+        masks_padded = torch.zeros(len(batch), max_T, dtype=torch.bool)
+
+        for i, (mel, tids, msk) in enumerate(zip(mels, text_ids_list, masks, strict=False)):
+            T = mel.shape[-1]
+            mels_padded[i, :, :T] = mel
+            text_ids_padded[i, :T] = tids
+            masks_padded[i, :T] = msk
+
         speaker_ids = torch.LongTensor([item["speaker_id"] for item in batch])
 
-        text_lengths = torch.LongTensor([len(t) for t in text_ids])
-        spec_lengths = torch.LongTensor([s.shape[-1] for s in specs])
-        audio_lengths = torch.LongTensor([len(a) for a in audios])
-
-        max_text_len = int(text_lengths.max().item())
-        max_spec_len = int(spec_lengths.max().item())
-        max_audio_len = int(audio_lengths.max().item())
-
-        text_ids_padded = torch.zeros(len(batch), max_text_len, dtype=torch.long)
-        for i, t in enumerate(text_ids):
-            text_ids_padded[i, : len(t)] = t
-
-        n_mels = specs[0].shape[0]
-        specs_padded = torch.zeros(len(batch), n_mels, max_spec_len)
-        for i, s in enumerate(specs):
-            specs_padded[i, :, : s.shape[-1]] = s
-
-        # Pad audio waveforms
-        audios_padded = torch.zeros(len(batch), max_audio_len)
-        for i, a in enumerate(audios):
-            audios_padded[i, : len(a)] = a
-
-        result: dict[str, Any] = {
+        return {
+            "mel": mels_padded,
             "text_ids": text_ids_padded,
-            "text_lengths": text_lengths,
-            "specs": specs_padded,
-            "spec_lengths": spec_lengths,
-            "audios": audios_padded,
-            "audio_lengths": audio_lengths,
+            "mask": masks_padded,
+            "mel_lengths": mel_lengths,
             "speaker_ids": speaker_ids,
         }
-
-        if self.return_ids:
-            result["audio_paths"] = [item["audio_path"] for item in batch]
-            result["texts"] = [item["text"] for item in batch]
-
-        return result

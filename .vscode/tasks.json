@@ -1,17 +1,54 @@
 {
     "version": "2.0.0",
     "tasks": [
+        // ── Setup ──────────────────────────────────────────────────────────────
         {
-            "label": "Install Dependencies",
+            "label": "Setup: Create venv (Python 3.12)",
             "type": "shell",
-            "command": "${workspaceFolder}/.venv/bin/pip install -e '.[dev]'",
+            "command": "py -3.12 -m venv .venv",
+            "options": { "cwd": "${workspaceFolder}" },
             "group": "build",
             "problemMatcher": []
         },
         {
+            "label": "Setup: Install dependencies",
+            "type": "shell",
+            "command": ".venv/Scripts/pip install -e '.[dev]'",
+            "options": { "cwd": "${workspaceFolder}" },
+            "group": "build",
+            "problemMatcher": []
+        },
+        {
+            "label": "Setup: wandb login",
+            "type": "shell",
+            "command": ".venv/Scripts/python -m wandb login",
+            "options": { "cwd": "${workspaceFolder}" },
+            "group": "none",
+            "problemMatcher": []
+        },
+        // ── Test ───────────────────────────────────────────────────────────────
+        {
+            "label": "Test: Smoke test (synthetic)",
+            "type": "shell",
+            "command": ".venv/Scripts/python scripts/test_pipeline.py",
+            "options": { "cwd": "${workspaceFolder}" },
+            "group": "test",
+            "problemMatcher": []
+        },
+        {
+            "label": "Test: Smoke test + HF dataset",
+            "type": "shell",
+            "command": ".venv/Scripts/python scripts/test_pipeline.py --hf",
+            "options": { "cwd": "${workspaceFolder}" },
+            "group": "test",
+            "problemMatcher": []
+        },
+        // ── Quality ────────────────────────────────────────────────────────────
+        {
             "label": "Lint (Ruff)",
             "type": "shell",
-            "command": "${workspaceFolder}/.venv/bin/ruff check src/ scripts/",
+            "command": ".venv/Scripts/python -m ruff check src/ scripts/",
+            "options": { "cwd": "${workspaceFolder}" },
             "group": "test",
             "problemMatcher": {
                 "owner": "ruff",
@@ -29,40 +66,39 @@
         {
             "label": "Format (Ruff + isort)",
             "type": "shell",
-            "command": "${workspaceFolder}/.venv/bin/ruff format src/ scripts/ && ${workspaceFolder}/.venv/bin/isort src/ scripts/",
+            "command": ".venv/Scripts/python -m ruff format src/ scripts/ ; .venv/Scripts/isort src/ scripts/",
+            "options": { "cwd": "${workspaceFolder}" },
             "group": "build",
             "problemMatcher": []
         },
+        // ── Training ───────────────────────────────────────────────────────────
         {
-            "label": "Prepare Dataset (Local CV)",
+            "label": "Train: HF dataset (local config)",
             "type": "shell",
-            "command": "${workspaceFolder}/.venv/bin/python scripts/prepare.py --output-dir data/processed --dataset common-voice --max-samples 500",
-            "group": "build",
-            "problemMatcher": []
-        },
-        {
-            "label": "Train (Local)",
-            "type": "shell",
-            "command": "${workspaceFolder}/.venv/bin/python scripts/train.py --config configs/vits_local.yaml --data-dir data/processed",
+            "command": ".venv/Scripts/python scripts/train.py --config configs/local.yaml --dataset btsee/mbspeech_mn",
+            "options": { "cwd": "${workspaceFolder}" },
             "group": {
                 "kind": "build",
                 "isDefault": true
             },
-            "problemMatcher": [],
-            "isBackground": true
-        },
-        {
-            "label": "TensorBoard",
-            "type": "shell",
-            "command": "${workspaceFolder}/.venv/bin/tensorboard --logdir logs --bind_all",
-            "group": "none",
             "isBackground": true,
             "problemMatcher": []
         },
         {
-            "label": "Clean Build Artifacts",
+            "label": "Train: local data (local config)",
             "type": "shell",
-            "command": "find . -type d -name '__pycache__' -exec rm -rf {} + 2>/dev/null; find . -type d -name '*.egg-info' -exec rm -rf {} + 2>/dev/null; rm -rf .ruff_cache build dist",
+            "command": ".venv/Scripts/python scripts/train.py --config configs/local.yaml --from-local --data-dir data/processed",
+            "options": { "cwd": "${workspaceFolder}" },
+            "group": "build",
+            "isBackground": true,
+            "problemMatcher": []
+        },
+        // ── Utilities ──────────────────────────────────────────────────────────
+        {
+            "label": "Clean build artifacts",
+            "type": "shell",
+            "command": "Get-ChildItem -Recurse -Directory -Filter '__pycache__' | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue ; Get-ChildItem -Recurse -Directory -Filter '*.egg-info' | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue ; Remove-Item -Recurse -Force -ErrorAction SilentlyContinue .ruff_cache, build, dist",
+            "options": { "cwd": "${workspaceFolder}" },
             "group": "build",
             "problemMatcher": []
         }

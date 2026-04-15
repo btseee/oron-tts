@@ -12,7 +12,7 @@ class HFDatasetWrapper:
         self,
         dataset_name: str,
         cache_dir: str | Path | None = None,
-        sample_rate: int = 22050,
+        sample_rate: int = 24000,
     ) -> None:
         self.dataset_name = dataset_name
         self.cache_dir = Path(cache_dir) if cache_dir else None
@@ -97,7 +97,7 @@ class HFDatasetWrapper:
         audio_paths: list[Path],
         texts: list[str],
         speaker_ids: list[int] | None = None,
-        sample_rate: int = 22050,
+        sample_rate: int = 24000,
     ) -> Dataset:
         data: dict[str, list[str] | list[int]] = {
             "audio": [str(p) for p in audio_paths],
@@ -115,7 +115,7 @@ class CommonVoiceWrapper(HFDatasetWrapper):
     def __init__(
         self,
         cache_dir: str | Path | None = None,
-        sample_rate: int = 22050,
+        sample_rate: int = 24000,
     ) -> None:
         super().__init__("btsee/common-voices-24-mn", cache_dir, sample_rate)
 
@@ -133,7 +133,7 @@ class MBSpeechWrapper(HFDatasetWrapper):
     def __init__(
         self,
         cache_dir: str | Path | None = None,
-        sample_rate: int = 22050,
+        sample_rate: int = 24000,
     ) -> None:
         super().__init__("btsee/mbspeech_mn", cache_dir, sample_rate)
 

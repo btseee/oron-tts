@@ -1,4 +1,4 @@
-"""VITS training script for OronTTS."""
+"""F5-TTS training script for OronTTS."""
 
 import argparse
 import json
@@ -7,57 +7,23 @@ from pathlib import Path
 
 import torch
 import torch.distributed as dist
-from torch.multiprocessing.spawn import spawn as mp_spawn
+from dotenv import load_dotenv
+from torch.multiprocessing import spawn
 from torch.utils.data import DataLoader, DistributedSampler
 
 from src.data.dataset import TTSCollator, TTSDataset
 from src.data.hf_wrapper import HFDatasetWrapper
-from src.models.discriminator import MultiPeriodDiscriminator
-from src.models.vits import VITS
-from src.training.trainer import VITSTrainer
-from src.utils.phonemizer import MongolianPhonemizer
+from src.models.f5tts import F5TTS
+from src.training.trainer import F5Trainer
 
 
 def load_config(config_path: str) -> dict:
     with open(config_path) as f:
         if config_path.endswith(".json"):
             return json.load(f)
-        else:
-            import yaml
-            return yaml.safe_load(f)
+        import yaml
 
-
-def create_model(config: dict, n_speakers: int = 2) -> tuple[VITS, MultiPeriodDiscriminator]:
-    phonemizer = MongolianPhonemizer()
-
-    model_config = config.get("model", {})
-    model = VITS(
-        n_vocab=phonemizer.vocab_size,
-        spec_channels=config.get("n_mels", 80),
-        segment_size=config.get("segment_size", 32),
-        inter_channels=model_config.get("inter_channels", 192),
-        hidden_channels=model_config.get("hidden_channels", 192),
-        filter_channels=model_config.get("filter_channels", 768),
-        n_heads=model_config.get("n_heads", 2),
-        n_layers=model_config.get("n_layers", 6),
-        kernel_size=model_config.get("kernel_size", 3),
-        p_dropout=model_config.get("p_dropout", 0.1),
-        resblock=model_config.get("resblock", "1"),
-        resblock_kernel_sizes=model_config.get("resblock_kernel_sizes", [3, 7, 11]),
-        resblock_dilation_sizes=model_config.get(
-            "resblock_dilation_sizes", [[1, 3, 5], [1, 3, 5], [1, 3, 5]]
-        ),
-        upsample_rates=model_config.get("upsample_rates", [8, 8, 2, 2]),
-        upsample_initial_channel=model_config.get("upsample_initial_channel", 512),
-        upsample_kernel_sizes=model_config.get("upsample_kernel_sizes", [16, 16, 4, 4]),
-        n_speakers=n_speakers,
-        gin_channels=model_config.get("gin_channels", 256),
-        use_sdp=model_config.get("use_sdp", True),
-    )
-
-    discriminator = MultiPeriodDiscriminator()
-
-    return model, discriminator
+        return yaml.safe_load(f)
 
 
 def setup_distributed(rank: int, world_size: int) -> None:
@@ -70,65 +36,60 @@ def cleanup_distributed() -> None:
     dist.destroy_process_group()
 
 
-def train_worker(
-    rank: int,
-    world_size: int,
-    config: dict,
-    args: argparse.Namespace,
-) -> None:
+def train_worker(rank: int, world_size: int, config: dict, args: argparse.Namespace) -> None:
     if world_size > 1:
         setup_distributed(rank, world_size)
 
     device = f"cuda:{rank}" if torch.cuda.is_available() else "cpu"
-    torch.cuda.set_device(rank) if torch.cuda.is_available() else None
+    if torch.cuda.is_available():
+        torch.cuda.set_device(rank)
+        if config.get("cudnn_benchmark", False):
+            torch.backends.cudnn.benchmark = True
+        if config.get("use_tf32", False):
+            torch.backends.cuda.matmul.allow_tf32 = True
+            torch.backends.cudnn.allow_tf32 = True
 
-    if args.from_hf:
-        print(f"[Rank {rank}] Loading dataset from Hugging Face: {args.dataset}")
-        wrapper = HFDatasetWrapper(
-            args.dataset,
-            cache_dir=args.cache_dir,
-            sample_rate=config.get("sample_rate", 22050),
-        )
+    sample_rate = config.get("sample_rate", 24000)
+    n_mels = config.get("n_mels", 100)
+    default_lang = args.lang or "mn"
+
+    if not args.from_local:
+        if rank == 0:
+            print(f"[Rank {rank}] Loading dataset from HuggingFace: {args.dataset}")
+        wrapper = HFDatasetWrapper(args.dataset, cache_dir=args.cache_dir, sample_rate=sample_rate)
         hf_dataset = wrapper.load(split="train")
         train_dataset = TTSDataset.from_hf_dataset(
             hf_dataset,
             audio_column=args.audio_column,
             text_column=args.text_column,
-            speaker_column=args.speaker_column,
-            sample_rate=config.get("sample_rate", 22050),
+            lang_column=args.lang_column,
+            sample_rate=sample_rate,
+            n_mels=n_mels,
+            default_lang=default_lang,
         )
     else:
         metadata_path = Path(args.data_dir) / "metadata.json"
         with open(metadata_path) as f:
             metadata = json.load(f)
-
         audio_paths = [Path(m["audio_path"]) for m in metadata]
         texts = [m["text"] for m in metadata]
-        speaker_ids = [m["speaker_id"] for m in metadata]
-
+        langs = [m.get("lang", default_lang) for m in metadata]
         train_dataset = TTSDataset(
             audio_paths=audio_paths,
             texts=texts,
-            speaker_ids=speaker_ids,
-            sample_rate=config.get("sample_rate", 22050),
+            langs=langs,
+            sample_rate=sample_rate,
+            n_mels=n_mels,
         )
 
-    n_speakers = len(set(train_dataset.speaker_ids))
     if rank == 0:
-        print(f"[Rank {rank}] Dataset size: {len(train_dataset)}, Speakers: {n_speakers}")
-        print(f"[Rank {rank}] Training Config:")
-        print(f"  - Batch size: {config.get('batch_size', 16)}")
-        print(f"  - Learning rate: {config.get('learning_rate', 2e-4)}")
-        print(f"  - FP16: {config.get('fp16', True)}")
-        print(f"  - Segment size: {config.get('segment_size', 32)}")
-        print(f"  - Log interval: {config.get('log_interval', 100)}")
-        print(f"  - Use tqdm: {config.get('use_tqdm', True)}")
+        print(f"[Rank {rank}] Dataset size: {len(train_dataset)}")
 
-    if world_size > 1:
-        sampler = DistributedSampler(train_dataset, num_replicas=world_size, rank=rank)
-    else:
-        sampler = None
-
+    sampler = (
+        DistributedSampler(train_dataset, num_replicas=world_size, rank=rank)
+        if world_size > 1
+        else None
+    )
     train_loader = DataLoader(
         train_dataset,
         batch_size=config.get("batch_size", 16),
@@ -140,15 +101,25 @@ def train_worker(
         drop_last=True,
     )
 
-    model, discriminator = create_model(config, n_speakers=n_speakers)
-    print(f"[Rank {rank}] Model parameters: {sum(p.numel() for p in model.parameters()):,}")
+    model = F5TTS.from_config(config)
+    if rank == 0:
+        print(f"[Rank {rank}] Model parameters: {sum(p.numel() for p in model.parameters()):,}")
 
-    trainer = VITSTrainer(
+    # Optionally load pretrained F5-TTS checkpoint
+    if args.pretrain_ckpt:
+        from src.utils.checkpoint import CheckpointManager
+
+        cm = CheckpointManager(args.checkpoint_dir)
+        info = cm.load_pretrained_f5tts(model, args.pretrain_ckpt, device=device)
+        if rank == 0:
+            print(
+                f"Loaded pretrained weights. Missing: {len(info['missing_keys'])}, Unexpected: {len(info['unexpected_keys'])}"
+            )
+
+    trainer = F5Trainer(
         config=config,
         model=model,
-        discriminator=discriminator,
         train_loader=train_loader,
-        val_loader=None,
         device=device,
         rank=rank,
         world_size=world_size,
@@ -157,17 +128,12 @@ def train_worker(
     )
 
     if args.resume:
-        print(f"[Rank {rank}] Resuming from checkpoint...")
         trainer.load_checkpoint(load_best=args.resume_best)
 
-    print(f"[Rank {rank}] Starting training...")
-    trainer.train(
-        num_epochs=config.get("num_epochs", 1000),
-        save_interval=config.get("save_interval", 5),
-    )
+    num_epochs = args.num_epochs or config.get("num_epochs", 500)
+    trainer.train(num_epochs=num_epochs, save_interval=config.get("save_interval", 5))
 
     if rank == 0 and args.push_to_hub:
-        print("Pushing model to Hugging Face Hub...")
         url = trainer.push_to_hub(args.hf_repo, token=args.hf_token)
         print(f"Model pushed to: {url}")
 
@@ -176,50 +142,50 @@ def train_worker(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Train OronTTS VITS model")
-    parser.add_argument("--config", type=str, default="configs/vits_runpod.yaml")
+    load_dotenv()
+    parser = argparse.ArgumentParser(description="Train OronTTS F5-TTS model")
+    parser.add_argument("--config", type=str, default="configs/runpod.yaml")
     parser.add_argument("--data-dir", type=str, default="data/processed")
-    parser.add_argument("--from-hf", action="store_true", default=True, help="Load dataset from HuggingFace (default: True)")
-    parser.add_argument("--from-local", action="store_true", help="Load dataset from local directory instead of HuggingFace")
+    parser.add_argument(
+        "--from-local", action="store_true", help="Use local metadata.json instead of HF"
+    )
     parser.add_argument("--dataset", type=str, default="btsee/mbspeech_mn")
     parser.add_argument("--audio-column", type=str, default="audio")
-    parser.add_argument("--text-column", type=str, default=None, help="Auto-detect if not specified")
-    parser.add_argument("--speaker-column", type=str, default=None)
+    parser.add_argument("--text-column", type=str, default=None)
+    parser.add_argument("--lang-column", type=str, default=None)
+    parser.add_argument(
+        "--lang",
+        type=str,
+        default="mn",
+        choices=["mn", "kz"],
+        help="Default language if no lang column",
+    )
     parser.add_argument("--cache-dir", type=str, default="output/data/cache")
     parser.add_argument("--log-dir", type=str, default="output/logs")
     parser.add_argument("--checkpoint-dir", type=str, default="output/checkpoints")
+    parser.add_argument(
+        "--pretrain-ckpt",
+        type=str,
+        default=None,
+        help="Path to pretrained F5-TTS .safetensors or .pt checkpoint",
+    )
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--resume-best", action="store_true")
     parser.add_argument("--push-to-hub", action="store_true")
     parser.add_argument("--hf-repo", type=str, default="btsee/oron-tts")
     parser.add_argument("--hf-token", type=str, default=None)
     parser.add_argument("--num-gpus", type=int, default=1)
-    parser.add_argument("--num-epochs", type=int, default=None, help="Override num_epochs from config")
+    parser.add_argument("--num-epochs", type=int, default=None)
     args = parser.parse_args()
 
-    # Handle --from-local override
-    if args.from_local:
-        args.from_hf = False
-
-    # Load HF token from environment if not provided
-    if args.hf_token is None:
-        import os
-        args.hf_token = os.getenv("HF_TOKEN")
-
     config = load_config(args.config)
-
-    # Override num_epochs if specified
-    if args.num_epochs is not None:
+    if args.num_epochs:
         config["num_epochs"] = args.num_epochs
 
-    world_size = args.num_gpus
+    world_size = args.num_gpus if torch.cuda.is_available() else 1
+
     if world_size > 1:
-        mp_spawn(
-            train_worker,  # type: ignore
-            args=(world_size, config, args),
-            nprocs=world_size,
-            join=True,
-        )
+        spawn(train_worker, args=(world_size, config, args), nprocs=world_size, join=True)
     else:
         train_worker(0, 1, config, args)
 

@@ -1,5 +1,5 @@
 {
-    "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
+    "python.defaultInterpreterPath": "${workspaceFolder}/.venv/Scripts/python.exe",
     "python.terminal.activateEnvironment": true,
     
     "[python]": {
@@ -39,8 +39,13 @@
     "editor.tabSize": 4,
     "editor.insertSpaces": true,
     
+    "terminal.integrated.env.windows": {
+        "PYTHONPATH": "${workspaceFolder}",
+        "WANDB_PROJECT": "oron-tts"
+    },
     "terminal.integrated.env.linux": {
-        "PYTHONPATH": "${workspaceFolder}"
+        "PYTHONPATH": "${workspaceFolder}",
+        "WANDB_PROJECT": "oron-tts"
     },
     
     "yaml.schemas": {

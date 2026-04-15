@@ -6,6 +6,7 @@ from pathlib import Path
 
 import torch
 from datasets import Dataset
+from dotenv import load_dotenv
 from tqdm import tqdm
 
 from src.data.denoiser import AudioDenoiser
@@ -81,21 +82,24 @@ def create_metadata(
 ) -> None:
     metadata = []
     for audio_path, text, sid in zip(audio_paths, texts, speaker_ids, strict=False):
-        metadata.append({
-            "audio_path": str(audio_path),
-            "text": text,
-            "speaker_id": sid,
-        })
+        metadata.append(
+            {
+                "audio_path": str(audio_path),
+                "text": text,
+                "speaker_id": sid,
+            }
+        )
 
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(metadata, f, ensure_ascii=False, indent=2)
 
 
 def main() -> None:
+    load_dotenv()
     parser = argparse.ArgumentParser(description="Prepare TTS dataset")
     parser.add_argument("--output-dir", type=str, default="data/processed")
     parser.add_argument("--cache-dir", type=str, default="data/cache")
-    parser.add_argument("--sample-rate", type=int, default=22050)
+    parser.add_argument("--sample-rate", type=int, default=24000)
     parser.add_argument("--max-samples", type=int, default=None)
     parser.add_argument("--upload", action="store_true")
     parser.add_argument("--hf-repo", type=str, default="btsee/oron-tts")

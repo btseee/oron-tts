@@ -1,29 +1,38 @@
-"""Audio processing utilities for VITS TTS."""
+"""Audio processing utilities for F5-TTS."""
 
 from pathlib import Path
 from typing import Final
 
 import librosa
 import numpy as np
-import scipy.signal as signal
 import soundfile as sf
 import torch
 import torchaudio
 
-MEL_FMIN: Final[float] = 0.0
-MEL_FMAX: Final[float] = 8000.0
+# F5-TTS default audio settings
+DEFAULT_SAMPLE_RATE: Final[int] = 24000
+DEFAULT_N_MELS: Final[int] = 100
+DEFAULT_N_FFT: Final[int] = 1024
+DEFAULT_HOP_LENGTH: Final[int] = 256
+DEFAULT_WIN_LENGTH: Final[int] = 1024
+DEFAULT_FMIN: Final[float] = 0.0
+DEFAULT_FMAX: Final[float] = 8000.0
+
+# Keep old names as aliases for backward-compat imports
+MEL_FMIN = DEFAULT_FMIN
+MEL_FMAX = DEFAULT_FMAX
 
 
 class AudioProcessor:
     def __init__(
         self,
-        sample_rate: int = 22050,
-        n_fft: int = 1024,
-        hop_length: int = 256,
-        win_length: int = 1024,
-        n_mels: int = 80,
-        fmin: float = MEL_FMIN,
-        fmax: float = MEL_FMAX,
+        sample_rate: int = DEFAULT_SAMPLE_RATE,
+        n_fft: int = DEFAULT_N_FFT,
+        hop_length: int = DEFAULT_HOP_LENGTH,
+        win_length: int = DEFAULT_WIN_LENGTH,
+        n_mels: int = DEFAULT_N_MELS,
+        fmin: float = DEFAULT_FMIN,
+        fmax: float = DEFAULT_FMAX,
     ) -> None:
         self.sample_rate = sample_rate
         self.n_fft = n_fft
@@ -151,5 +160,7 @@ class AudioProcessor:
         return torch.cat([audio[:1], audio[1:] - coef * audio[:-1]])
 
     def remove_preemphasis(self, audio: torch.Tensor, coef: float = 0.97) -> torch.Tensor:
+        import scipy.signal as signal
+
         result = signal.lfilter([1], [1, -coef], audio.cpu().numpy())
         return torch.from_numpy(result).float()

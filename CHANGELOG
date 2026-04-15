@@ -1,0 +1,54 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+## [0.2.0] — 2026-04-15
+
+### Changed — Architecture migration: VITS → F5-TTS
+
+Complete replacement of the VITS GAN-based architecture with F5-TTS (OT-Conditional Flow Matching + Diffusion Transformer).
+
+#### Removed
+
+- VITS model stack: posterior encoder, stochastic duration predictor, HiFi-GAN vocoder, multi-period/multi-scale discriminators
+- Adversarial losses: `generator_loss`, `discriminator_loss`, `feature_loss`, `kl_loss`, `duration_loss`
+- `MongolianPhonemizer` (stub alias, replaced by `CyrillicTokenizer`)
+- Stub files: `discriminator.py`, `duration_predictor.py`, `posterior.py`, `vits.py`, `phonemizer.py`
+- `VITSTrainer` and all VITS-specific training infrastructure
+
+#### Added
+
+- `CyrillicTokenizer` — character-level tokenizer for Mongolian + Kazakh Cyrillic, vocab size 67
+  - Language tags: `[LANG_MN]`, `[LANG_KZ]`
+  - Attribute tags: `[FEMALE]`, `[MALE]`, `[YOUNG]`, `[MIDDLE]`, `[ELDERLY]`
+- `TextConvEmbed` — character embedding + depthwise conv stack encoder (`src/models/encoder.py`)
+- `DiT` — Diffusion Transformer backbone with RoPE, AdaLN, SwiGLU FFN (`src/models/dit.py`, `modules.py`)
+- `CFM` — OT-Conditional Flow Matching: training forward + Euler ODE inference (`src/models/flow.py`)
+- `VocosDecoder` — ConvNeXt + iSTFT vocoder, no GAN (`src/models/decoder.py`)
+- `F5TTS` — top-level model with voice-cloning (Option A) and attribute-token (Option B) inference (`src/models/f5tts.py`)
+- `cfm_loss` — single MSE loss on the velocity field (`src/training/losses.py`)
+- `F5Trainer` — AdamW + LinearLR warmup + EMA training loop (`src/training/trainer.py`)
+- `CheckpointManager.load_pretrained_f5tts()` — key-remapping loader for official `.safetensors` checkpoints
+
+#### Changed
+
+- Audio defaults: **24 000 Hz** sample rate, **100 mel bins**, n_fft 1024, hop 256 (was 22 050 Hz / 80 mel)
+- `TextCleaner` now wraps `CyrillicTokenizer`; added Kazakh-specific characters to `ALLOWED_CHARS`
+- `CheckpointManager` updated for single optimizer + EMA (removed dual optimizer_g/optimizer_d)
+- All sample-rate defaults updated to 24 000 in `denoiser.py`, `hf_wrapper.py`, `clean_local_cv.py`, `prepare.py`
+- Configs renamed to reflect F5-TTS Small (local) and Base (RunPod) sizes
+- `scripts/train.py` — added `--pretrain-ckpt`, `--lang`, `--lang-column` flags
+- `scripts/infer.py` — rewritten for voice cloning (`--ref-audio`) and attribute tokens (`--attr-tokens`)
+
+## [0.1.0] — 2026-01-28
+
+- Initial VITS architecture implementation for Mongolian TTS
+- Multi-speaker support (male / female speaker IDs)
+- DeepFilterNet audio denoising (`AudioDenoiser`)
+- Mongolian text normalization — `NumberNormalizer` (cardinal + ordinal)
+- Hugging Face dataset and model hub integration
+- RunPod cloud training configuration and setup script
+- Structured logging for container environments (tqdm disable mode)
+- Multi-GPU distributed training with `DistributedDataParallel`
+- TensorBoard integration
+- Checkpoint management with automatic cleanup and HF Hub push

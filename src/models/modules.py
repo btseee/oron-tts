@@ -1,341 +1,178 @@
-"""Common neural network modules for VITS."""
+"""DiT building blocks for F5-TTS: RMSNorm, RoPE, AdaLN, Attention, FFN, DiTBlock."""
 
-from typing import Final
+import math
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-LRELU_SLOPE: Final[float] = 0.1
+# ── Normalization ─────────────────────────────────────────────────────────────
 
 
-def init_weights(m: nn.Module, mean: float = 0.0, std: float = 0.01) -> None:
-    if isinstance(m, nn.Conv1d | nn.Conv2d | nn.ConvTranspose1d):
-        m.weight.data.normal_(mean, std)
-
-
-def get_padding(kernel_size: int, dilation: int = 1) -> int:
-    return (kernel_size * dilation - dilation) // 2
-
-
-class LayerNorm(nn.Module):
-    def __init__(self, channels: int, eps: float = 1e-5) -> None:
+class RMSNorm(nn.Module):
+    def __init__(self, dim: int, eps: float = 1e-8) -> None:
         super().__init__()
-        self.channels = channels
+        self.gamma = nn.Parameter(torch.ones(dim))
         self.eps = eps
-        self.gamma = nn.Parameter(torch.ones(channels))
-        self.beta = nn.Parameter(torch.zeros(channels))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = x.transpose(1, -1)
-        x = F.layer_norm(x, (self.channels,), self.gamma, self.beta, self.eps)
-        return x.transpose(1, -1)
+        # Standard RMSNorm: x / sqrt(mean(x^2)) * gamma
+        rms = x.norm(dim=-1, keepdim=True) * (x.shape[-1] ** -0.5)
+        return x / (rms + self.eps) * self.gamma
 
 
-class WN(nn.Module):
-    def __init__(
-        self,
-        hidden_channels: int,
-        kernel_size: int,
-        dilation_rate: int,
-        n_layers: int,
-        gin_channels: int = 0,
-        p_dropout: float = 0.0,
-    ) -> None:
+# ── Timestep embedding ────────────────────────────────────────────────────────
+
+
+class SinusoidalEmbedding(nn.Module):
+    """Sinusoidal timestep embedding → MLP → conditioning vector."""
+
+    def __init__(self, dim: int) -> None:
         super().__init__()
-        self.hidden_channels = hidden_channels
-        self.kernel_size = kernel_size
-        self.dilation_rate = dilation_rate
-        self.n_layers = n_layers
-        self.gin_channels = gin_channels
-        self.p_dropout = p_dropout
-
-        self.in_layers = nn.ModuleList()
-        self.res_skip_layers = nn.ModuleList()
-
-        if gin_channels > 0:
-            self.cond_layer = nn.Conv1d(gin_channels, 2 * hidden_channels * n_layers, 1)
-
-        for i in range(n_layers):
-            dilation = dilation_rate**i
-            padding = get_padding(kernel_size, dilation)
-            in_layer = nn.Conv1d(
-                hidden_channels,
-                2 * hidden_channels,
-                kernel_size,
-                dilation=dilation,
-                padding=padding,
-            )
-            in_layer = nn.utils.parametrizations.weight_norm(in_layer)
-            self.in_layers.append(in_layer)
-
-            res_skip_channels = 2 * hidden_channels if i < n_layers - 1 else hidden_channels
-
-            res_skip_layer = nn.Conv1d(hidden_channels, res_skip_channels, 1)
-            res_skip_layer = nn.utils.parametrizations.weight_norm(res_skip_layer)
-            self.res_skip_layers.append(res_skip_layer)
-
-    def forward(
-        self,
-        x: torch.Tensor,
-        x_mask: torch.Tensor,
-        g: torch.Tensor | None = None,
-    ) -> torch.Tensor:
-        output = torch.zeros_like(x)
-        n_channels_tensor = torch.IntTensor([self.hidden_channels])
-
-        if g is not None:
-            g = self.cond_layer(g)
-
-        for i in range(self.n_layers):
-            x_in = self.in_layers[i](x)
-            if g is not None:
-                cond_offset = i * 2 * self.hidden_channels
-                g_l = g[:, cond_offset : cond_offset + 2 * self.hidden_channels, :]
-                x_in = x_in + g_l
-
-            acts = self._fused_gate(x_in, n_channels_tensor)
-            acts = F.dropout(acts, self.p_dropout, training=self.training)
-
-            res_skip_acts = self.res_skip_layers[i](acts)
-            if i < self.n_layers - 1:
-                x = (x + res_skip_acts[:, : self.hidden_channels, :]) * x_mask
-                output = output + res_skip_acts[:, self.hidden_channels :, :]
-            else:
-                output = output + res_skip_acts
-
-        return output * x_mask
-
-    def _fused_gate(self, x: torch.Tensor, n_channels: torch.Tensor) -> torch.Tensor:
-        n_ch = n_channels[0].item()
-        t_act = torch.tanh(x[:, :n_ch, :])
-        s_act = torch.sigmoid(x[:, n_ch:, :])
-        return t_act * s_act
-
-
-class ConvReluNorm(nn.Module):
-    def __init__(
-        self,
-        in_channels: int,
-        hidden_channels: int,
-        out_channels: int,
-        kernel_size: int,
-        n_layers: int,
-        p_dropout: float,
-    ) -> None:
-        super().__init__()
-        self.in_channels = in_channels
-        self.hidden_channels = hidden_channels
-        self.out_channels = out_channels
-        self.kernel_size = kernel_size
-        self.n_layers = n_layers
-        self.p_dropout = p_dropout
-
-        self.conv_layers = nn.ModuleList()
-        self.norm_layers = nn.ModuleList()
-
-        self.conv_layers.append(
-            nn.Conv1d(in_channels, hidden_channels, kernel_size, padding=kernel_size // 2)
+        assert dim % 2 == 0
+        self.half_dim = dim // 2
+        self.mlp = nn.Sequential(
+            nn.Linear(dim, dim * 4),
+            nn.SiLU(),
+            nn.Linear(dim * 4, dim),
         )
-        self.norm_layers.append(LayerNorm(hidden_channels))
 
-        for _ in range(n_layers - 1):
-            self.conv_layers.append(
-                nn.Conv1d(hidden_channels, hidden_channels, kernel_size, padding=kernel_size // 2)
-            )
-            self.norm_layers.append(LayerNorm(hidden_channels))
-
-        self.proj = nn.Conv1d(hidden_channels, out_channels, 1)
-        self.proj.weight.data.zero_()
-        if self.proj.bias is not None:
-            self.proj.bias.data.zero_()
-
-    def forward(self, x: torch.Tensor, x_mask: torch.Tensor) -> torch.Tensor:
-        for conv, norm in zip(self.conv_layers, self.norm_layers, strict=False):
-            x = conv(x * x_mask)
-            x = norm(x)
-            x = F.relu(x)
-            x = F.dropout(x, self.p_dropout, training=self.training)
-        x = self.proj(x)
-        return x * x_mask
+    def forward(self, t: torch.Tensor) -> torch.Tensor:
+        # t: [B] values in [0, 1]
+        device = t.device
+        freqs = torch.exp(
+            -math.log(10000) * torch.arange(self.half_dim, device=device) / (self.half_dim - 1)
+        )
+        emb = t[:, None] * freqs[None, :]  # [B, half_dim]
+        emb = torch.cat([emb.sin(), emb.cos()], dim=-1)  # [B, dim]
+        return self.mlp(emb)
 
 
-class DDSConv(nn.Module):
-    def __init__(
-        self,
-        channels: int,
-        kernel_size: int,
-        n_layers: int,
-        p_dropout: float = 0.0,
-    ) -> None:
+# ── Rotary Positional Embedding (RoPE) ────────────────────────────────────────
+
+
+class RotaryEmbedding(nn.Module):
+    def __init__(self, dim: int, max_len: int = 4096) -> None:
         super().__init__()
-        self.channels = channels
-        self.kernel_size = kernel_size
-        self.n_layers = n_layers
-        self.p_dropout = p_dropout
+        assert dim % 2 == 0
+        inv_freq = 1.0 / (10000 ** (torch.arange(0, dim, 2).float() / dim))
+        self.register_buffer("inv_freq", inv_freq)
+        self._cached_cos: torch.Tensor | None = None
+        self._cached_sin: torch.Tensor | None = None
+        self._cached_len: int = 0
+        self._cached_device: torch.device | None = None
 
-        self.convs_sep = nn.ModuleList()
-        self.convs_1x1 = nn.ModuleList()
-        self.norms_1 = nn.ModuleList()
-        self.norms_2 = nn.ModuleList()
+    def _build_cache(self, seq_len: int, device: torch.device) -> None:
+        if seq_len <= self._cached_len and device == self._cached_device:
+            return
+        t = torch.arange(seq_len, device=device).float()
+        freqs = torch.outer(t, self.inv_freq.to(device))  # type: ignore[arg-type]
+        emb = torch.cat([freqs, freqs], dim=-1)
+        self._cached_cos = emb.cos()[None, None, :, :]  # [1,1,T,D]
+        self._cached_sin = emb.sin()[None, None, :, :]
+        self._cached_len = seq_len
+        self._cached_device = device
 
-        for i in range(n_layers):
-            dilation = kernel_size**i
-            padding = (kernel_size * dilation - dilation) // 2
-            self.convs_sep.append(
-                nn.Conv1d(channels, channels, kernel_size, groups=channels, dilation=dilation, padding=padding)
-            )
-            self.convs_1x1.append(nn.Conv1d(channels, channels, 1))
-            self.norms_1.append(LayerNorm(channels))
-            self.norms_2.append(LayerNorm(channels))
+    def rotate_half(self, x: torch.Tensor) -> torch.Tensor:
+        half = x.shape[-1] // 2
+        return torch.cat([-x[..., half:], x[..., :half]], dim=-1)
 
-    def forward(self, x: torch.Tensor, x_mask: torch.Tensor, g: torch.Tensor | None = None) -> torch.Tensor:
-        if g is not None:
-            x = x + g
-
-        for conv_sep, conv_1x1, norm_1, norm_2 in zip(
-            self.convs_sep, self.convs_1x1, self.norms_1, self.norms_2, strict=False
-        ):
-            y = conv_sep(x * x_mask)
-            y = norm_1(y)
-            y = F.gelu(y)
-            y = conv_1x1(y)
-            y = norm_2(y)
-            y = F.gelu(y)
-            y = F.dropout(y, self.p_dropout, training=self.training)
-            x = x + y
-
-        return x * x_mask
+    def forward(self, q: torch.Tensor, k: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        # q, k: [B, heads, T, head_dim]
+        seq_len = q.shape[2]
+        self._build_cache(seq_len, q.device)
+        assert self._cached_cos is not None and self._cached_sin is not None
+        cos = self._cached_cos[:, :, :seq_len, :]
+        sin = self._cached_sin[:, :, :seq_len, :]
+        q_rot = q * cos + self.rotate_half(q) * sin
+        k_rot = k * cos + self.rotate_half(k) * sin
+        return q_rot, k_rot
 
 
-class Log(nn.Module):
-    """Log transform flow layer with numerical stability.
-
-    Transforms input x -> log(x) with proper clamping to prevent
-    log(0) and extreme gradients near zero.
-    """
-
-    def forward(
-        self,
-        x: torch.Tensor,
-        x_mask: torch.Tensor,
-        reverse: bool = False,
-    ) -> tuple[torch.Tensor, torch.Tensor] | torch.Tensor:
-        if not reverse:
-            # Clamp input to prevent log(0) and very small values
-            x_clamped = torch.clamp(x, min=1e-5, max=1e5)
-            y = torch.log(x_clamped) * x_mask
-
-            # Clamp output to prevent extreme values
-            y = torch.clamp(y, min=-11.5, max=11.5)
-
-            # Log-det: -log(x) = -y (since y = log(x))
-            logdet = torch.sum(-y, dim=[1, 2])
-            return y, logdet
-
-        # Reverse: exp(x) with clamping
-        x_clamped = torch.clamp(x, min=-11.5, max=11.5)
-        return torch.exp(x_clamped) * x_mask
+# ── Adaptive Layer Norm (AdaLN) ───────────────────────────────────────────────
 
 
-class Flip(nn.Module):
-    def forward(
-        self,
-        x: torch.Tensor,
-        *args,
-        reverse: bool = False,
-        **kwargs,
-    ) -> tuple[torch.Tensor, torch.Tensor] | torch.Tensor:
-        x = torch.flip(x, dims=[1])
-        if not reverse:
-            logdet = torch.zeros(x.size(0), device=x.device, dtype=x.dtype)
-            return x, logdet
-        return x
+class AdaLN(nn.Module):
+    """Adaptive Layer Norm: scale & shift conditioned on timestep embedding."""
 
-
-class ElementwiseAffine(nn.Module):
-    """Elementwise affine transformation flow layer.
-
-    Applies: y = m + exp(logs) * x
-
-    Uses clamped logs to prevent exp overflow.
-    """
-
-    def __init__(self, channels: int) -> None:
+    def __init__(self, dim: int) -> None:
         super().__init__()
-        self.channels = channels
-        self.m = nn.Parameter(torch.zeros(channels, 1))
-        self.logs = nn.Parameter(torch.zeros(channels, 1))
+        self.norm = RMSNorm(dim)
+        self.proj = nn.Linear(dim, dim * 2)
+        nn.init.zeros_(self.proj.weight)
+        nn.init.zeros_(self.proj.bias)
 
-    def forward(
-        self,
-        x: torch.Tensor,
-        x_mask: torch.Tensor,
-        reverse: bool = False,
-        g: torch.Tensor | None = None,  # Accept but ignore for compatibility
-    ) -> tuple[torch.Tensor, torch.Tensor] | torch.Tensor:
-        # Clamp logs to prevent exp overflow/underflow
-        logs_clamped = torch.clamp(self.logs, min=-7.0, max=7.0)
-
-        if not reverse:
-            y = self.m + torch.exp(logs_clamped) * x
-            y = y * x_mask
-            logdet = torch.sum(logs_clamped * x_mask, dim=[1, 2])
-            return y, logdet
-
-        x = (x - self.m) * torch.exp(-logs_clamped) * x_mask
-        return x
+    def forward(self, x: torch.Tensor, cond: torch.Tensor) -> torch.Tensor:
+        # x: [B, T, D], cond: [B, D]
+        scale, shift = self.proj(cond).unsqueeze(1).chunk(2, dim=-1)
+        return self.norm(x) * (1.0 + scale) + shift
 
 
-class ResBlock1(nn.Module):
-    def __init__(
-        self,
-        channels: int,
-        kernel_size: int = 3,
-        dilation: tuple[int, int, int] = (1, 3, 5),
-    ) -> None:
+# ── Attention ─────────────────────────────────────────────────────────────────
+
+
+class Attention(nn.Module):
+    def __init__(self, dim: int, heads: int, rope: RotaryEmbedding) -> None:
         super().__init__()
-        self.convs1 = nn.ModuleList([
-            nn.utils.parametrizations.weight_norm(
-                nn.Conv1d(channels, channels, kernel_size, 1, dilation=d, padding=get_padding(kernel_size, d))
-            )
-            for d in dilation
-        ])
-        self.convs2 = nn.ModuleList([
-            nn.utils.parametrizations.weight_norm(
-                nn.Conv1d(channels, channels, kernel_size, 1, dilation=1, padding=get_padding(kernel_size, 1))
-            )
-            for _ in dilation
-        ])
+        assert dim % heads == 0
+        self.heads = heads
+        self.head_dim = dim // heads
+        self.scale = self.head_dim**-0.5
+        self.rope = rope
+
+        self.qkv = nn.Linear(dim, dim * 3, bias=False)
+        self.out_proj = nn.Linear(dim, dim, bias=False)
+
+    def forward(self, x: torch.Tensor, mask: torch.Tensor | None = None) -> torch.Tensor:
+        B, T, _ = x.shape
+        qkv = self.qkv(x).reshape(B, T, 3, self.heads, self.head_dim)
+        q, k, v = qkv.permute(2, 0, 3, 1, 4).unbind(0)  # each [B, H, T, D_h]
+
+        q, k = self.rope(q, k)
+
+        attn = torch.matmul(q, k.transpose(-2, -1)) * self.scale  # [B, H, T, T]
+
+        if mask is not None:
+            # mask: [B, T] bool, True = valid; expand for broadcasting
+            attn = attn.masked_fill(~mask[:, None, None, :], float("-inf"))
+
+        attn = F.softmax(attn, dim=-1)
+        out = torch.matmul(attn, v).transpose(1, 2).reshape(B, T, -1)
+        return self.out_proj(out)
+
+
+# ── FeedForward (SwiGLU) ──────────────────────────────────────────────────────
+
+
+class FeedForward(nn.Module):
+    def __init__(self, dim: int, ff_mult: int = 2) -> None:
+        super().__init__()
+        inner_dim = dim * ff_mult
+        self.gate_proj = nn.Linear(dim, inner_dim, bias=False)
+        self.up_proj = nn.Linear(dim, inner_dim, bias=False)
+        self.down_proj = nn.Linear(inner_dim, dim, bias=False)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        for c1, c2 in zip(self.convs1, self.convs2, strict=False):
-            xt = F.leaky_relu(x, LRELU_SLOPE)
-            xt = c1(xt)
-            xt = F.leaky_relu(xt, LRELU_SLOPE)
-            xt = c2(xt)
-            x = xt + x
-        return x
+        return self.down_proj(F.silu(self.gate_proj(x)) * self.up_proj(x))
 
 
-class ResBlock2(nn.Module):
-    def __init__(
-        self,
-        channels: int,
-        kernel_size: int = 3,
-        dilation: tuple[int, int] = (1, 3),
-    ) -> None:
+# ── DiT Block ─────────────────────────────────────────────────────────────────
+
+
+class DiTBlock(nn.Module):
+    def __init__(self, dim: int, heads: int, ff_mult: int, rope: RotaryEmbedding) -> None:
         super().__init__()
-        self.convs = nn.ModuleList([
-            nn.utils.parametrizations.weight_norm(
-                nn.Conv1d(channels, channels, kernel_size, 1, dilation=d, padding=get_padding(kernel_size, d))
-            )
-            for d in dilation
-        ])
+        self.adaLN_attn = AdaLN(dim)
+        self.attn = Attention(dim, heads, rope)
+        self.adaLN_ff = AdaLN(dim)
+        self.ff = FeedForward(dim, ff_mult)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        for c in self.convs:
-            xt = F.leaky_relu(x, LRELU_SLOPE)
-            xt = c(xt)
-            x = xt + x
+    def forward(
+        self,
+        x: torch.Tensor,
+        t_emb: torch.Tensor,
+        mask: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        x = x + self.attn(self.adaLN_attn(x, t_emb), mask)
+        x = x + self.ff(self.adaLN_ff(x, t_emb))
         return x

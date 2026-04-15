@@ -5,10 +5,10 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "oron-tts"
 version = "0.1.0"
-description = "Mongolian Cyrillic (Khalkha) multi-speaker TTS using VITS"
+description = "Mongolian TTS using F5-TTS flow matching with custom Cyrillic tokenizer"
 readme = "README.md"
 license = {text = "MIT"}
-requires-python = ">=3.11"
+requires-python = ">=3.12,<3.13"
 authors = [
     {name = "OronTTS Team"}
 ]
@@ -16,7 +16,7 @@ classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: MIT License",
-    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
@@ -24,18 +24,19 @@ dependencies = [
     "torch>=2.1.0",
     "torchaudio>=2.1.0",
     # Core dependencies
-    "numpy>=1.24.0,<2.0.0",
+    "numpy>=1.24.0",
     "scipy>=1.11.0",
     "librosa>=0.10.0",
     "soundfile>=0.12.0",
-    # HuggingFace - datasets<4.0 uses soundfile (no torchcodec/FFmpeg required)
-    "datasets>=3.0.0,<4.0.0",
+    # HuggingFace
+    "datasets>=3.0.0",
     "huggingface-hub>=0.19.0",
     # Other dependencies
-    "deepfilternet>=0.5.0",
+    "safetensors>=0.4.0",    # loading official F5-TTS pretrained checkpoints
     "pyyaml>=6.0",
     "tqdm>=4.66.0",
-    "tensorboard>=2.15.0",
+    "wandb>=0.16.0",
+    "python-dotenv>=1.0.0",
     "einops>=0.7.0",
     "torch-ema>=0.3.0",
 ]
@@ -45,6 +46,10 @@ dev = [
     "ruff>=0.1.0",
     "isort>=5.12.0",
     "pytest>=7.4.0",
+    "tensorboard>=2.15.0",  # optional local fallback
+]
+denoise = [
+    "deepfilternet>=0.5.0",  # requires Rust/Cargo: https://rustup.rs
 ]
 
 [project.scripts]
@@ -54,7 +59,7 @@ oron-infer = "scripts.infer:main"
 
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM"]

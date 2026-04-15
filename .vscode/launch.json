@@ -2,6 +2,30 @@
     "version": "0.2.0",
     "configurations": [
         {
+            "name": "Smoke Test (synthetic)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/test_pipeline.py",
+            "args": [],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}"
+            }
+        },
+        {
+            "name": "Smoke Test + HF",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/scripts/test_pipeline.py",
+            "args": ["--hf"],
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}"
+            }
+        },
+        {
             "name": "Prepare Dataset",
             "type": "debugpy",
             "request": "launch",
@@ -18,37 +42,41 @@
             }
         },
         {
-            "name": "Train Local",
+            "name": "Train Local (HF dataset)",
             "type": "debugpy",
             "request": "launch",
             "module": "scripts.train",
             "args": [
-                "--config", "configs/vits_local.yaml",
-                "--data-dir", "data/processed",
-                "--log-dir", "logs",
-                "--checkpoint-dir", "checkpoints"
+                "--config", "configs/local.yaml",
+                "--dataset", "btsee/mbspeech_mn",
+                "--log-dir", "output/logs",
+                "--checkpoint-dir", "output/checkpoints"
             ],
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}",
             "env": {
                 "PYTHONPATH": "${workspaceFolder}",
-                "CUDA_VISIBLE_DEVICES": "0"
+                "CUDA_VISIBLE_DEVICES": "0",
+                "WANDB_PROJECT": "oron-tts"
             }
         },
         {
-            "name": "Train from HF",
+            "name": "Train Local (local data)",
             "type": "debugpy",
             "request": "launch",
             "module": "scripts.train",
             "args": [
-                "--config", "configs/vits_local.yaml",
-                "--from-hf",
-                "--dataset", "btsee/oron-tts-dataset"
+                "--config", "configs/local.yaml",
+                "--from-local",
+                "--data-dir", "data/processed",
+                "--log-dir", "output/logs",
+                "--checkpoint-dir", "output/checkpoints"
             ],
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}",
             "env": {
-                "PYTHONPATH": "${workspaceFolder}"
+                "PYTHONPATH": "${workspaceFolder}",
+                "WANDB_PROJECT": "oron-tts"
             }
         },
         {
@@ -57,9 +85,9 @@
             "request": "launch",
             "module": "scripts.infer",
             "args": [
-                "--checkpoint", "checkpoints/vits_best.pt",
+                "--checkpoint", "output/checkpoints/f5tts_best.pt",
                 "--text", "Сайн байна уу",
-                "--speaker", "0",
+                "--lang", "mn",
                 "--output", "output.wav"
             ],
             "console": "integratedTerminal",

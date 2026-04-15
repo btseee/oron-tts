@@ -1,4 +1,4 @@
-"""Checkpoint management for training and inference."""
+"""Checkpoint management for F5-TTS training and inference."""
 
 import json
 from pathlib import Path
@@ -12,7 +12,7 @@ class CheckpointManager:
     def __init__(
         self,
         checkpoint_dir: str | Path,
-        model_name: str = "vits",
+        model_name: str = "f5tts",
         max_checkpoints: int = 5,
     ) -> None:
         self.checkpoint_dir = Path(checkpoint_dir)
@@ -33,26 +33,23 @@ class CheckpointManager:
         self,
         step: int,
         model: torch.nn.Module,
-        optimizer_g: torch.optim.Optimizer,
-        optimizer_d: torch.optim.Optimizer,
-        scheduler_g: torch.optim.lr_scheduler.LRScheduler | None = None,
-        scheduler_d: torch.optim.lr_scheduler.LRScheduler | None = None,
+        optimizer: torch.optim.Optimizer,
+        scheduler: torch.optim.lr_scheduler.LRScheduler | None = None,
+        ema_state: dict[str, Any] | None = None,
         loss: float | None = None,
         config: dict[str, Any] | None = None,
         is_best: bool = False,
     ) -> Path:
-        checkpoint = {
+        checkpoint: dict[str, Any] = {
             "step": step,
             "model_state_dict": model.state_dict(),
-            "optimizer_g_state_dict": optimizer_g.state_dict(),
-            "optimizer_d_state_dict": optimizer_d.state_dict(),
+            "optimizer_state_dict": optimizer.state_dict(),
             "loss": loss,
         }
-
-        if scheduler_g is not None:
-            checkpoint["scheduler_g_state_dict"] = scheduler_g.state_dict()
-        if scheduler_d is not None:
-            checkpoint["scheduler_d_state_dict"] = scheduler_d.state_dict()
+        if scheduler is not None:
+            checkpoint["scheduler_state_dict"] = scheduler.state_dict()
+        if ema_state is not None:
+            checkpoint["ema_state_dict"] = ema_state
 
         path = self._get_checkpoint_path(step)
         torch.save(checkpoint, path)
@@ -62,8 +59,7 @@ class CheckpointManager:
                 json.dump(config, f, indent=2)
 
         if is_best:
-            best_path = self._get_best_checkpoint_path()
-            torch.save(checkpoint, best_path)
+            torch.save(checkpoint, self._get_best_checkpoint_path())
 
         self._cleanup_old_checkpoints()
         return path
@@ -71,10 +67,8 @@ class CheckpointManager:
     def load(
         self,
         model: torch.nn.Module,
-        optimizer_g: torch.optim.Optimizer | None = None,
-        optimizer_d: torch.optim.Optimizer | None = None,
-        scheduler_g: torch.optim.lr_scheduler.LRScheduler | None = None,
-        scheduler_d: torch.optim.lr_scheduler.LRScheduler | None = None,
+        optimizer: torch.optim.Optimizer | None = None,
+        scheduler: torch.optim.lr_scheduler.LRScheduler | None = None,
         path: str | Path | None = None,
         load_best: bool = False,
         device: str = "cpu",
@@ -83,21 +77,52 @@ class CheckpointManager:
             path = self._get_best_checkpoint_path() if load_best else self._get_latest_checkpoint()
 
         if path is None or not Path(path).exists():
-            return {"step": 0, "loss": None}
+            return {"step": 0, "loss": None, "ema_state_dict": None}
 
         checkpoint = torch.load(path, map_location=device, weights_only=False)
         model.load_state_dict(checkpoint["model_state_dict"])
 
-        if optimizer_g is not None and "optimizer_g_state_dict" in checkpoint:
-            optimizer_g.load_state_dict(checkpoint["optimizer_g_state_dict"])
-        if optimizer_d is not None and "optimizer_d_state_dict" in checkpoint:
-            optimizer_d.load_state_dict(checkpoint["optimizer_d_state_dict"])
-        if scheduler_g is not None and "scheduler_g_state_dict" in checkpoint:
-            scheduler_g.load_state_dict(checkpoint["scheduler_g_state_dict"])
-        if scheduler_d is not None and "scheduler_d_state_dict" in checkpoint:
-            scheduler_d.load_state_dict(checkpoint["scheduler_d_state_dict"])
+        if optimizer is not None and "optimizer_state_dict" in checkpoint:
+            optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+        if scheduler is not None and "scheduler_state_dict" in checkpoint:
+            scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
 
-        return {"step": checkpoint.get("step", 0), "loss": checkpoint.get("loss")}
+        return {
+            "step": checkpoint.get("step", 0),
+            "loss": checkpoint.get("loss"),
+            "ema_state_dict": checkpoint.get("ema_state_dict"),
+        }
+
+    def load_pretrained_f5tts(
+        self,
+        model: torch.nn.Module,
+        checkpoint_path: str | Path,
+        device: str = "cpu",
+        strict: bool = False,
+    ) -> dict[str, Any]:
+        """Load an official F5-TTS pretrained checkpoint.
+
+        Uses strict=False by default so the extended Cyrillic text embedding
+        matrix (different vocab size) loads gracefully.
+        """
+        ckpt_path = Path(checkpoint_path)
+        if ckpt_path.suffix == ".safetensors":
+            try:
+                from safetensors.torch import load_file
+
+                state_dict = load_file(str(ckpt_path), device=device)
+            except ImportError as exc:
+                raise ImportError("Install safetensors: pip install safetensors") from exc
+        else:
+            state_dict = torch.load(ckpt_path, map_location=device, weights_only=True)
+            # Official F5-TTS checkpoints nest state under "model_state_dict"
+            if "model_state_dict" in state_dict:
+                state_dict = state_dict["model_state_dict"]
+            elif "ema_model_state_dict" in state_dict:
+                state_dict = state_dict["ema_model_state_dict"]
+
+        missing, unexpected = model.load_state_dict(state_dict, strict=strict)
+        return {"missing_keys": missing, "unexpected_keys": unexpected}
 
     def _get_latest_checkpoint(self) -> Path | None:
         checkpoints = sorted(
@@ -130,7 +155,6 @@ class CheckpointManager:
     ) -> str:
         api = HfApi()
         api.create_repo(repo_id=repo_id, token=token, private=private, exist_ok=True)
-
         api.upload_folder(
             folder_path=str(self.checkpoint_dir),
             repo_id=repo_id,
@@ -141,7 +165,7 @@ class CheckpointManager:
     def pull_from_hub(
         self,
         repo_id: str,
-        filename: str = "vits_best.pt",
+        filename: str = "f5tts_best.pt",
         token: str | None = None,
     ) -> Path:
         path = hf_hub_download(

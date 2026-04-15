@@ -11,7 +11,7 @@ DF_SAMPLE_RATE: Final[int] = 48000
 
 
 class AudioDenoiser:
-    def __init__(self, target_sr: int = 22050) -> None:
+    def __init__(self, target_sr: int = 24000) -> None:
         self.target_sr = target_sr
         self._model = None
         self._df_state = None
@@ -22,6 +22,7 @@ class AudioDenoiser:
             return
         try:
             from df.enhance import enhance, init_df
+
             self._df_state, self._model, _ = init_df()
             self._enhance_fn = enhance
             self._initialized = True
@@ -73,6 +74,7 @@ class AudioDenoiser:
 
         if progress:
             from tqdm import tqdm
+
             iterator = tqdm(input_paths, desc="Denoising")
         else:
             iterator = input_paths

@@ -17,17 +17,22 @@ from src.utils.audio import AudioProcessor
 from src.utils.text_cleaner import TextCleaner
 
 
-def load_mp3_bytes(mp3_bytes: bytes, target_sr: int = 22050) -> torch.Tensor | None:
+def load_mp3_bytes(mp3_bytes: bytes, target_sr: int = 24000) -> torch.Tensor | None:
     """Load MP3 from bytes using ffmpeg."""
     try:
         process = subprocess.Popen(
             [
                 "ffmpeg",
-                "-i", "pipe:0",
-                "-f", "wav",
-                "-acodec", "pcm_s16le",
-                "-ar", str(target_sr),
-                "-ac", "1",
+                "-i",
+                "pipe:0",
+                "-f",
+                "wav",
+                "-acodec",
+                "pcm_s16le",
+                "-ar",
+                str(target_sr),
+                "-ac",
+                "1",
                 "pipe:1",
             ],
             stdin=subprocess.PIPE,
@@ -46,7 +51,7 @@ def load_mp3_bytes(mp3_bytes: bytes, target_sr: int = 22050) -> torch.Tensor | N
 def extract_and_process_cv(
     tar_path: Path,
     output_dir: Path,
-    sample_rate: int = 22050,
+    sample_rate: int = 24000,
     max_samples: int | None = None,
     skip_denoise: bool = False,
 ) -> tuple[list[Path], list[str], list[int]]:
@@ -195,11 +200,13 @@ def save_metadata(
 
     metadata = []
     for audio_path, text, sid in zip(audio_paths, texts, speaker_ids, strict=False):
-        metadata.append({
-            "audio_path": str(audio_path),
-            "text": text,
-            "speaker_id": sid,
-        })
+        metadata.append(
+            {
+                "audio_path": str(audio_path),
+                "text": text,
+                "speaker_id": sid,
+            }
+        )
 
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(metadata, f, ensure_ascii=False, indent=2)
@@ -209,7 +216,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Clean local Common Voice dataset")
     parser.add_argument("--input", type=str, required=True, help="Path to tar.gz file")
     parser.add_argument("--output-dir", type=str, default="data/processed/common_voice")
-    parser.add_argument("--sample-rate", type=int, default=22050)
+    parser.add_argument("--sample-rate", type=int, default=24000)
     parser.add_argument("--max-samples", type=int, default=None)
     parser.add_argument("--skip-denoise", action="store_true", help="Skip DeepFilterNet denoising")
     args = parser.parse_args()
