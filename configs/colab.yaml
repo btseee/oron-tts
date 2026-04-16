@@ -20,8 +20,8 @@ ema_decay: 0.9999
 max_grad_norm: 1.0
 grad_accumulation_steps: 2
 batch_size_type: frame
-frames_threshold: 36000
-max_samples: 64
+frames_threshold: 60000
+max_samples: 0
 num_workers: 2
 pin_memory: true
 log_interval: 50
