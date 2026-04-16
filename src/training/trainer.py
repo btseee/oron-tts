@@ -3,13 +3,16 @@
 import logging
 import sys
 import time
+from collections.abc import Sized
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import torch
 import torch.nn as nn
+from torch.amp.autocast_mode import autocast
+from torch.amp.grad_scaler import GradScaler
 from torch.nn.parallel import DistributedDataParallel as DDP
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, DistributedSampler
 from torch_ema import ExponentialMovingAverage
 from tqdm import tqdm
 
@@ -53,9 +56,9 @@ class F5Trainer:
         self.world_size = world_size
         self.is_main = rank == 0
 
-        self.model = model.to(device)
+        self.model: nn.Module = model.to(device)
         if world_size > 1:
-            self.model = DDP(model, device_ids=[rank])  # type: ignore[assignment]
+            self.model = DDP(model, device_ids=[rank])
 
         self.train_loader = train_loader
         self.val_loader = val_loader
@@ -87,7 +90,7 @@ class F5Trainer:
         # AMP (automatic mixed precision)
         self.amp_dtype = _detect_amp_dtype(device)
         self.scaler = (
-            torch.amp.GradScaler("cuda")
+            GradScaler("cuda")
             if self.amp_dtype == torch.float16
             else None
         )
@@ -127,7 +130,7 @@ class F5Trainer:
 
         self.model.train()
 
-        with torch.amp.autocast(self.device, dtype=self.amp_dtype, enabled=self.amp_dtype is not None):
+        with autocast(self.device, dtype=self.amp_dtype, enabled=self.amp_dtype is not None):
             loss = self.model(mel, text_ids, mel_lengths) / self.grad_accum
 
         if self.scaler is not None:
@@ -208,7 +211,7 @@ class F5Trainer:
         epoch_time = time.monotonic() - epoch_start
 
         if self.is_main and self.logger:
-            samples = len(self.train_loader.dataset)  # type: ignore[arg-type]
+            samples = len(cast(Sized, self.train_loader.dataset))
             throughput = samples / epoch_time if epoch_time > 0 else 0.0
             self.logger.info(
                 f"  ↳ epoch {self.epoch}: {epoch_time:.1f}s | "
@@ -229,8 +232,8 @@ class F5Trainer:
         train_start = time.monotonic()
 
         for _ in range(self.epoch, num_epochs):
-            if self.world_size > 1 and hasattr(self.train_loader.sampler, "set_epoch"):
-                self.train_loader.sampler.set_epoch(self.epoch)  # type: ignore
+            if self.world_size > 1 and isinstance(self.train_loader.sampler, DistributedSampler):
+                self.train_loader.sampler.set_epoch(self.epoch)
 
             avg_loss = self.train_epoch(total_epochs=num_epochs)
 
@@ -290,7 +293,7 @@ class F5Trainer:
                 mel = batch["mel"].to(self.device, non_blocking=True)
                 text_ids = batch["text_ids"].to(self.device, non_blocking=True)
                 mel_lengths = batch["mel_lengths"].to(self.device, non_blocking=True)
-                with torch.amp.autocast(
+                with autocast(
                     self.device, dtype=self.amp_dtype, enabled=self.amp_dtype is not None
                 ):
                     loss = self.model(mel, text_ids, mel_lengths)
@@ -302,7 +305,7 @@ class F5Trainer:
         if self.checkpoint_manager is None:
             return None
         raw_model: nn.Module = (
-            self.model.module if isinstance(self.model, DDP) else self.model  # type: ignore[union-attr]
+            self.model.module if isinstance(self.model, DDP) else self.model
         )
         ema_state = None
         if self.ema:

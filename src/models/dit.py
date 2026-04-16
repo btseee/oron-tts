@@ -4,6 +4,8 @@ TextEmbedding → InputEmbedding → N × DiTBlock (AdaLN-gated) → final proje
 Supports classifier-free guidance via cfg_infer mode.
 """
 
+from typing import cast
+
 import torch
 import torch.nn as nn
 from torch.utils.checkpoint import checkpoint as ckpt_fn
@@ -224,7 +226,7 @@ class DiT(nn.Module):
 
         for block in self.transformer_blocks:
             if self.gradient_checkpointing and self.training:
-                x = ckpt_fn(block, x, t, mask, rope, use_reentrant=False)  # type: ignore[assignment]
+                x = cast(torch.Tensor, ckpt_fn(block, x, t, mask, rope, use_reentrant=False))
             else:
                 x = block(x, t, mask=mask, rope=rope)
 

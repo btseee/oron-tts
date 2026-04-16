@@ -4,15 +4,17 @@ import argparse
 import json
 import os
 from pathlib import Path
+from typing import cast
 
 import torch
 import torch.distributed as dist
-import torch.multiprocessing as mp  # type: ignore[attr-defined]  # spawn is re-exported
+from torch.multiprocessing.spawn import spawn as mp_spawn
 from dotenv import load_dotenv
 from torch.utils.data import DataLoader, DistributedSampler
 
 from src.data.dataset import DynamicBatchSampler, TTSCollator, TTSDataset
 from src.data.hf_wrapper import HFDatasetWrapper
+from src.models.dit import DiT
 from src.models.f5tts import F5TTS
 from src.training.trainer import F5Trainer
 
@@ -178,7 +180,7 @@ def train_worker(rank: int, world_size: int, config: dict, args: argparse.Namesp
     # torch.compile the DiT backbone only (CFM.forward is dynamic/eager)
     if config.get("compile", True) and hasattr(torch, "compile"):
         try:
-            model.cfm.backbone = torch.compile(model.cfm.backbone, dynamic=True)  # type: ignore[assignment]
+            model.cfm.backbone = cast(DiT, torch.compile(model.cfm.backbone, dynamic=True))
             if rank == 0:
                 print("[INFO] torch.compile enabled (backbone only, dynamic=True)")
         except Exception as e:
@@ -266,7 +268,7 @@ def main() -> None:
     world_size = args.num_gpus if torch.cuda.is_available() else 1
 
     if world_size > 1:
-        mp.spawn(train_worker, args=(world_size, config, args), nprocs=world_size, join=True)  # type: ignore[attr-defined]
+        mp_spawn(train_worker, args=(world_size, config, args), nprocs=world_size, join=True)
     else:
         train_worker(0, 1, config, args)
 

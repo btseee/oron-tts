@@ -5,14 +5,20 @@ Run from workspace root:
     python scripts/test_pipeline.py --hf     # + 10 real samples from btsee/mbspeech_mn
 """
 
+from __future__ import annotations
+
 import argparse
 import sys
 import traceback
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 import torch
 import yaml
+
+if TYPE_CHECKING:
+    from src.models.f5tts import F5TTS
 
 # ── helpers ─────────────────────────────────────────────────────────────────
 
@@ -212,7 +218,7 @@ def step_collator() -> None:
         _fail("TTSCollator", exc)
 
 
-def step_model_forward(cfg: dict) -> object:
+def step_model_forward(cfg: dict) -> F5TTS | None:
     """Returns the model so downstream steps can reuse it."""
     _section("Step 7 + 8 — Model instantiation and forward pass")
     try:
@@ -266,13 +272,12 @@ def step_model_forward(cfg: dict) -> object:
         return None
 
 
-def step_backward(model: object) -> object:
+def step_backward(model: F5TTS | None) -> F5TTS | None:
     _section("Step 9 — Backward pass (gradient check)")
     if model is None:
         print("  [SKIP] no model from step 7/8")
         return None
     try:
-        model = model  # type: ignore[assignment]
         B, T = 2, 50
         mel = torch.randn(B, 100, T)
         text_ids = torch.randint(4, 65, (B, T))
@@ -298,7 +303,7 @@ def step_backward(model: object) -> object:
         return model
 
 
-def step_trainer(model: object) -> None:
+def step_trainer(model: F5TTS | None) -> None:
     _section("Step 10 — F5Trainer.train_epoch (synthetic data)")
     if model is None:
         print("  [SKIP] no model from earlier steps")
@@ -337,7 +342,7 @@ def step_trainer(model: object) -> None:
             }
             trainer = F5Trainer(
                 config=train_cfg,
-                model=model,  # type: ignore[arg-type]
+                model=model,
                 train_loader=loader,
                 val_loader=None,
                 device="cpu",

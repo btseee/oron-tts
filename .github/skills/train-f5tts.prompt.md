@@ -35,7 +35,7 @@ trainer.train(num_epochs=config["num_epochs"])
 
 `F5Trainer` saves checkpoints via `CheckpointManager` every `save_interval` steps and at the end of each epoch.
 
-## Config keys (both YAML configs)
+## Config keys (all three YAML configs)
 
 ```yaml
 # == Audio (top-level, not nested) ==
@@ -43,10 +43,14 @@ sample_rate: 24000  # never change
 n_mels: 100         # never change
 n_fft: 1024
 hop_length: 256
+win_length: 1024
+fmin: 0.0
+fmax: 8000.0
 
 # == Training (top-level, not nested) ==
 batch_size: 16
 learning_rate: 1.0e-4
+betas: [0.9, 0.999]
 warmup_steps: 1000
 max_grad_norm: 1.0
 ema_decay: 0.9999
@@ -55,6 +59,17 @@ log_interval: 100
 save_interval: 5
 use_tqdm: true      # false for RunPod container logs
 num_epochs: 500
+batch_size_type: frame   # "frame" for DynamicBatchSampler, "sample" for fixed
+frames_threshold: 3000   # max total mel frames per batch (frame mode)
+max_samples: 8           # max samples per batch cap (frame mode)
+num_workers: 6
+pin_memory: true
+
+# == Performance (top-level) ==
+gradient_checkpointing: true  # essential for T4/RTX 5070 Ti VRAM
+compile: true                 # torch.compile on DiT backbone; set false for T4/Colab
+use_tf32: true                # disable on T4
+cudnn_benchmark: true         # disable on T4
 
 # == Model (nested under model:) ==
 model:
@@ -70,6 +85,18 @@ model:
   vocos_layers: 6    # 8 for Base
   vocos_intermediate: 1024  # 1536 for Base
 ```
+
+### Config profiles
+| Config | Target GPU | dim | depth | frames_threshold | compile |
+|--------|-----------|-----|-------|-----------------|---------|
+| `local.yaml` | RTX 5070 Ti | 512 | 12 | 3000 | true |
+| `runpod.yaml` | A100/L40 | 1024 | 22 | 38400 | true |
+| `colab.yaml` | T4 (15 GB) | 512 | 12 | 12000 | false |
+
+### torch.compile
+- Compiles **only** `model.cfm.backbone` (DiT) with `dynamic=True`.
+- **Never** compile the full model or CFM wrapper (Python branching in `CFM.forward()` causes graph breaks).
+- Set `compile: false` on T4/Colab — inductor overhead exceeds gains for small models.
 
 ## CLI
 
@@ -133,11 +160,9 @@ info = cm.load_pretrained_f5tts(model, "F5TTS_Base.safetensors", strict=False)
 
 ## Monitoring
 
-```bash
-tensorboard --logdir output/logs
-```
+Console logging only (no TensorBoard integration currently).
 
-TensorBoard scalars: `train/loss`, `lr`.
+`F5Trainer` logs per-epoch: avg_loss, val_loss, throughput (samples/s), ETA.
 
 ## RunPod setup
 

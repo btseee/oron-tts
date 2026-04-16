@@ -66,6 +66,8 @@ class TimestepEmbedding(nn.Module):
 
 
 class RotaryEmbedding(nn.Module):
+    inv_freq: torch.Tensor
+
     def __init__(self, dim: int) -> None:
         super().__init__()
         inv_freq = 1.0 / (10000 ** (torch.arange(0, dim, 2).float() / dim))
@@ -120,11 +122,12 @@ class ConvPositionEmbedding(nn.Module):
 
     def forward(self, x: torch.Tensor, mask: torch.Tensor | None = None) -> torch.Tensor:
         x = x.permute(0, 2, 1)  # [B, N, D] → [B, D, N]
+        mask_3d: torch.Tensor | None = None
         if mask is not None:
             mask_3d = mask.unsqueeze(1)
             x = x.masked_fill(~mask_3d, 0.0)
         x = self.conv1d(x)
-        if mask is not None:
+        if mask_3d is not None:
             x = x.masked_fill(~mask_3d, 0.0)
         return x.permute(0, 2, 1)
 

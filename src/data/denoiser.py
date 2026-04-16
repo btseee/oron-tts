@@ -1,7 +1,8 @@
 """Audio denoiser using DeepFilterNet."""
 
+from collections.abc import Callable
 from pathlib import Path
-from typing import Final
+from typing import Any, Final
 
 import numpy as np
 import torch
@@ -13,8 +14,9 @@ DF_SAMPLE_RATE: Final[int] = 48000
 class AudioDenoiser:
     def __init__(self, target_sr: int = 24000) -> None:
         self.target_sr = target_sr
-        self._model = None
-        self._df_state = None
+        self._model: Any = None
+        self._df_state: Any = None
+        self._enhance_fn: Callable[..., torch.Tensor] | None = None
         self._initialized = False
 
     def _lazy_init(self) -> None:
@@ -43,7 +45,8 @@ class AudioDenoiser:
         if sr != DF_SAMPLE_RATE:
             audio = torchaudio.functional.resample(audio, sr, DF_SAMPLE_RATE)
 
-        enhanced = self._enhance_fn(self._df_state, self._model, audio)  # type: ignore
+        assert self._enhance_fn is not None
+        enhanced = self._enhance_fn(self._df_state, self._model, audio)
 
         if self.target_sr != DF_SAMPLE_RATE:
             enhanced = torchaudio.functional.resample(enhanced, DF_SAMPLE_RATE, self.target_sr)

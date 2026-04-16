@@ -22,6 +22,8 @@ class TextEmbedding(nn.Module):
         conv_mult: Intermediate dim multiplier for ConvNeXtV2.
     """
 
+    freqs_cis: torch.Tensor
+
     def __init__(
         self,
         vocab_size: int,
