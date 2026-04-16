@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 from torch.multiprocessing import spawn
 from torch.utils.data import DataLoader, DistributedSampler
 
-from src.data.dataset import TTSCollator, TTSDataset
+from src.data.dataset import BucketBatchSampler, TTSCollator, TTSDataset
 from src.data.hf_wrapper import HFDatasetWrapper
 from src.models.f5tts import F5TTS
 from src.training.trainer import F5Trainer
@@ -107,29 +107,66 @@ def train_worker(rank: int, world_size: int, config: dict, args: argparse.Namesp
 
     num_workers = config.get("num_workers", 4)
     use_persistent = num_workers > 0
+    batch_size = config.get("batch_size", 16)
 
-    sampler = (
-        DistributedSampler(train_subset, num_replicas=world_size, rank=rank)
-        if world_size > 1
-        else None
-    )
-    train_loader = DataLoader(
-        train_subset,
-        batch_size=config.get("batch_size", 16),
-        shuffle=(sampler is None),
-        sampler=sampler,
-        num_workers=num_workers,
-        collate_fn=TTSCollator(),
-        pin_memory=config.get("pin_memory", True) and torch.cuda.is_available(),
-        prefetch_factor=config.get("prefetch_factor", 2) if num_workers > 0 else None,
-        persistent_workers=use_persistent,
-        drop_last=True,
-    )
+    # Use bucket batching when durations are available (groups similar-length
+    # samples to minimize padding and prevent OOM from length outliers).
+    has_durations = hasattr(train_dataset, "durations") and len(train_dataset.durations) > 0
+
+    if world_size > 1:
+        sampler = DistributedSampler(train_subset, num_replicas=world_size, rank=rank)
+        train_loader = DataLoader(
+            train_subset,
+            batch_size=batch_size,
+            shuffle=False,
+            sampler=sampler,
+            num_workers=num_workers,
+            collate_fn=TTSCollator(),
+            pin_memory=config.get("pin_memory", True) and torch.cuda.is_available(),
+            prefetch_factor=config.get("prefetch_factor", 2) if num_workers > 0 else None,
+            persistent_workers=use_persistent,
+            drop_last=True,
+        )
+    elif has_durations:
+        # Resolve indices through random_split Subset if applicable
+        if hasattr(train_subset, "indices"):
+            subset_indices = list(train_subset.indices)
+        else:
+            subset_indices = list(range(len(train_subset)))
+        bucket_sampler = BucketBatchSampler(
+            durations=train_dataset.durations,
+            batch_size=batch_size,
+            num_buckets=config.get("num_buckets", 8),
+            shuffle=True,
+            drop_last=True,
+            indices=subset_indices,
+        )
+        train_loader = DataLoader(
+            train_subset,
+            batch_sampler=bucket_sampler,
+            num_workers=num_workers,
+            collate_fn=TTSCollator(),
+            pin_memory=config.get("pin_memory", True) and torch.cuda.is_available(),
+            prefetch_factor=config.get("prefetch_factor", 2) if num_workers > 0 else None,
+            persistent_workers=use_persistent,
+        )
+    else:
+        train_loader = DataLoader(
+            train_subset,
+            batch_size=batch_size,
+            shuffle=True,
+            num_workers=num_workers,
+            collate_fn=TTSCollator(),
+            pin_memory=config.get("pin_memory", True) and torch.cuda.is_available(),
+            prefetch_factor=config.get("prefetch_factor", 2) if num_workers > 0 else None,
+            persistent_workers=use_persistent,
+            drop_last=True,
+        )
 
     if val_subset is not None:
         val_loader = DataLoader(
             val_subset,
-            batch_size=config.get("batch_size", 16),
+            batch_size=batch_size,
             shuffle=False,
             num_workers=max(num_workers // 2, 1),
             collate_fn=TTSCollator(),

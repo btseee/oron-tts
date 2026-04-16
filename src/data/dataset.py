@@ -2,6 +2,7 @@
 
 import io
 import logging
+import math
 from pathlib import Path
 from typing import Any
 
@@ -10,7 +11,7 @@ import soundfile as sf
 import torch
 import torchaudio
 from datasets import Audio
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, Sampler
 
 from src.utils.audio import AudioProcessor
 from src.utils.text_cleaner import TextCleaner
@@ -87,6 +88,7 @@ class TTSDataset(Dataset):
 
         self.audio_processor = AudioProcessor(sample_rate=sample_rate, n_mels=n_mels)
         self.text_cleaner = TextCleaner()
+        self.durations: list[float] = []  # populated by from_hf_dataset or _compute_durations
 
     def __len__(self) -> int:
         return self._len
@@ -150,6 +152,7 @@ class TTSDataset(Dataset):
         audio_bytes_list: list[bytes] = []
         texts: list[str] = []
         langs: list[str] = []
+        durations: list[float] = []
 
         # decode=False keeps audio as raw bytes — small in memory, fast to pickle
         # across DataLoader workers. Each sample is decoded lazily in __getitem__.
@@ -166,6 +169,9 @@ class TTSDataset(Dataset):
 
         print(f"Using text column: {text_column}")
 
+        max_dur_s = max_audio_len / sample_rate if max_audio_len else None
+        skipped = 0
+
         for item in hf_dataset:
             audio_info = item[audio_column]
             raw_bytes: bytes | None = (
@@ -180,15 +186,30 @@ class TTSDataset(Dataset):
                 _logger.warning("Skipping sample: no audio bytes or path")
                 continue
 
+            # Read duration from audio header (fast, no full decode)
+            try:
+                info = sf.info(io.BytesIO(raw_bytes))
+                dur = info.duration
+            except Exception:
+                dur = 0.0
+
+            if max_dur_s and dur > max_dur_s:
+                skipped += 1
+                continue
+
             audio_bytes_list.append(raw_bytes)
             texts.append(item[text_column])
+            durations.append(dur)
 
             lang = default_lang
             if lang_column and lang_column in item:
                 lang = item[lang_column]
             langs.append(lang)
 
-        return cls(
+        if skipped > 0:
+            print(f"Filtered {skipped} samples exceeding max_duration={max_dur_s:.1f}s")
+
+        dataset = cls(
             audio_bytes_list=audio_bytes_list,
             texts=texts,
             langs=langs,
@@ -196,6 +217,8 @@ class TTSDataset(Dataset):
             n_mels=n_mels,
             max_audio_len=max_audio_len,
         )
+        dataset.durations = durations
+        return dataset
 
 
 class TTSCollator:
@@ -226,3 +249,63 @@ class TTSCollator:
             "mask": masks_padded,
             "mel_lengths": mel_lengths,
         }
+
+
+class BucketBatchSampler(Sampler[list[int]]):
+    """Groups samples by duration into buckets, forms batches within each bucket.
+
+    Guarantees each batch contains similar-length samples, which:
+    - Minimizes padding waste in collator
+    - Prevents one long sample from blowing up attention memory for the batch
+    - Keeps memory usage predictable across all batches
+
+    Works with DistributedSampler by accepting pre-filtered indices.
+    """
+
+    def __init__(
+        self,
+        durations: list[float],
+        batch_size: int,
+        num_buckets: int = 8,
+        shuffle: bool = True,
+        drop_last: bool = True,
+        indices: list[int] | None = None,
+    ) -> None:
+        self.batch_size = batch_size
+        self.shuffle = shuffle
+        self.drop_last = drop_last
+
+        # Use provided indices (e.g. from random_split) or all
+        self.indices = indices if indices is not None else list(range(len(durations)))
+        self.durations = durations
+
+        # Sort indices by duration, then split into buckets
+        sorted_indices = sorted(self.indices, key=lambda i: durations[i])
+        bucket_size = max(1, math.ceil(len(sorted_indices) / num_buckets))
+        self.buckets = [
+            sorted_indices[i : i + bucket_size]
+            for i in range(0, len(sorted_indices), bucket_size)
+        ]
+
+    def __iter__(self):  # noqa: ANN204
+        import random
+
+        batches: list[list[int]] = []
+        for bucket in self.buckets:
+            bucket_copy = list(bucket)
+            if self.shuffle:
+                random.shuffle(bucket_copy)
+            for i in range(0, len(bucket_copy), self.batch_size):
+                batch = bucket_copy[i : i + self.batch_size]
+                if self.drop_last and len(batch) < self.batch_size:
+                    continue
+                batches.append(batch)
+
+        if self.shuffle:
+            random.shuffle(batches)
+
+        yield from batches
+
+    def __len__(self) -> int:
+        total = sum(len(b) // self.batch_size for b in self.buckets)
+        return total

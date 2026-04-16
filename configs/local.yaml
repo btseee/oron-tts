@@ -21,6 +21,7 @@ warmup_steps: 1000
 ema_decay: 0.9999
 max_grad_norm: 1.0
 grad_accumulation_steps: 2
+max_duration: 15
 num_workers: 6
 pin_memory: true
 log_interval: 100
@@ -30,6 +31,7 @@ use_tqdm: true
 # CUDA (RTX 5070 Ti)
 cudnn_benchmark: true
 use_tf32: true
+gradient_checkpointing: true
 
 # == Model (F5-TTS Small) ===================================================
 model:
