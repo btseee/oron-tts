@@ -49,7 +49,7 @@ ids = tokenizer.encode("сайн байна уу", lang="mn", attr_tokens=["[FEM
 text = tokenizer.decode(ids)
 ```
 
-`TextCleaner` (`src/utils/text_cleaner.py`) wraps the tokenizer and provides `clean(text)` and `text_to_sequence(text, lang, attr_tokens)`.
+`TextCleaner` (`src/utils/text_cleaner.py`) wraps the tokenizer and provides `clean(text, lang)` and `text_to_sequence(text, lang, attr_tokens)`.
 
 ## Audio
 
@@ -78,7 +78,7 @@ src/
   utils/
     audio.py         # AudioProcessor
     checkpoint.py    # CheckpointManager (single optimizer + EMA + safetensors)
-    number_norm.py   # NumberNormalizer (Mongolian cardinal + ordinal)
+    number_norm.py   # NumberNormalizer (Mongolian + Kazakh cardinal, ordinal, decimal, percent)
     text_cleaner.py  # TextCleaner
     tokenizer.py     # CyrillicTokenizer
 configs/

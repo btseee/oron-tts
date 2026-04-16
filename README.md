@@ -30,7 +30,7 @@ pip install -e ".[dev]"
 
 ## Project Structure
 
-```
+```bash
 src/
   data/       # TTSDataset, AudioDenoiser, HF wrappers
   models/     # DiT, CFM, VocosDecoder, F5TTS, TextEmbedding
@@ -53,6 +53,7 @@ scripts/
 ### Dataset preparation
 
 From Hugging Face:
+
 ```bash
 python scripts/prepare.py \
     --output-dir data/processed \
@@ -62,6 +63,7 @@ python scripts/prepare.py \
 ```
 
 From a local Common Voice tar.gz:
+
 ```bash
 python scripts/clean_local_cv.py \
     --input cv_mn.tar.gz \
@@ -72,6 +74,7 @@ python scripts/clean_local_cv.py \
 ### Training
 
 **Local** (Small config):
+
 ```bash
 python scripts/train.py \
     --config configs/local.yaml \
@@ -79,6 +82,7 @@ python scripts/train.py \
 ```
 
 **RunPod** (Base config):
+
 ```bash
 python scripts/train.py \
     --config configs/runpod.yaml \
@@ -88,6 +92,7 @@ python scripts/train.py \
 ```
 
 Fine-tune from a pretrained F5-TTS checkpoint:
+
 ```bash
 python scripts/train.py \
     --config configs/runpod.yaml \
@@ -125,19 +130,19 @@ python scripts/infer.py \
 
 ## Mongolian Numbers
 
-| Input | Output |
-|-------|--------|
-| 10 | арван |
-| 25 | хорин тав |
-| 100 | зуун |
-| 1-р | нэгдүгээр |
-| 2024 | хоёр мянга хорин дөрөв |
+|Input | Output                  |
+|------|-------------------------|
+| 10   | арван                   |
+| 25   | хорин тав               |
+| 100  | зуун                    |
+| 1-р  | нэгдүгээр               |
+| 2024 | хоёр мянга хорин дөрөв  |
 
 ## Environment
 
 Create `.env` at the repo root (never commit — already in `.gitignore`):
 
-```
+```bash
 HF_TOKEN=hf_...       # HuggingFace token — read + write scope
 ```
 
@@ -147,16 +152,16 @@ HF_TOKEN=hf_...       # HuggingFace token — read + write scope
 
 ### Pod settings
 
-| Field | Value |
-|-------|-------|
-| GPU | **L40S** |
-| GPU count | **1** |
-| Cloud tier | **Secure Cloud** |
-| Template | **RunPod PyTorch** (`runpod/pytorch:1.0.3-cu1290-torch280-ubuntu2404`) |
-| Container disk | **20 GB** |
-| Volume disk | **50 GB** |
-| Volume mount | `/workspace` |
-| `HF_TOKEN` env var | your HuggingFace token (read + write) |
+| Field              | Value                                                                  |
+|--------------------|------------------------------------------------------------------------|
+| GPU                | **L40S**                                                               |
+| GPU count          | **1**                                                                  |
+| Cloud tier         | **Secure Cloud**                                                       |
+| Template           | **RunPod PyTorch** (`runpod/pytorch:1.0.3-cu1290-torch280-ubuntu2404`) |
+| Container disk     | **20 GB**                                                              |
+| Volume disk        | **50 GB**                                                              |
+| Volume mount       | `/workspace`                                                           |
+| `HF_TOKEN` env var | your HuggingFace token (read + write)                                  |
 
 The Base config peaks at ~13 GB VRAM; the L40S 48 GB gives a 3.5× margin. Add the env vars in the **Environment Variables** section of the pod creation form.
 
@@ -198,11 +203,11 @@ Metrics are logged to console (loss, val_loss, samples/s, ETA). Checkpoints land
 
 ### Cost
 
-| Scenario | Cost at ~$0.86/hr |
-|----------|-------------------|
-| Smoke test (< 5 min) | < $0.08 |
-| 1 epoch × 3 846 samples | ~$0.21 |
-| 500 epochs (full run) | ~$107 |
+| Scenario                | Cost at ~$0.86/hr |
+|-------------------------|-------------------|
+| Smoke test (< 5 min)    | < $0.08           |
+| 1 epoch × 3 846 samples | ~$0.21            |
+| 500 epochs (full run)   | ~$107             |
 
 Terminate the pod (not just stop it) after training to end container disk billing.
 
