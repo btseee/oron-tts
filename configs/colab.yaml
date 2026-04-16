@@ -1,0 +1,48 @@
+# OronTTS F5-TTS Colab Configuration
+# Hardware: T4 GPU (15 GB VRAM), ~12 GB RAM
+
+# == Audio ==================================================================
+sample_rate: 24000
+n_fft: 1024
+hop_length: 256
+win_length: 1024
+n_mels: 100
+fmin: 0.0
+fmax: 8000.0
+
+# == Training ===============================================================
+batch_size: 8
+num_epochs: 100
+learning_rate: 1.0e-4
+betas: [0.9, 0.999]
+warmup_steps: 1000
+ema_decay: 0.9999
+max_grad_norm: 1.0
+grad_accumulation_steps: 2
+batch_size_type: frame
+frames_threshold: 12000
+max_samples: 16
+num_workers: 2
+pin_memory: true
+log_interval: 50
+save_interval: 10
+use_tqdm: true
+
+# CUDA (T4 — SM 7.5, fp16 only)
+cudnn_benchmark: true
+use_tf32: false
+gradient_checkpointing: true
+
+# == Model (F5-TTS Small) ===================================================
+model:
+  vocab_size: 65
+  dim: 512
+  depth: 12
+  heads: 8
+  ff_mult: 4
+  text_dim: 256
+  conv_layers: 4
+  p_dropout: 0.1
+  vocos_dim: 384
+  vocos_layers: 6
+  vocos_intermediate: 1024
