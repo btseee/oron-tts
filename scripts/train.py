@@ -178,9 +178,9 @@ def train_worker(rank: int, world_size: int, config: dict, args: argparse.Namesp
     # torch.compile the DiT backbone only (CFM.forward is dynamic/eager)
     if config.get("compile", True) and hasattr(torch, "compile"):
         try:
-            model.cfm.backbone = torch.compile(model.cfm.backbone)  # type: ignore[assignment]
+            model.cfm.backbone = torch.compile(model.cfm.backbone, dynamic=True)  # type: ignore[assignment]
             if rank == 0:
-                print("[INFO] torch.compile enabled (backbone only)")
+                print("[INFO] torch.compile enabled (backbone only, dynamic=True)")
         except Exception as e:
             if rank == 0:
                 print(f"[WARN] torch.compile failed, using eager mode: {e}")

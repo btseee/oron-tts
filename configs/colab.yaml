@@ -31,6 +31,7 @@ use_tqdm: true
 # CUDA (T4 — SM 7.5, fp16 only)
 cudnn_benchmark: true
 use_tf32: false
+compile: false
 gradient_checkpointing: true
 
 # == Model (F5-TTS Small) ===================================================
