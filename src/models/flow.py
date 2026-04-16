@@ -5,6 +5,8 @@ training dropout, CFG inference with configurable strength, sway sampling,
 and Euler ODE integration.
 """
 
+from random import random
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -33,7 +35,7 @@ def _mask_from_frac_lengths(
     start = (max_start * rand).long().clamp(min=0)
     end = start + lengths
 
-    max_len = lens.max()
+    max_len = int(lens.max().item())
     seq = torch.arange(max_len, device=lens.device).long()
     return (seq[None, :] >= start[:, None]) & (seq[None, :] < end[:, None])
 
@@ -109,8 +111,8 @@ class CFM(nn.Module):
         flow = x1 - x0
 
         # CFG dropout
-        drop_audio_cond = torch.rand(()).item() < self.audio_drop_prob
-        drop_text = torch.rand(()).item() < self.cond_drop_prob
+        drop_audio_cond = random() < self.audio_drop_prob
+        drop_text = random() < self.cond_drop_prob
         if drop_text:
             drop_audio_cond = True
 

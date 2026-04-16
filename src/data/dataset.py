@@ -114,10 +114,13 @@ class TTSDataset(Dataset):
             mel = self.audio_processor.mel_spectrogram(audio)  # [n_mels, T]
         except Exception as e:
             _logger.warning("Sample %d failed, trying next", idx, exc_info=True)
-            next_idx = (idx + 1) % len(self)
-            if next_idx == idx:
-                raise RuntimeError("All samples in dataset are invalid") from e
-            return self[next_idx]
+            for offset in range(1, min(11, len(self))):
+                next_idx = (idx + offset) % len(self)
+                try:
+                    return self.__getitem__(next_idx)
+                except Exception:
+                    continue
+            raise RuntimeError("All fallback samples failed") from e
 
         T = mel.shape[-1]
 

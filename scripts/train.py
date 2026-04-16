@@ -7,8 +7,8 @@ from pathlib import Path
 
 import torch
 import torch.distributed as dist
+import torch.multiprocessing as mp  # type: ignore[attr-defined]  # spawn is re-exported
 from dotenv import load_dotenv
-from torch.multiprocessing import spawn
 from torch.utils.data import DataLoader, DistributedSampler
 
 from src.data.dataset import DynamicBatchSampler, TTSCollator, TTSDataset
@@ -126,8 +126,9 @@ def train_worker(rank: int, world_size: int, config: dict, args: argparse.Namesp
         )
     elif batch_size_type == "frame" and has_durations:
         # Dynamic frame-budget batching: long samples → small batches, short → large.
-        if hasattr(train_subset, "indices"):
-            subset_durations = [train_dataset.durations[i] for i in train_subset.indices]
+        indices = getattr(train_subset, "indices", None)
+        if indices is not None:
+            subset_durations = [train_dataset.durations[i] for i in indices]
         else:
             subset_durations = train_dataset.durations
         dynamic_sampler = DynamicBatchSampler(
@@ -174,12 +175,12 @@ def train_worker(rank: int, world_size: int, config: dict, args: argparse.Namesp
     if rank == 0:
         print(f"[Rank {rank}] Model parameters: {sum(p.numel() for p in model.parameters()):,}")
 
-    # torch.compile for PyTorch 2.x speedup (skip if unavailable or disabled)
+    # torch.compile the DiT backbone only (CFM.forward is dynamic/eager)
     if config.get("compile", True) and hasattr(torch, "compile"):
         try:
-            model = torch.compile(model)  # type: ignore[assignment]
+            model.cfm.backbone = torch.compile(model.cfm.backbone)  # type: ignore[assignment]
             if rank == 0:
-                print("[INFO] torch.compile enabled")
+                print("[INFO] torch.compile enabled (backbone only)")
         except Exception as e:
             if rank == 0:
                 print(f"[WARN] torch.compile failed, using eager mode: {e}")
@@ -265,7 +266,7 @@ def main() -> None:
     world_size = args.num_gpus if torch.cuda.is_available() else 1
 
     if world_size > 1:
-        spawn(train_worker, args=(world_size, config, args), nprocs=world_size, join=True)
+        mp.spawn(train_worker, args=(world_size, config, args), nprocs=world_size, join=True)  # type: ignore[attr-defined]
     else:
         train_worker(0, 1, config, args)
 
