@@ -269,18 +269,15 @@ class BucketBatchSampler(Sampler[list[int]]):
         num_buckets: int = 8,
         shuffle: bool = True,
         drop_last: bool = True,
-        indices: list[int] | None = None,
     ) -> None:
         self.batch_size = batch_size
         self.shuffle = shuffle
         self.drop_last = drop_last
-
-        # Use provided indices (e.g. from random_split) or all
-        self.indices = indices if indices is not None else list(range(len(durations)))
         self.durations = durations
 
         # Sort indices by duration, then split into buckets
-        sorted_indices = sorted(self.indices, key=lambda i: durations[i])
+        indices = list(range(len(durations)))
+        sorted_indices = sorted(indices, key=lambda i: durations[i])
         bucket_size = max(1, math.ceil(len(sorted_indices) / num_buckets))
         self.buckets = [
             sorted_indices[i : i + bucket_size]

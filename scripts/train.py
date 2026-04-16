@@ -128,18 +128,17 @@ def train_worker(rank: int, world_size: int, config: dict, args: argparse.Namesp
             drop_last=True,
         )
     elif has_durations:
-        # Resolve indices through random_split Subset if applicable
+        # Map subset positions → durations so sampler yields 0..N indices
         if hasattr(train_subset, "indices"):
-            subset_indices = list(train_subset.indices)
+            subset_durations = [train_dataset.durations[i] for i in train_subset.indices]
         else:
-            subset_indices = list(range(len(train_subset)))
+            subset_durations = train_dataset.durations
         bucket_sampler = BucketBatchSampler(
-            durations=train_dataset.durations,
+            durations=subset_durations,
             batch_size=batch_size,
             num_buckets=config.get("num_buckets", 8),
             shuffle=True,
             drop_last=True,
-            indices=subset_indices,
         )
         train_loader = DataLoader(
             train_subset,
