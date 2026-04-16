@@ -262,7 +262,9 @@ class Attention(nn.Module):
 
         attn_mask = None
         if mask is not None:
-            attn_mask = mask[:, None, None, :].expand(B, self.heads, T, T)
+            # [B, 1, 1, T] — broadcastable key-padding mask.
+            # NOT expanded to [B, h, T, T] so SDPA can use the memory-efficient backend.
+            attn_mask = mask[:, None, None, :]
 
         out = F.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask, dropout_p=0.0)
         out = out.transpose(1, 2).reshape(B, T, self.inner_dim)
