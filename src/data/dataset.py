@@ -145,6 +145,7 @@ class TTSDataset(Dataset):
         sample_rate: int = 24000,
         n_mels: int = 100,
         default_lang: str = "mn",
+        max_audio_len: int | None = None,
     ) -> "TTSDataset":
         audio_bytes_list: list[bytes] = []
         texts: list[str] = []
@@ -193,6 +194,7 @@ class TTSDataset(Dataset):
             langs=langs,
             sample_rate=sample_rate,
             n_mels=n_mels,
+            max_audio_len=max_audio_len,
         )
 
 

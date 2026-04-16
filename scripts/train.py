@@ -53,6 +53,9 @@ def train_worker(rank: int, world_size: int, config: dict, args: argparse.Namesp
     n_mels = config.get("n_mels", 100)
     default_lang = args.lang or "mn"
 
+    max_duration = config.get("max_duration")
+    max_audio_len = int(max_duration * sample_rate) if max_duration else None
+
     if not args.from_local:
         if rank == 0:
             print(f"[Rank {rank}] Loading dataset from HuggingFace: {args.dataset}")
@@ -66,6 +69,7 @@ def train_worker(rank: int, world_size: int, config: dict, args: argparse.Namesp
             sample_rate=sample_rate,
             n_mels=n_mels,
             default_lang=default_lang,
+            max_audio_len=max_audio_len,
         )
     else:
         metadata_path = Path(args.data_dir) / "metadata.json"
@@ -80,6 +84,7 @@ def train_worker(rank: int, world_size: int, config: dict, args: argparse.Namesp
             langs=langs,
             sample_rate=sample_rate,
             n_mels=n_mels,
+            max_audio_len=max_audio_len,
         )
 
     if rank == 0:
