@@ -1,11 +1,13 @@
-"""F5-TTS Trainer with AMP, EMA, gradient clipping, and console logging."""
+"""F5-TTS Trainer with AMP, EMA, gradient clipping, TensorBoard, and console logging."""
+
+from __future__ import annotations
 
 import logging
 import sys
 import time
 from collections.abc import Sized
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import torch
 import torch.nn as nn
@@ -18,6 +20,9 @@ from tqdm import tqdm
 
 from src.models.f5tts import F5TTS
 from src.utils.checkpoint import CheckpointManager
+
+if TYPE_CHECKING:
+    from torch.utils.tensorboard.writer import SummaryWriter
 
 
 def _detect_amp_dtype(device: str) -> torch.dtype | None:
@@ -98,15 +103,18 @@ class F5Trainer:
         self.global_step = 0
         self.epoch = 0
         self._best_val: float = float("inf")
+        self.log_dir = log_dir
 
         if self.is_main:
             self.checkpoint_manager: CheckpointManager | None = CheckpointManager(
                 checkpoint_dir, model_name="f5tts"
             )
             self.logger = self._setup_logger()
+            self.writer: SummaryWriter | None = self._setup_tensorboard()
         else:
             self.checkpoint_manager = None
             self.logger = None
+            self.writer = None
 
     def _setup_logger(self) -> logging.Logger:
         logger = logging.getLogger("F5Trainer")
@@ -119,11 +127,32 @@ class F5Trainer:
         logger.addHandler(handler)
         return logger
 
+    def _setup_tensorboard(self) -> SummaryWriter | None:
+        try:
+            from torch.utils.tensorboard.writer import SummaryWriter
+
+            writer = SummaryWriter(log_dir=self.log_dir)
+            return writer
+        except ImportError:
+            if self.logger:
+                self.logger.warning("TensorBoard not installed — logging to console only")
+            return None
+
+    def _grad_norm(self) -> float:
+        """Compute total L2 gradient norm across all parameters."""
+        grads = [p.grad for p in self.model.parameters() if p.grad is not None]
+        if not grads:
+            return 0.0
+        total = torch.norm(torch.stack([torch.norm(g.detach()) for g in grads]))
+        return total.item()
+
     def train_step(self, batch: dict[str, torch.Tensor], accum_step: int) -> float | None:
         """Single forward+backward step; returns loss on final accum step, else None."""
         mel = batch["mel"].to(self.device, non_blocking=True)  # [B, n_mels, T]
         text_ids = batch["text_ids"].to(self.device, non_blocking=True)  # [B, T]
         mel_lengths = batch["mel_lengths"].to(self.device, non_blocking=True)  # [B]
+        self._last_batch_size = mel.shape[0]
+        self._last_mel_frames = mel.shape[2]
 
         if torch.isnan(mel).any() or torch.isinf(mel).any():
             return None
@@ -141,16 +170,18 @@ class F5Trainer:
         if (accum_step + 1) % self.grad_accum == 0:
             if self.scaler is not None:
                 self.scaler.unscale_(self.optimizer)
-                nn.utils.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
+            grad_norm = self._grad_norm()
+            nn.utils.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
+            if self.scaler is not None:
                 self.scaler.step(self.optimizer)
                 self.scaler.update()
             else:
-                nn.utils.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
                 self.optimizer.step()
             self.scheduler.step()
             self.optimizer.zero_grad()
             if self.ema:
                 self.ema.update()
+            self._last_grad_norm = grad_norm
             return loss.item() * self.grad_accum
 
         return None
@@ -175,22 +206,39 @@ class F5Trainer:
                 n += 1
                 self.global_step += 1
 
-                log_interval = self.config.get("log_interval", 100)
-
-                if self.is_main and self.global_step % log_interval == 0:
+                if self.is_main:
                     lr = self.optimizer.param_groups[0]["lr"]
+                    grad_norm = getattr(self, "_last_grad_norm", 0.0)
+                    batch_size = getattr(self, "_last_batch_size", 0)
+                    mel_frames = getattr(self, "_last_mel_frames", 0)
 
-                    if self.logger and not self.use_tqdm:
+                    # TensorBoard step-level logging
+                    if self.writer:
+                        self.writer.add_scalar("train/loss", loss_val, self.global_step)
+                        self.writer.add_scalar("train/lr", lr, self.global_step)
+                        self.writer.add_scalar("train/grad_norm", grad_norm, self.global_step)
+                        self.writer.add_scalar("train/batch_size", batch_size, self.global_step)
+                        self.writer.add_scalar("train/mel_frames", mel_frames, self.global_step)
+                        if torch.cuda.is_available():
+                            vram_gb = torch.cuda.max_memory_allocated() / 1e9
+                            self.writer.add_scalar("system/vram_gb", vram_gb, self.global_step)
+
+                    # Console logging at intervals
+                    log_interval = self.config.get("log_interval", 100)
+                    if self.global_step % log_interval == 0 and self.logger and not self.use_tqdm:
                         vram_str = ""
                         if torch.cuda.is_available():
                             vram_gb = torch.cuda.max_memory_allocated() / 1e9
                             vram_str = f" | vram={vram_gb:.1f}GB"
                         self.logger.info(
-                            f"Step {self.global_step} | loss={loss_val:.4f} | lr={lr:.2e}{vram_str}"
+                            f"Step {self.global_step} | loss={loss_val:.4f} | lr={lr:.2e} | "
+                            f"grad_norm={grad_norm:.4f} | B={batch_size}{vram_str}"
                         )
 
-                if self.is_main and self.use_tqdm:
-                    pbar.set_postfix(loss=f"{loss_val:.4f}")
+                    if self.use_tqdm:
+                        pbar.set_postfix(
+                            loss=f"{loss_val:.4f}", lr=f"{lr:.1e}", gn=f"{grad_norm:.2f}"
+                        )
 
         # Flush any accumulated gradients that didn't complete a full accumulation window
         if accum_step >= 0 and (accum_step + 1) % self.grad_accum != 0:
@@ -257,12 +305,25 @@ class F5Trainer:
                 eta_m = eta_m // 60
 
                 val_str = f" | val_loss={val_loss:.4f}" if val_loss > 0 else ""
+                lr = self.optimizer.param_groups[0]["lr"]
                 if self.logger:
+                    vram_str = ""
+                    if torch.cuda.is_available():
+                        vram_gb = torch.cuda.max_memory_allocated() / 1e9
+                        vram_str = f" | vram={vram_gb:.1f}GB"
                     self.logger.info(
                         f"Epoch {self.epoch}/{num_epochs} | "
                         f"avg_loss={avg_loss:.4f}{val_str} | "
-                        f"ETA={eta_h}h{eta_m:02d}m"
+                        f"lr={lr:.2e}{vram_str} | ETA={eta_h}h{eta_m:02d}m"
                     )
+
+                # TensorBoard epoch-level logging
+                if self.writer:
+                    self.writer.add_scalar("epoch/train_loss", avg_loss, self.epoch)
+                    if val_loss > 0:
+                        self.writer.add_scalar("epoch/val_loss", val_loss, self.epoch)
+                    self.writer.add_scalar("epoch/lr", lr, self.epoch)
+                    self.writer.flush()
 
                 if self.epoch % save_interval == 0:
                     self.save_checkpoint(is_best=is_best)
@@ -270,8 +331,9 @@ class F5Trainer:
         self.finish()
 
     def finish(self) -> None:
-        """Final cleanup hook (placeholder for future use)."""
-        pass
+        """Close TensorBoard writer and cleanup."""
+        if self.writer:
+            self.writer.close()
 
     def _validate_with_ema(self) -> float:
         """Run validation using EMA weights if available, else raw weights."""

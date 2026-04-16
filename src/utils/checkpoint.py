@@ -152,12 +152,85 @@ class CheckpointManager:
                 return json.load(f)
         return None
 
+    def _generate_model_card(self, config: dict[str, Any] | None = None) -> str:
+        """Generate a HuggingFace-compatible model card (README.md)."""
+        if config is None:
+            config = self.load_config() or {}
+
+        model_cfg = config.get("model", {})
+        dim = model_cfg.get("dim", "?")
+        depth = model_cfg.get("depth", "?")
+        heads = model_cfg.get("heads", "?")
+        vocab_size = model_cfg.get("vocab_size", 65)
+
+        return f"""---
+language:
+  - mn
+  - kk
+license: apache-2.0
+tags:
+  - tts
+  - text-to-speech
+  - mongolian
+  - kazakh
+  - flow-matching
+  - f5-tts
+library_name: pytorch
+pipeline_tag: text-to-speech
+---
+
+# OronTTS — F5-TTS for Mongolian & Kazakh
+
+Non-autoregressive text-to-speech model based on F5-TTS (Flow Matching + Diffusion Transformer) for Mongolian (Khalkha Cyrillic) and Kazakh (Cyrillic).
+
+## Model Details
+
+| Parameter | Value |
+|-----------|-------|
+| Architecture | F5-TTS (OT-CFM + DiT + Vocos) |
+| dim | {dim} |
+| depth | {depth} |
+| heads | {heads} |
+| vocab_size | {vocab_size} |
+| sample_rate | {config.get("sample_rate", 24000)} Hz |
+| mel_bins | {config.get("n_mels", 100)} |
+
+## Usage
+
+```python
+from src.models.f5tts import F5TTS
+from src.utils.checkpoint import CheckpointManager
+
+model = F5TTS.from_config(config)
+cm = CheckpointManager("checkpoints")
+cm.load(model, path="f5tts_best.pt", device="cuda")
+
+wav = model.synthesize(
+    text="Сайн байна уу",
+    lang="mn",
+    ref_audio_path="ref.wav",
+)
+```
+
+## Training
+
+Trained on [btsee/mbspeech_mn](https://huggingface.co/datasets/btsee/mbspeech_mn) (3,846 Mongolian speech samples).
+
+## License
+
+Apache 2.0
+"""
+
     def push_to_hub(
         self,
         repo_id: str,
         token: str | None = None,
         private: bool = False,
     ) -> str:
+        # Generate model card before uploading
+        card_path = self.checkpoint_dir / "README.md"
+        card_path.write_text(self._generate_model_card(), encoding="utf-8")
+
         api = HfApi()
         api.create_repo(repo_id=repo_id, token=token, private=private, exist_ok=True)
         api.upload_folder(
