@@ -11,6 +11,7 @@ Supports classifier-free guidance via cfg_infer mode (double-batch cond+uncond).
 
 import torch
 import torch.nn as nn
+from torch.utils.checkpoint import checkpoint as ckpt_fn
 
 from src.models.encoder import TextEmbedding
 from src.models.modules import (
@@ -73,10 +74,12 @@ class DiT(nn.Module):
         vocab_size: int = 65,
         text_dim: int = 512,
         conv_layers: int = 4,
+        gradient_checkpointing: bool = False,
     ) -> None:
         super().__init__()
         self.dim = dim
         self.depth = depth
+        self.gradient_checkpointing = gradient_checkpointing
 
         # Timestep conditioning
         self.time_embed = TimestepEmbedding(dim)
@@ -223,7 +226,10 @@ class DiT(nn.Module):
         rope = self.rotary_embed
 
         for block in self.transformer_blocks:
-            x = block(x, t, mask=mask, rope=rope)
+            if self.gradient_checkpointing and self.training:
+                x = ckpt_fn(block, x, t, mask, rope, use_reentrant=False)
+            else:
+                x = block(x, t, mask=mask, rope=rope)
 
         x = self.norm_out(x, t)
         return self.proj_out(x)

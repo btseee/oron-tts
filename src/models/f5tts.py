@@ -62,6 +62,8 @@ class F5TTS(nn.Module):
         sample_rate: int = 24000,
         n_fft: int = 1024,
         hop_length: int = 256,
+        # Memory
+        gradient_checkpointing: bool = False,
     ) -> None:
         super().__init__()
         self.n_mels = n_mels
@@ -79,6 +81,7 @@ class F5TTS(nn.Module):
             vocab_size=vocab_size,
             text_dim=text_dim,
             conv_layers=conv_layers,
+            gradient_checkpointing=gradient_checkpointing,
         )
         self.cfm = CFM(
             backbone,
@@ -244,4 +247,5 @@ class F5TTS(nn.Module):
             sample_rate=audio_cfg.get("sample_rate", 24000),
             n_fft=audio_cfg.get("n_fft", 1024),
             hop_length=audio_cfg.get("hop_length", 256),
+            gradient_checkpointing=config.get("gradient_checkpointing", False),
         )
