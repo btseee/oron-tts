@@ -5,12 +5,18 @@ training dropout, CFG inference with configurable strength, sway sampling,
 and Euler ODE integration.
 """
 
+from __future__ import annotations
+
 from random import random
+from typing import TYPE_CHECKING
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.utils.rnn import pad_sequence
+
+if TYPE_CHECKING:
+    from src.models.dit import DiT
 
 
 def _lens_to_mask(lens: torch.Tensor, length: int | None = None) -> torch.Tensor:
@@ -45,7 +51,7 @@ class CFM(nn.Module):
 
     def __init__(
         self,
-        backbone: nn.Module,
+        backbone: DiT,
         sigma: float = 0.0,
         audio_drop_prob: float = 0.3,
         cond_drop_prob: float = 0.2,

@@ -117,6 +117,7 @@ class DiT(nn.Module):
     def _initialize_weights(self) -> None:
         """Zero-init AdaLN and output layers for stable training start."""
         for block in self.transformer_blocks:
+            assert isinstance(block, DiTBlock)
             nn.init.constant_(block.attn_norm.linear.weight, 0)
             nn.init.constant_(block.attn_norm.linear.bias, 0)
 
@@ -146,8 +147,9 @@ class DiT(nn.Module):
                     self.text_cond = text_embed
 
         if cache:
-            text_embed = self.text_uncond if drop_text else self.text_cond
-        assert text_embed is not None  # type: ignore[possibly-undefined]
+            cached = self.text_uncond if drop_text else self.text_cond
+            assert cached is not None
+            text_embed = cached
 
         return self.input_embed(
             x, cond, text_embed, drop_audio_cond=drop_audio_cond, mask=mask
@@ -222,7 +224,7 @@ class DiT(nn.Module):
 
         for block in self.transformer_blocks:
             if self.gradient_checkpointing and self.training:
-                x = ckpt_fn(block, x, t, mask, rope, use_reentrant=False)
+                x = ckpt_fn(block, x, t, mask, rope, use_reentrant=False)  # type: ignore[assignment]
             else:
                 x = block(x, t, mask=mask, rope=rope)
 
