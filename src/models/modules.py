@@ -1,10 +1,6 @@
-"""DiT building blocks for F5-TTS.
-
-Components: RMSNorm, SinusoidalEmbedding, TimestepEmbedding, RotaryEmbedding,
-ConvPositionEmbedding, GRN, ConvNeXtV2Block, AdaLayerNorm (6-param with gating),
-AdaLayerNormFinal, Attention, FeedForward (GELU), DiTBlock.
-
-Architecture matches the official SWivid/F5-TTS implementation.
+"""DiT building blocks: RMSNorm, SinusoidalEmbedding, TimestepEmbedding,
+RotaryEmbedding, ConvPositionEmbedding, GRN, ConvNeXtV2Block,
+AdaLayerNorm (6-param gated), Attention, FeedForward, DiTBlock.
 """
 
 import math

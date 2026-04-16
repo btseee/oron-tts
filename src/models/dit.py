@@ -1,12 +1,7 @@
 """Diffusion Transformer (DiT) backbone for F5-TTS.
 
-Architecture (matching official SWivid/F5-TTS):
-  - TextEmbedding: token IDs → text_dim via ConvNeXtV2 blocks
-  - InputEmbedding: concat [noised_mel, cond_mel, text_embed] → proj → conv_pos_embed
-  - N × DiTBlock: self-attention + FFN, conditioned via 6-param AdaLN with gating
-  - AdaLayerNormFinal + linear → output velocity field [B, T, mel_dim]
-
-Supports classifier-free guidance via cfg_infer mode (double-batch cond+uncond).
+TextEmbedding → InputEmbedding → N × DiTBlock (AdaLN-gated) → final projection.
+Supports classifier-free guidance via cfg_infer mode.
 """
 
 import torch

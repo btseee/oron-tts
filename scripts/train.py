@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 from torch.multiprocessing import spawn
 from torch.utils.data import DataLoader, DistributedSampler
 
-from src.data.dataset import BucketBatchSampler, TTSCollator, TTSDataset
+from src.data.dataset import DynamicBatchSampler, TTSCollator, TTSDataset
 from src.data.hf_wrapper import HFDatasetWrapper
 from src.models.f5tts import F5TTS
 from src.training.trainer import F5Trainer
@@ -52,9 +52,7 @@ def train_worker(rank: int, world_size: int, config: dict, args: argparse.Namesp
     sample_rate = config.get("sample_rate", 24000)
     n_mels = config.get("n_mels", 100)
     default_lang = args.lang or "mn"
-
-    max_duration = config.get("max_duration")
-    max_audio_len = int(max_duration * sample_rate) if max_duration else None
+    hop_length = config.get("hop_length", 256)
 
     if not args.from_local:
         if rank == 0:
@@ -69,7 +67,6 @@ def train_worker(rank: int, world_size: int, config: dict, args: argparse.Namesp
             sample_rate=sample_rate,
             n_mels=n_mels,
             default_lang=default_lang,
-            max_audio_len=max_audio_len,
         )
     else:
         metadata_path = Path(args.data_dir) / "metadata.json"
@@ -84,7 +81,6 @@ def train_worker(rank: int, world_size: int, config: dict, args: argparse.Namesp
             langs=langs,
             sample_rate=sample_rate,
             n_mels=n_mels,
-            max_audio_len=max_audio_len,
         )
 
     if rank == 0:
@@ -108,9 +104,10 @@ def train_worker(rank: int, world_size: int, config: dict, args: argparse.Namesp
     num_workers = config.get("num_workers", 4)
     use_persistent = num_workers > 0
     batch_size = config.get("batch_size", 16)
+    batch_size_type = config.get("batch_size_type", "sample")
+    frames_threshold = config.get("frames_threshold", 6000)
+    max_samples = config.get("max_samples", 0)
 
-    # Use bucket batching when durations are available (groups similar-length
-    # samples to minimize padding and prevent OOM from length outliers).
     has_durations = hasattr(train_dataset, "durations") and len(train_dataset.durations) > 0
 
     if world_size > 1:
@@ -127,22 +124,22 @@ def train_worker(rank: int, world_size: int, config: dict, args: argparse.Namesp
             persistent_workers=use_persistent,
             drop_last=True,
         )
-    elif has_durations:
-        # Map subset positions → durations so sampler yields 0..N indices
+    elif batch_size_type == "frame" and has_durations:
+        # Dynamic frame-budget batching: long samples → small batches, short → large.
         if hasattr(train_subset, "indices"):
             subset_durations = [train_dataset.durations[i] for i in train_subset.indices]
         else:
             subset_durations = train_dataset.durations
-        bucket_sampler = BucketBatchSampler(
+        dynamic_sampler = DynamicBatchSampler(
             durations=subset_durations,
-            batch_size=batch_size,
-            num_buckets=config.get("num_buckets", 8),
-            shuffle=True,
-            drop_last=True,
+            frames_threshold=frames_threshold,
+            max_samples=max_samples,
+            sample_rate=sample_rate,
+            hop_length=hop_length,
         )
         train_loader = DataLoader(
             train_subset,
-            batch_sampler=bucket_sampler,
+            batch_sampler=dynamic_sampler,
             num_workers=num_workers,
             collate_fn=TTSCollator(),
             pin_memory=config.get("pin_memory", True) and torch.cuda.is_available(),

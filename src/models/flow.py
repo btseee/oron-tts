@@ -1,11 +1,8 @@
 """Optimal-Transport Conditional Flow Matching for F5-TTS.
 
-Matches the official SWivid/F5-TTS CFM implementation with:
-  - Random span masking for infilling training
-  - Classifier-free guidance (CFG) training dropout
-  - CFG inference with configurable strength
-  - Sway sampling for adaptive timestep scheduling
-  - Euler ODE integration with variable step sizes
+Random span masking for infilling training, classifier-free guidance (CFG)
+training dropout, CFG inference with configurable strength, sway sampling,
+and Euler ODE integration.
 """
 
 from random import random
@@ -44,20 +41,7 @@ def _mask_from_frac_lengths(
 
 
 class CFM(nn.Module):
-    """Conditional Flow Matching with infilling training and CFG.
-
-    Training:
-      - Randomly masks 70-100% of mel frames (frac_lengths_mask)
-      - Conditioning = unmasked portion of ground truth mel
-      - OT-CFM interpolation: x_t = (1-t)*noise + t*data
-      - Loss: MSE on velocity field, computed only on masked span
-      - CFG dropout: randomly drops audio conditioning and/or text
-
-    Inference:
-      - Euler ODE integration from noise to mel
-      - Optional classifier-free guidance with configurable strength
-      - Optional sway sampling for adaptive timestep scheduling
-    """
+    """Conditional Flow Matching with infilling training and CFG."""
 
     def __init__(
         self,
@@ -104,7 +88,6 @@ class CFM(nn.Module):
             inp.device,
         )
 
-        # Lengths → mask
         if lens is None:
             lens = torch.full((batch,), seq_len, device=device, dtype=torch.long)
         mask = _lens_to_mask(lens, length=seq_len)
@@ -116,30 +99,23 @@ class CFM(nn.Module):
         rand_span_mask = _mask_from_frac_lengths(lens, frac_lengths)
         rand_span_mask = rand_span_mask & mask
 
-        # Conditioning = unmasked portion of ground truth
         x1 = inp
         cond = torch.where(rand_span_mask[..., None], torch.zeros_like(x1), x1)
 
-        # Gaussian noise
         x0 = torch.randn_like(x1)
-
-        # Timestep
         time = torch.rand(batch, dtype=dtype, device=device)
 
-        # OT-CFM interpolation: x_t = (1-t) * x0 + t * x1
+        # OT-CFM interpolation: x_t = (1-t)*x0 + t*x1
         t = time[:, None, None]
         phi = (1 - t) * x0 + t * x1
-        flow = x1 - x0  # target velocity
+        flow = x1 - x0
 
         # CFG dropout
         drop_audio_cond = random() < self.audio_drop_prob
-        if random() < self.cond_drop_prob:
+        drop_text = random() < self.cond_drop_prob
+        if drop_text:
             drop_audio_cond = True
-            drop_text = True
-        else:
-            drop_text = False
 
-        # Predict velocity
         pred = self.backbone(
             x=phi,
             cond=cond,

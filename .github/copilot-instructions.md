@@ -26,6 +26,8 @@ OronTTS is a non-autoregressive TTS system for Mongolian (Khalkha Cyrillic) and 
 - **Infilling training**: random 70–100% span masking. The unmasked portion is the conditioning signal.
 - **CFG dropout**: `audio_drop_prob=0.3`, `cond_drop_prob=0.2` (drops audio/conditioning during training for classifier-free guidance).
 - Optimizer: AdamW. Scheduler: LinearLR warmup. EMA maintained via `torch_ema`.
+- **AMP**: Auto-detected — bf16 on SM≥8.0 (Ampere+), fp16 on SM<8.0 (Turing/T4), disabled on CPU.
+- **DynamicBatchSampler**: Frame-budget batching — sorts samples by duration, greedily packs batches where `sum(mel_frames) ≤ frames_threshold`. No samples are discarded.
 - Trainer class: `F5Trainer` (`src/training/trainer.py`).
 
 ### Inference modes
@@ -63,7 +65,7 @@ text = tokenizer.decode(ids)
 ```
 src/
   data/
-    dataset.py       # TTSDataset, TTSCollator
+    dataset.py       # TTSDataset, TTSCollator, DynamicBatchSampler
     denoiser.py      # AudioDenoiser (DeepFilterNet)
     hf_wrapper.py    # HFDatasetWrapper, CommonVoiceWrapper, MBSpeechWrapper
   models/
@@ -99,6 +101,10 @@ Both YAML configs use the same keys. Critical keys:
 - `model.dim`, `model.depth`, `model.heads`, `model.ff_mult`, `model.vocab_size` (must match tokenizer = 65)
 - `sample_rate` (must be 24000), `n_mels` (must be 100) — top-level YAML keys, not nested
 - `batch_size`, `warmup_steps`, `num_epochs` — top-level YAML keys, not nested under `training`
+- `batch_size_type` (`"frame"` for DynamicBatchSampler, `"sample"` for fixed batch size)
+- `frames_threshold` (max total mel frames per batch when `batch_size_type="frame"`)
+- `max_samples` (max samples per batch cap when using frame-budget batching)
+- `gradient_checkpointing` (enable for VRAM-constrained GPUs like T4/RTX 5070 Ti)
 
 ## Checkpoints
 
@@ -109,8 +115,8 @@ Both YAML configs use the same keys. Critical keys:
 
 ## Formatting and Quality
 
-- **Linter/Formatter:** Ruff + Black.
-- **Imports:** isort.
+- **Linter/Formatter:** Ruff (linting + formatting). No Black.
+- **Imports:** isort (profile=black).
 - **Typing:** Strict. No `Any` unless unavoidable. Use `Final` for module-level constants.
 
 ## Workflow

@@ -1,6 +1,5 @@
 """Hugging Face Dataset wrappers for Common Voice and MBSpeech."""
 
-from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -42,43 +41,6 @@ class HFDatasetWrapper:
             raise ValueError(f"Failed to load dataset: {self.dataset_name}")
 
         return self._dataset
-
-    def load_common_voice(
-        self,
-        language: str = "mn",
-        split: str = "train",
-    ) -> Dataset:
-        dataset = load_dataset(
-            "mozilla-foundation/common_voice_17_0",
-            language,
-            split=split,
-            cache_dir=str(self.cache_dir) if self.cache_dir else None,
-            trust_remote_code=True,
-        )
-        dataset = dataset.cast_column("audio", Audio(sampling_rate=self.sample_rate))
-        return dataset
-
-    def load_mbspeech(self, split: str = "train") -> Dataset:
-        dataset = load_dataset(
-            self.dataset_name,
-            split=split,
-            cache_dir=str(self.cache_dir) if self.cache_dir else None,
-        )
-        if "audio" in dataset.column_names:
-            dataset = dataset.cast_column("audio", Audio(sampling_rate=self.sample_rate))
-        return dataset
-
-    def iterate_samples(
-        self,
-        dataset: Dataset,
-        batch_size: int = 1,
-    ) -> Iterator[dict[str, Any]]:
-        for i in range(0, len(dataset), batch_size):
-            batch = dataset[i : i + batch_size]
-            if batch_size == 1:
-                yield {k: v[0] if isinstance(v, list) else v for k, v in batch.items()}
-            else:
-                yield batch
 
     def upload_processed(
         self,
@@ -139,7 +101,7 @@ class MBSpeechWrapper(HFDatasetWrapper):
         return super().load(split=split, streaming=streaming)
 
     def get_text_column(self) -> str:
-        return "text"
+        return "sentence_norm"
 
     def get_audio_column(self) -> str:
         return "audio"

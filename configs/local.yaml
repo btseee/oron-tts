@@ -21,7 +21,9 @@ warmup_steps: 1000
 ema_decay: 0.9999
 max_grad_norm: 1.0
 grad_accumulation_steps: 2
-max_duration: 15
+batch_size_type: frame
+frames_threshold: 3000
+max_samples: 8
 num_workers: 6
 pin_memory: true
 log_interval: 100

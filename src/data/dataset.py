@@ -2,7 +2,6 @@
 
 import io
 import logging
-import math
 from pathlib import Path
 from typing import Any
 
@@ -52,7 +51,6 @@ class TTSDataset(Dataset):
         langs: list[str] | None = None,
         sample_rate: int = 24000,
         n_mels: int = 100,
-        max_audio_len: int | None = None,
         min_audio_len: int = 2048,
         audio_arrays: list[np.ndarray] | None = None,
         audio_bytes_list: list[bytes] | None = None,
@@ -83,7 +81,6 @@ class TTSDataset(Dataset):
         self.langs = langs or ["mn"] * self._len
         self.sample_rate = sample_rate
         self.n_mels = n_mels
-        self.max_audio_len = max_audio_len
         self.min_audio_len = min_audio_len
 
         self.audio_processor = AudioProcessor(sample_rate=sample_rate, n_mels=n_mels)
@@ -109,18 +106,18 @@ class TTSDataset(Dataset):
 
             audio = self.audio_processor.normalize_audio(audio)
 
-            if self.max_audio_len and len(audio) > self.max_audio_len:
-                audio = audio[: self.max_audio_len]
-
             if torch.isnan(audio).any() or torch.isinf(audio).any():
                 raise ValueError(f"Invalid audio values at index {idx}")
             if len(audio) < self.min_audio_len:
                 raise ValueError(f"Audio too short at index {idx}: {len(audio)}")
 
             mel = self.audio_processor.mel_spectrogram(audio)  # [n_mels, T]
-        except Exception:
-            _logger.warning("Sample %d failed, returning next", idx, exc_info=True)
-            return self.__getitem__((idx + 1) % len(self))
+        except Exception as e:
+            _logger.warning("Sample %d failed, trying next", idx, exc_info=True)
+            next_idx = (idx + 1) % len(self)
+            if next_idx == idx:
+                raise RuntimeError("All samples in dataset are invalid") from e
+            return self[next_idx]
 
         T = mel.shape[-1]
 
@@ -147,7 +144,6 @@ class TTSDataset(Dataset):
         sample_rate: int = 24000,
         n_mels: int = 100,
         default_lang: str = "mn",
-        max_audio_len: int | None = None,
     ) -> "TTSDataset":
         audio_bytes_list: list[bytes] = []
         texts: list[str] = []
@@ -168,9 +164,6 @@ class TTSDataset(Dataset):
                 raise ValueError(f"No text column found. Available: {hf_dataset.column_names}")
 
         print(f"Using text column: {text_column}")
-
-        max_dur_s = max_audio_len / sample_rate if max_audio_len else None
-        skipped = 0
 
         for item in hf_dataset:
             audio_info = item[audio_column]
@@ -193,10 +186,6 @@ class TTSDataset(Dataset):
             except Exception:
                 dur = 0.0
 
-            if max_dur_s and dur > max_dur_s:
-                skipped += 1
-                continue
-
             audio_bytes_list.append(raw_bytes)
             texts.append(item[text_column])
             durations.append(dur)
@@ -206,16 +195,12 @@ class TTSDataset(Dataset):
                 lang = item[lang_column]
             langs.append(lang)
 
-        if skipped > 0:
-            print(f"Filtered {skipped} samples exceeding max_duration={max_dur_s:.1f}s")
-
         dataset = cls(
             audio_bytes_list=audio_bytes_list,
             texts=texts,
             langs=langs,
             sample_rate=sample_rate,
             n_mels=n_mels,
-            max_audio_len=max_audio_len,
         )
         dataset.durations = durations
         return dataset
@@ -251,58 +236,62 @@ class TTSCollator:
         }
 
 
-class BucketBatchSampler(Sampler[list[int]]):
-    """Groups samples by duration into buckets, forms batches within each bucket.
+class DynamicBatchSampler(Sampler[list[int]]):
+    """Frame-budget batch sampler (following F5-TTS upstream).
 
-    Guarantees each batch contains similar-length samples, which:
-    - Minimizes padding waste in collator
-    - Prevents one long sample from blowing up attention memory for the batch
-    - Keeps memory usage predictable across all batches
-
-    Works with DistributedSampler by accepting pre-filtered indices.
+    Sorts samples by mel-frame length, then greedily packs batches so that the
+    total number of frames per batch stays below *frames_threshold*.  This means
+    short samples get grouped into large batches (fast) while long samples form
+    small batches — potentially down to batch_size=1 — keeping peak GPU memory
+    bounded.  **No samples are discarded.**
     """
 
     def __init__(
         self,
         durations: list[float],
-        batch_size: int,
-        num_buckets: int = 8,
-        shuffle: bool = True,
-        drop_last: bool = True,
+        frames_threshold: int,
+        max_samples: int = 0,
+        sample_rate: int = 24000,
+        hop_length: int = 256,
+        drop_last: bool = False,
     ) -> None:
-        self.batch_size = batch_size
-        self.shuffle = shuffle
-        self.drop_last = drop_last
-        self.durations = durations
+        self.frames_threshold = frames_threshold
+        self.epoch = 0
 
-        # Sort indices by duration, then split into buckets
-        indices = list(range(len(durations)))
-        sorted_indices = sorted(indices, key=lambda i: durations[i])
-        bucket_size = max(1, math.ceil(len(sorted_indices) / num_buckets))
-        self.buckets = [
-            sorted_indices[i : i + bucket_size]
-            for i in range(0, len(sorted_indices), bucket_size)
-        ]
+        # Convert durations (seconds) → mel-frame counts
+        frame_lens = [dur * sample_rate / hop_length for dur in durations]
 
-    def __iter__(self):  # noqa: ANN204
-        import random
+        # Sort indices by frame length, then greedily pack batches
+        sorted_pairs = sorted(enumerate(frame_lens), key=lambda x: x[1])
 
         batches: list[list[int]] = []
-        for bucket in self.buckets:
-            bucket_copy = list(bucket)
-            if self.shuffle:
-                random.shuffle(bucket_copy)
-            for i in range(0, len(bucket_copy), self.batch_size):
-                batch = bucket_copy[i : i + self.batch_size]
-                if self.drop_last and len(batch) < self.batch_size:
-                    continue
-                batches.append(batch)
+        batch: list[int] = []
+        batch_frames = 0.0
+        for idx, flen in sorted_pairs:
+            if (batch_frames + flen <= frames_threshold) and (
+                max_samples == 0 or len(batch) < max_samples
+            ):
+                batch.append(idx)
+                batch_frames += flen
+            else:
+                if batch:
+                    batches.append(batch)
+                batch = [idx]
+                batch_frames = flen
 
-        if self.shuffle:
-            random.shuffle(batches)
+        if batch and not drop_last:
+            batches.append(batch)
 
-        yield from batches
+        self.batches = batches
+
+    def set_epoch(self, epoch: int) -> None:
+        self.epoch = epoch
+
+    def __iter__(self):  # noqa: ANN204
+        g = torch.Generator()
+        g.manual_seed(self.epoch)
+        order = torch.randperm(len(self.batches), generator=g).tolist()
+        yield from (self.batches[i] for i in order)
 
     def __len__(self) -> int:
-        total = sum(len(b) // self.batch_size for b in self.buckets)
-        return total
+        return len(self.batches)

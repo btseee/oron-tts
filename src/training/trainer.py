@@ -21,7 +21,10 @@ def _detect_amp_dtype(device: str) -> torch.dtype | None:
     """Pick the best AMP dtype for the current GPU, or None to disable."""
     if device == "cpu" or not torch.cuda.is_available():
         return None
-    if torch.cuda.is_bf16_supported():
+    # Native bf16 Tensor Cores require SM >= 8.0 (Ampere+).
+    # Turing (T4, SM 7.5) reports bf16 "supported" but runs in software — use fp16.
+    cap = torch.cuda.get_device_capability()
+    if cap[0] >= 8 and torch.cuda.is_bf16_supported():
         return torch.bfloat16
     return torch.float16
 

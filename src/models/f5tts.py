@@ -70,6 +70,13 @@ class F5TTS(nn.Module):
         self.sample_rate = sample_rate
         self.hop_length = hop_length
 
+        self._text_cleaner = TextCleaner()
+        self._audio_processor = AudioProcessor(
+            sample_rate=sample_rate,
+            hop_length=hop_length,
+            n_mels=n_mels,
+        )
+
         backbone = DiT(
             dim=dim,
             depth=depth,
@@ -152,12 +159,8 @@ class F5TTS(nn.Module):
         self.eval()
         self.to(device)
 
-        cleaner = TextCleaner()
-        audio_proc = AudioProcessor(
-            sample_rate=self.sample_rate,
-            hop_length=self.hop_length,
-            n_mels=self.n_mels,
-        )
+        cleaner = self._text_cleaner
+        audio_proc = self._audio_processor
 
         # ── Encode target text ────────────────────────────────────────────────
         target_ids = cleaner.text_to_sequence(text, lang=lang, attr_tokens=attr_tokens)
