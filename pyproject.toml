@@ -37,6 +37,7 @@ dependencies = [
     "tqdm>=4.66.0",
     "python-dotenv>=1.0.0",
     "torch-ema>=0.3.0",
+    "vocos>=0.1.0",          # pretrained mel-to-waveform vocoder (24kHz)
 ]
 
 [project.optional-dependencies]

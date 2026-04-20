@@ -1,10 +1,14 @@
-"""Audio processing utilities for F5-TTS."""
+"""Audio processing utilities for F5-TTS.
+
+Mel spectrogram computation matches Vocos vocoder exactly:
+  torchaudio MelSpectrogram(power=1, center=True) + log(clamp(x, min=1e-7))
+This ensures generated mels are directly decodable by pretrained Vocos.
+"""
 
 import logging
 from pathlib import Path
 from typing import Final
 
-import librosa
 import numpy as np
 import soundfile as sf
 import torch
@@ -20,6 +24,11 @@ DEFAULT_HOP_LENGTH: Final[int] = 256
 DEFAULT_WIN_LENGTH: Final[int] = 1024
 DEFAULT_FMIN: Final[float] = 0.0
 DEFAULT_FMAX: Final[float] = 8000.0
+
+
+def _safe_log(x: torch.Tensor, clip_val: float = 1e-7) -> torch.Tensor:
+    """Log with clipping — matches Vocos safe_log exactly."""
+    return torch.log(torch.clamp(x, min=clip_val))
 
 
 class AudioProcessor:
@@ -41,26 +50,17 @@ class AudioProcessor:
         self.fmin = fmin
         self.fmax = fmax
 
-        self._mel_basis: torch.Tensor | None = None
-        self._hann_window: dict[str, torch.Tensor] = {}
-
-    def _get_mel_basis(self, device: torch.device) -> torch.Tensor:
-        if self._mel_basis is None or self._mel_basis.device != device:
-            mel_np = librosa.filters.mel(
-                sr=self.sample_rate,
-                n_fft=self.n_fft,
-                n_mels=self.n_mels,
-                fmin=self.fmin,
-                fmax=self.fmax,
-            )
-            self._mel_basis = torch.from_numpy(mel_np).float().to(device)
-        return self._mel_basis
-
-    def _get_hann_window(self, device: torch.device) -> torch.Tensor:
-        key = str(device)
-        if key not in self._hann_window:
-            self._hann_window[key] = torch.hann_window(self.win_length).to(device)
-        return self._hann_window[key]
+        # Use torchaudio MelSpectrogram — matches Vocos feature extractor exactly.
+        # Do NOT pass f_min/f_max: Vocos uses torchaudio defaults (0, sr/2).
+        self._mel_transform = torchaudio.transforms.MelSpectrogram(
+            sample_rate=sample_rate,
+            n_fft=n_fft,
+            hop_length=hop_length,
+            win_length=win_length,
+            n_mels=n_mels,
+            center=True,
+            power=1,  # magnitude, not power — matches Vocos
+        )
 
     def load_audio(self, path: str | Path) -> tuple[torch.Tensor, int]:
         waveform, sr = torchaudio.load(str(path))
@@ -94,50 +94,23 @@ class AudioProcessor:
         )
         return torch.from_numpy(trimmed)
 
-    def spectrogram(self, audio: torch.Tensor) -> torch.Tensor:
+    def mel_spectrogram(self, audio: torch.Tensor) -> torch.Tensor:
+        """Compute log-mel spectrogram matching Vocos format.
+
+        Args:
+            audio: Waveform [T] or [1, T].
+
+        Returns:
+            Log-mel spectrogram [n_mels, T_frames].
+        """
         if audio.dim() == 1:
             audio = audio.unsqueeze(0)
 
         device = audio.device
-        window = self._get_hann_window(device)
-
-        pad_amount = (self.n_fft - self.hop_length) // 2
-        audio = torch.nn.functional.pad(audio, (pad_amount, pad_amount), mode="reflect")
-
-        spec = torch.stft(
-            audio,
-            n_fft=self.n_fft,
-            hop_length=self.hop_length,
-            win_length=self.win_length,
-            window=window,
-            center=False,
-            return_complex=True,
-        )
-        spec = torch.abs(spec)
-        return spec.squeeze(0)
-
-    def mel_spectrogram(self, audio: torch.Tensor) -> torch.Tensor:
-        spec = self.spectrogram(audio)
-        if spec.dim() == 2:
-            spec = spec.unsqueeze(0)
-
-        mel_basis = self._get_mel_basis(audio.device)
-        mel = torch.matmul(mel_basis, spec)
-        mel = self._amp_to_db(mel)
-        return mel.squeeze(0)
-
-    def _amp_to_db(self, x: torch.Tensor, min_level: float = 1e-5) -> torch.Tensor:
-        """Convert amplitude to log scale with clamping for numerical stability."""
-        x_clamped = torch.clamp(x, min=min_level)
-        log_spec = torch.log(x_clamped)
-        log_spec = torch.clamp(log_spec, min=-11.5, max=15.0)
-
-        if not torch.isfinite(log_spec).all():
-            n_bad = int((~torch.isfinite(log_spec)).sum().item())
-            _logger.warning("mel_spectrogram: %d non-finite values replaced", n_bad)
-            log_spec = torch.nan_to_num(log_spec, nan=0.0, posinf=15.0, neginf=-11.5)
-
-        return log_spec
+        mel_transform = self._mel_transform.to(device)
+        mel = mel_transform(audio)  # [1, n_mels, T]
+        log_mel = _safe_log(mel)
+        return log_mel.squeeze(0)  # [n_mels, T]
 
     def get_audio_duration(self, audio: torch.Tensor) -> float:
         return len(audio) / self.sample_rate

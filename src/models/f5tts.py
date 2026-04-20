@@ -28,6 +28,22 @@ from src.utils.audio import AudioProcessor
 from src.utils.text_cleaner import TextCleaner
 
 
+def _load_pretrained_vocos(device: str = "cpu") -> Any:
+    """Load pretrained Vocos vocoder (24kHz, 100 mel bins).
+
+    Falls back to the custom (untrained) VocosDecoder if the vocos package
+    is not installed.
+    """
+    try:
+        from vocos import Vocos
+
+        vocos = Vocos.from_pretrained("charactr/vocos-mel-24khz")
+        vocos.eval()
+        return vocos.to(device)
+    except ImportError:
+        return None
+
+
 def _pad_text_to_len(token_ids: list[int], target_len: int, pad_id: int = 0) -> list[int]:
     """Zero-pad (or truncate) a token list to exactly target_len."""
     if len(token_ids) >= target_len:
@@ -200,12 +216,9 @@ class F5TTS(nn.Module):
         else:
             cond = torch.zeros(1, T_total, self.n_mels, device=device)
 
-        # Reference audio lengths
-        ref_lens = (
-            torch.tensor([ref_len], device=device, dtype=torch.long)
-            if ref_len > 0
-            else None
-        )
+        # Reference audio lengths (must always pass, even when 0,
+        # otherwise CFM.sample defaults to masking the entire sequence)
+        ref_lens = torch.tensor([ref_len], device=device, dtype=torch.long)
         duration = torch.tensor([T_total], device=device, dtype=torch.long)
 
         # ── Sample mel via CFM ────────────────────────────────────────────────
@@ -222,7 +235,13 @@ class F5TTS(nn.Module):
         gen_mel = gen_mel[:, ref_len:, :].transpose(1, 2)  # [1, n_mels, target_len]
 
         # ── Decode mel → waveform ─────────────────────────────────────────────
-        waveform = self.vocoder(gen_mel).squeeze(0).cpu()
+        # Use pretrained Vocos if available (much better than untrained custom decoder)
+        pretrained_vocos = _load_pretrained_vocos(device)
+        if pretrained_vocos is not None:
+            with torch.inference_mode():
+                waveform = pretrained_vocos.decode(gen_mel).squeeze(0).cpu()
+        else:
+            waveform = self.vocoder(gen_mel).squeeze(0).cpu()
         return waveform
 
     @classmethod
