@@ -33,17 +33,19 @@ pip install -e ".[dev]"
 ```bash
 src/
   data/       # TTSDataset, AudioDenoiser, HF wrappers
-  models/     # DiT, CFM, VocosDecoder, F5TTS, TextEmbedding
+  models/     # DiT, CFM, F5TTS, TextEmbedding (pretrained Vocos vocoder)
   training/   # F5Trainer
-  utils/      # AudioProcessor, CyrillicTokenizer, TextCleaner, CheckpointManager
+  utils/      # AudioProcessor, CyrillicTokenizer, TextCleaner, CheckpointManager, NumberNormalizer
 configs/
-  local.yaml    # Small (dim=512, depth=12) — local dev
+  local.yaml    # Small (dim=512, depth=12) — RTX 5070 Ti dev
   runpod.yaml   # Base  (dim=1024, depth=22) — cloud training
+  colab.yaml    # Small (dim=512, depth=12) — Colab T4 (compile: false, fp16)
 scripts/
   prepare.py        # clean + denoise + upload to HF
   train.py          # train + push model
   infer.py          # synthesise speech
   clean_local_cv.py # process local Common Voice tar.gz
+  test_pipeline.py  # end-to-end smoke test
   setup/
     runpod_setup.sh # RunPod one-shot setup
 ```
@@ -137,6 +139,8 @@ python scripts/infer.py \
 | 100  | зуун                    |
 | 1-р  | нэгдүгээр               |
 | 2024 | хоёр мянга хорин дөрөв  |
+| 3/4  | дөрөвдүгээрийн гурав   |
+| 2024-ны | хоёр мянга хорин дөрвөн |
 
 ## Environment
 
@@ -232,7 +236,9 @@ model:
   dim: 512        # 1024 for runpod.yaml
   depth: 12       # 22 for runpod.yaml
   heads: 8        # 16 for runpod.yaml
-  vocab_size: 65
+  vocab_size: 65  # fixed — must match CyrillicTokenizer
+  audio_drop_prob: 0.1   # CFG audio dropout
+  cond_drop_prob: 0.05   # CFG conditioning dropout
 ```
 
 ## Development

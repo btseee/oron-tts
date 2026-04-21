@@ -98,6 +98,13 @@ python scripts/infer.py \
 | `--lang` | `mn` | `mn` (Mongolian) or `kz` (Kazakh) |
 
 > **Note**: `cfg_strength` (default 2.0) and `sway_sampling_coef` (default -1.0) are available in the Python API via `F5TTS.synthesize()` but not yet exposed as CLI args.
+> If output sounds noisy or over-processed, try reducing `cfg_strength` to 1.0–1.5.
+
+## Vocoder
+
+`F5TTS` does not train a vocoder. On first call to `synthesize()`, `_get_vocos(device)` lazy-loads
+`Vocos.from_pretrained("charactr/vocos-mel-24khz")` from Hugging Face and caches it in-process.
+It is never saved in checkpoints. Requires an internet connection on first use.
 
 ## F5TTS.synthesize() signature
 

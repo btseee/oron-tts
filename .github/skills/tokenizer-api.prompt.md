@@ -18,8 +18,8 @@ tok = CyrillicTokenizer()
 
 # Encode with language tag and attribute prefix
 ids = tok.encode("сайн байна уу", lang="mn", attr_tokens=["[FEMALE]", "[YOUNG]"])
-# → [1, 6, 8, 4, <char ids...>, 2]
-#    BOS FEMALE YOUNG LANG_MN  ... EOS
+# Encoding order: [LANG_MN] [FEMALE] [YOUNG] <char ids...>
+# BOS/EOS slots (IDs 1 and 2) are reserved but not inserted by encode()
 
 # Decode back to string (special tokens stripped)
 text = tok.decode(ids)
@@ -47,7 +47,9 @@ print(tok.vocab_size)  # 65
 | 46–52 | Kazakh-specific: `ә ғ қ ң ұ һ і` | |
 | 53–64 | Punctuation + space | ` . , ! ? - : ; " ' ( )` |
 
-**Encoding order**: BOS → attr_tokens → LANG_TAG → char ids → EOS
+**Encoding order**: LANG_TAG → attr_tokens → char ids
+
+> **Note**: `<BOS>` (ID 1) and `<EOS>` (ID 2) are reserved vocabulary slots but are **not** inserted by `encode()`. They exist to keep the vocab layout stable for potential future use.
 
 ## TextCleaner
 

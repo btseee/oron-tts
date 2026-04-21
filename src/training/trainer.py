@@ -75,11 +75,19 @@ class F5Trainer:
         )
 
         warmup_steps = config.get("warmup_steps", 1000)
-        self.scheduler = torch.optim.lr_scheduler.LinearLR(
-            self.optimizer,
-            start_factor=1e-4,
-            end_factor=1.0,
-            total_iters=warmup_steps,
+        num_epochs = config.get("num_epochs", 500)
+        grad_accum = config.get("grad_accumulation_steps", 1)
+        # scheduler.step() is called once per gradient update, not per batch
+        steps_per_epoch = max(len(train_loader) // max(grad_accum, 1), 1)
+        total_steps = num_epochs * steps_per_epoch
+        _warmup = torch.optim.lr_scheduler.LinearLR(
+            self.optimizer, start_factor=1e-4, end_factor=1.0, total_iters=warmup_steps
+        )
+        _cosine = torch.optim.lr_scheduler.CosineAnnealingLR(
+            self.optimizer, T_max=max(total_steps - warmup_steps, 1), eta_min=1e-6
+        )
+        self.scheduler = torch.optim.lr_scheduler.SequentialLR(
+            self.optimizer, schedulers=[_warmup, _cosine], milestones=[warmup_steps]
         )
 
         self.ema = (

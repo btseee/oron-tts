@@ -481,7 +481,11 @@ class NumberNormalizer:
             if num == 1 and den == 2:
                 return MN_FRACTION_HALF if self._lang == "mn" else KZ_FRACTION_HALF
             if self._lang == "mn":
-                return f"{self.convert(den)} дугаарын {self.convert(num)}"
+                # Build ordinal-genitive of denominator with correct vowel harmony.
+                # convert_ordinal already selects "дугаар" (back) or "дүгээр" (front).
+                ordinal = self.convert_ordinal(den)
+                gen = ordinal + ("ийн" if ordinal.endswith("дүгээр") else "ын")
+                return f"{gen} {self.convert(num)}"
             return f"{self.convert(den)} ден {self.convert(num)}"
 
         text = re.sub(r"(\d{1,2})/(\d{1,2})", _fraction, text)
@@ -509,6 +513,14 @@ class NumberNormalizer:
         text = re.sub(r"(\d+)-р\b", _ordinal, text)
         text = re.sub(r"(\d+)-д(?:угаар|үгээр|ахь)", _ordinal, text)
         text = re.sub(r"(\d+)-(?:ші|шы)", _ordinal, text)
+
+        # --- Genitive/attributive forms: 2024-ны, 1-ний, 5-ын, 3-ийн ---
+        # These are possessive/genitive markers that appear before nouns.
+        # Map to attributive cardinal (the closest spoken form).
+        def _genitive(m: re.Match[str]) -> str:
+            return self.convert_attributive(int(m.group(1)))
+
+        text = re.sub(r"(\d+)-(?:ны|ний|ын|ийн)\b", _genitive, text)
 
         # --- Roman numerals → ordinal (XV зуун = арван тавдугаар зуун) ---
         def _roman(m: re.Match[str]) -> str:

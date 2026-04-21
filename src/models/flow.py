@@ -247,14 +247,15 @@ class CFM(nn.Module):
         # Euler ODE integration
         trajectory: list[torch.Tensor] = [y0]
         x = y0
-        for i in range(len(t) - 1):
-            dt = t[i + 1] - t[i]
-            t_batch = t[i].expand(batch)
-            v = fn(t_batch, x)
-            x = x + v * dt
-            trajectory.append(x)
-
-        self.backbone.clear_cache()
+        try:
+            for i in range(len(t) - 1):
+                dt = t[i + 1] - t[i]
+                t_batch = t[i].expand(batch)
+                v = fn(t_batch, x)
+                x = x + v * dt
+                trajectory.append(x)
+        finally:
+            self.backbone.clear_cache()
 
         # Replace conditioning region with original
         out = torch.where(cond_mask_3d, cond, x)

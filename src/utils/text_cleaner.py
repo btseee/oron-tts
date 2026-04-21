@@ -108,11 +108,11 @@ class TextCleaner:
 
         # Multi-char abbreviations: safe word-boundary match
         for abbr, full in abbrevs.items():
-            text = re.sub(rf"(?<!\w){re.escape(abbr)}(?!\w)", full, text)
+            text = re.sub(rf"(?<!\w){re.escape(abbr)}(?!\w)", full, text, flags=re.IGNORECASE)
 
         # Single-letter units: only after a digit + optional space
         for abbr, full in units.items():
-            text = re.sub(rf"(\d)\s*{re.escape(abbr)}(?!\w)", rf"\1 {full}", text)
+            text = re.sub(rf"(\d)\s*{re.escape(abbr)}(?!\w)", rf"\1 {full}", text, flags=re.IGNORECASE)
 
         return text
 

@@ -46,4 +46,7 @@ model:
   text_dim: 512
   conv_layers: 4
   p_dropout: 0.1
+  # CFG dropout — reduce from defaults (0.3/0.2) for small-dataset training
+  audio_drop_prob: 0.1
+  cond_drop_prob: 0.05
 

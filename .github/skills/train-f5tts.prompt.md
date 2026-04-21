@@ -11,8 +11,8 @@ Use this skill when the user asks about training, fine-tuning, resuming, or conf
 
 - **Loss**: Flow matching MSE on velocity field, computed inline in `CFM.forward()` — no separate loss function.
 - **Infilling training**: random 70–100% span masking. Unmasked portion is the conditioning signal.
-- **CFG dropout**: `audio_drop_prob=0.3`, `cond_drop_prob=0.2` during training.
-- **Optimizer**: AdamW. **Scheduler**: LinearLR warmup then constant.
+- **CFG dropout**: `audio_drop_prob=0.1`, `cond_drop_prob=0.05` in all three YAML configs (CFM code defaults are higher; configs override for the small ~3,846 sample dataset).
+- **Optimizer**: AdamW (`weight_decay=0.01`). **Scheduler**: `SequentialLR` — LinearLR warmup (`start_factor=1e-4`) for `warmup_steps`, then CosineAnnealingLR decaying to `eta_min=1e-6`.
 - **EMA**: maintained on rank-0 only via `torch_ema.ExponentialMovingAverage`.
 - **No GAN**, no HiFi-GAN, no `optimizer_d`.
 
@@ -81,9 +81,8 @@ model:
   text_dim: 256      # 512 for Base
   conv_layers: 4
   p_dropout: 0.1
-  vocos_dim: 384     # 512 for Base
-  vocos_layers: 6    # 8 for Base
-  vocos_intermediate: 1024  # 1536 for Base
+  audio_drop_prob: 0.1   # CFG audio dropout
+  cond_drop_prob: 0.05   # CFG conditioning dropout
 ```
 
 ### Config profiles
@@ -97,6 +96,10 @@ model:
 - Compiles **only** `model.cfm.backbone` (DiT) with `dynamic=True`.
 - **Never** compile the full model or CFM wrapper (Python branching in `CFM.forward()` causes graph breaks).
 - Set `compile: false` on T4/Colab — inductor overhead exceeds gains for small models.
+
+### Vocoder
+- The vocoder is **not trained**. `F5TTS._get_vocos(device)` lazy-loads `Vocos.from_pretrained("charactr/vocos-mel-24khz")` on first inference call and caches it outside the `nn.Module` parameter tree.
+- It is never saved in checkpoints. `decoder.py` exists but is unused at runtime.
 
 ## CLI
 

@@ -17,15 +17,15 @@ OronTTS is a non-autoregressive TTS system for Mongolian (Khalkha Cyrillic) and 
 | Text encoder | `TextEmbedding` | `src/models/encoder.py` |
 | Backbone | `DiT` (Diffusion Transformer) | `src/models/dit.py` |
 | Flow matching | `CFM` (OT-Conditional Flow Matching) | `src/models/flow.py` |
-| Vocoder | `VocosDecoder` (ConvNeXt + iSTFT) | `src/models/decoder.py` |
+| Vocoder | Pretrained `Vocos` (`charactr/vocos-mel-24khz`) — lazy-loaded, not a trained parameter | `src/models/f5tts.py` (`_get_vocos`) |
 | Top-level | `F5TTS` | `src/models/f5tts.py` |
 | DiT blocks | `RMSNorm, AdaLayerNorm, Attention, DiTBlock, RotaryEmbedding, ...` | `src/models/modules.py` |
 
 ### Training
 - Flow matching loss (MSE on velocity field) is computed inline in `CFM.forward()` — no separate loss function.
 - **Infilling training**: random 70–100% span masking. The unmasked portion is the conditioning signal.
-- **CFG dropout**: `audio_drop_prob=0.3`, `cond_drop_prob=0.2` (drops audio/conditioning during training for classifier-free guidance).
-- Optimizer: AdamW (`weight_decay=0.01`). Scheduler: LinearLR warmup (`start_factor=1e-4`). EMA maintained via `torch_ema`.
+- **CFG dropout**: `audio_drop_prob=0.1`, `cond_drop_prob=0.05` (set in all three YAML configs; CFM code defaults are 0.3/0.2 but configs override for small-dataset training).
+- Optimizer: AdamW (`weight_decay=0.01`). Scheduler: `SequentialLR` — LinearLR warmup (`start_factor=1e-4`) for `warmup_steps`, then CosineAnnealingLR decaying to `eta_min=1e-6` over the remaining steps. EMA maintained via `torch_ema`.
 - **AMP**: Auto-detected — bf16 on SM≥8.0 (Ampere+), fp16 on SM<8.0 (Turing/T4), disabled on CPU. GradScaler used only for fp16.
 - **DynamicBatchSampler**: Frame-budget batching — sorts samples by duration, greedily packs batches where `sum(mel_frames) ≤ frames_threshold`. No samples are discarded.
 - **Gradient checkpointing**: Per-DiTBlock, enabled via `gradient_checkpointing: true` in config. Essential for T4/RTX 5070 Ti.
@@ -36,6 +36,7 @@ OronTTS is a non-autoregressive TTS system for Mongolian (Khalkha Cyrillic) and 
 1. **Voice cloning** — pass `ref_audio_path` to `F5TTS.synthesize()`, uses reference mel as conditioning.
 2. **Attribute tokens** — pass `attr_tokens` list (e.g. `["[FEMALE]", "[YOUNG]"]`), embedded as prefix.
 3. **Inference params**: `cfg_strength` (classifier-free guidance, default 2.0), `sway_sampling_coef` (sway sampling, default -1.0), `n_steps` (ODE steps, default 32).
+4. **Vocoder**: `F5TTS._get_vocos(device)` lazy-loads `Vocos.from_pretrained("charactr/vocos-mel-24khz")` on first call and caches it outside the `nn.Module` parameter tree. It is never saved in checkpoints.
 
 ## Tokenizer
 
@@ -60,7 +61,8 @@ text = tokenizer.decode(ids)
 - **Sample rate:** 24 000 Hz (all defaults must be 24000).
 - **Mel bins:** 100. **n_fft:** 1024. **hop_length:** 256. **win_length:** 1024. **fmin:** 0. **fmax:** 8000.
 - `AudioProcessor` in `src/utils/audio.py` — `load_audio()`, `mel_spectrogram()`, `normalize_audio()`, `trim_silence()`, `save_audio()`.
-- `AudioDenoiser` in `src/data/denoiser.py` — wraps DeepFilterNet (lazy-loaded, optional `[denoise]` extra).
+- `AudioProcessor` receives `n_fft` explicitly from `F5TTS.__init__`.
+- Mel format matches pretrained Vocos: `torchaudio.transforms.MelSpectrogram(power=1, center=True)` + `log(clamp(x, 1e-5))`.
 
 ## Project Structure
 
@@ -72,7 +74,7 @@ src/
     hf_wrapper.py    # HFDatasetWrapper, CommonVoiceWrapper, MBSpeechWrapper
   models/
     dit.py           # DiT backbone
-    decoder.py       # VocosDecoder (Vocos iSTFT vocoder)
+    decoder.py       # VocosDecoder (unused at runtime — pretrained Vocos is used instead)
     encoder.py       # TextEmbedding (token embed + ConvNeXtV2 blocks)
     flow.py          # CFM (OT-CFM) with infilling + CFG
     f5tts.py         # F5TTS top-level model
@@ -106,7 +108,7 @@ notebooks/
 All three YAML configs use the same keys. Critical keys:
 - `model.dim`, `model.depth`, `model.heads`, `model.ff_mult`, `model.vocab_size` (must match tokenizer = 65)
 - `model.text_dim`, `model.conv_layers`, `model.p_dropout`
-- `model.vocos_dim`, `model.vocos_layers`, `model.vocos_intermediate`
+- `model.audio_drop_prob`, `model.cond_drop_prob` — CFG dropout (set to 0.1/0.05 for small-dataset training)
 - `sample_rate` (must be 24000), `n_mels` (must be 100) — top-level YAML keys, not nested
 - `batch_size`, `warmup_steps`, `num_epochs`, `learning_rate` — top-level YAML keys, not nested under `training`
 - `batch_size_type` (`"frame"` for DynamicBatchSampler, `"sample"` for fixed batch size)
