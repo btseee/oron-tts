@@ -90,7 +90,7 @@ python scripts/train.py \
     --config configs/runpod.yaml \
     --dataset btsee/mbspeech_mn \
     --push-to-hub \
-    --hf-repo btsee/orontts
+    --hf-repo btsee/oron-tts
 ```
 
 Fine-tune from a pretrained F5-TTS checkpoint:
@@ -200,7 +200,7 @@ python scripts/train.py \
     --config configs/runpod.yaml \
     --dataset btsee/mbspeech_mn \
     --push-to-hub \
-    --hf-repo btsee/orontts
+    --hf-repo btsee/oron-tts
 ```
 
 Metrics are logged to console (loss, val_loss, samples/s, ETA). Checkpoints land on the 50 GB volume and survive pod restarts — re-run the same command to resume.
@@ -258,7 +258,7 @@ MIT
 If you use OronTTS in your research, please cite:
 
 ```bibtex
-@software{orontts2026,
+@software{oron-tts2026,
   title  = {OronTTS: Mongolian and Kazakh Text-to-Speech with F5-TTS},
   author = {Badral, Battseren},
   year   = {2026},

@@ -226,6 +226,7 @@ Apache 2.0
         repo_id: str,
         token: str | None = None,
         private: bool = False,
+        log_dir: str | Path | None = None,
     ) -> str:
         # Generate model card before uploading
         card_path = self.checkpoint_dir / "README.md"
@@ -238,6 +239,17 @@ Apache 2.0
             repo_id=repo_id,
             token=token,
         )
+        # Upload TensorBoard logs alongside the model so training curves are
+        # browsable on HuggingFace without a separate wandb account.
+        if log_dir is not None:
+            log_path = Path(log_dir)
+            if log_path.exists() and any(log_path.iterdir()):
+                api.upload_folder(
+                    folder_path=str(log_path),
+                    repo_id=repo_id,
+                    path_in_repo="tb_logs",
+                    token=token,
+                )
         return f"https://huggingface.co/{repo_id}"
 
     def pull_from_hub(

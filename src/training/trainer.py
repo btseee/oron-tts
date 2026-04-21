@@ -349,8 +349,51 @@ class F5Trainer:
             return 0.0
         if self.ema:
             with self.ema.average_parameters():
-                return self.validate()
-        return self.validate()
+                loss = self.validate()
+                self._log_audio_samples(self.epoch)  # uses EMA weights
+                return loss
+        loss = self.validate()
+        self._log_audio_samples(self.epoch)
+        return loss
+
+    def _log_audio_samples(self, epoch: int) -> None:
+        """Synthesize diagnostic sentences and log audio + mel to TensorBoard.
+
+        Gated by ``audio_sample_interval`` config key (default every 10 epochs).
+        Must be called while EMA weights are active (inside _validate_with_ema).
+        """
+        if not self.writer:
+            return
+        interval = self.config.get("audio_sample_interval", 10)
+        if epoch % interval != 0:
+            return
+        raw_model = self.model.module if isinstance(self.model, DDP) else self.model
+        if not isinstance(raw_model, F5TTS):
+            return
+
+        samples: list[list[str]] = self.config.get(
+            "audio_samples",
+            [["Сайн байна уу, та хэрхэн байна?", "mn"], ["Монгол улс сайхан орон.", "mn"]],
+        )
+        raw_model.eval()
+        for entry in samples[:2]:
+            text, lang = entry[0], entry[1]
+            tag = f"{lang}/{text[:20].replace(' ', '_')}"
+            try:
+                wav = raw_model.synthesize(text, lang=lang, device=self.device, n_steps=16)
+                # wav: [T_samples] CPU float32
+                self.writer.add_audio(
+                    f"audio/{tag}", wav.unsqueeze(0).float(), epoch,
+                    sample_rate=raw_model.sample_rate,
+                )
+                mel = raw_model._audio_processor.mel_spectrogram(wav.unsqueeze(0))
+                mel_img = mel.squeeze(0).flip(0).unsqueeze(0).float()
+                mel_img = (mel_img - mel_img.min()) / (mel_img.max() - mel_img.min() + 1e-8)
+                self.writer.add_image(f"mel/{tag}", mel_img, epoch)
+            except Exception:
+                pass  # never crash training on sample failure
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
     def validate(self) -> float:
         if self.val_loader is None:
@@ -412,4 +455,4 @@ class F5Trainer:
     def push_to_hub(self, repo_id: str, token: str | None = None) -> str:
         if self.checkpoint_manager is None:
             raise ValueError("CheckpointManager not initialized")
-        return self.checkpoint_manager.push_to_hub(repo_id, token=token)
+        return self.checkpoint_manager.push_to_hub(repo_id, token=token, log_dir=self.log_dir)

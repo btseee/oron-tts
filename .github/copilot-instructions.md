@@ -150,7 +150,7 @@ All three YAML configs use the same keys. Critical keys:
 2. **Cloud training:** `python scripts/train.py --config configs/runpod.yaml --dataset btsee/mbspeech_mn`
    - Pulls dataset from HF → trains F5-TTS → saves checkpoints → logs metrics to console.
    - Resume: add `--resume` flag. Fine-tune: add `--pretrain-ckpt F5TTS_Base.safetensors`.
-   - Push to HF: add `--push-to-hub --hf-repo btsee/orontts`.
+   - Push to HF: add `--push-to-hub --hf-repo btsee/oron-tts`.
 3. **Inference:** `python scripts/infer.py --checkpoint output/checkpoints/f5tts_best.pt --text "Сайн байна уу" --lang mn --output out.wav`
    - Optionally `--ref-audio ref.wav --ref-text "..."` for voice cloning.
    - Optionally `--attr-tokens "[FEMALE],[YOUNG]"` for attribute tokens.

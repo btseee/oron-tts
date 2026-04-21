@@ -322,7 +322,7 @@ python scripts/prepare.py --output-dir data/processed --dataset all
 
 # Training
 python scripts/train.py --config configs/runpod.yaml --dataset btsee/mbspeech_mn \
-    --push-to-hub --hf-repo btsee/orontts
+    --push-to-hub --hf-repo btsee/oron-tts
 
 # Fine-tune from official F5-TTS checkpoint
 python scripts/train.py --config configs/runpod.yaml --dataset btsee/mbspeech_mn \

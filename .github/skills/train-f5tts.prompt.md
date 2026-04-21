@@ -120,7 +120,7 @@ python scripts/train.py \
     --dataset btsee/mbspeech_mn \
     --lang mn \
     --push-to-hub \
-    --hf-repo btsee/orontts
+    --hf-repo btsee/oron-tts
 ```
 
 Fine-tune on top of an official F5-TTS pretrained checkpoint:
