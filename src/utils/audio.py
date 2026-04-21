@@ -1,8 +1,9 @@
 """Audio processing utilities for F5-TTS.
 
 Mel spectrogram computation matches Vocos vocoder exactly:
-  torchaudio MelSpectrogram(power=1, center=True) + log(clamp(x, min=1e-7))
-This ensures generated mels are directly decodable by pretrained Vocos.
+  torchaudio MelSpectrogram(power=1, center=True) + log(clamp(x, min=1e-5))
+This ensures generated mels are directly decodable by pretrained Vocos
+(charactr/vocos-mel-24khz uses the same clip_val=1e-5).
 """
 
 import logging
@@ -22,12 +23,10 @@ DEFAULT_N_MELS: Final[int] = 100
 DEFAULT_N_FFT: Final[int] = 1024
 DEFAULT_HOP_LENGTH: Final[int] = 256
 DEFAULT_WIN_LENGTH: Final[int] = 1024
-DEFAULT_FMIN: Final[float] = 0.0
-DEFAULT_FMAX: Final[float] = 8000.0
 
 
-def _safe_log(x: torch.Tensor, clip_val: float = 1e-7) -> torch.Tensor:
-    """Log with clipping — matches Vocos safe_log exactly."""
+def _safe_log(x: torch.Tensor, clip_val: float = 1e-5) -> torch.Tensor:
+    """Log with clipping — matches Vocos safe_log (clip_val=1e-5)."""
     return torch.log(torch.clamp(x, min=clip_val))
 
 
@@ -39,16 +38,12 @@ class AudioProcessor:
         hop_length: int = DEFAULT_HOP_LENGTH,
         win_length: int = DEFAULT_WIN_LENGTH,
         n_mels: int = DEFAULT_N_MELS,
-        fmin: float = DEFAULT_FMIN,
-        fmax: float = DEFAULT_FMAX,
     ) -> None:
         self.sample_rate = sample_rate
         self.n_fft = n_fft
         self.hop_length = hop_length
         self.win_length = win_length
         self.n_mels = n_mels
-        self.fmin = fmin
-        self.fmax = fmax
 
         # Use torchaudio MelSpectrogram — matches Vocos feature extractor exactly.
         # Do NOT pass f_min/f_max: Vocos uses torchaudio defaults (0, sr/2).
@@ -88,6 +83,8 @@ class AudioProcessor:
         frame_length: int = 2048,
         hop_length: int = 512,
     ) -> torch.Tensor:
+        import librosa  # lazy import — only needed if trim_silence is called
+
         audio_np = audio.cpu().numpy()
         trimmed, _ = librosa.effects.trim(
             audio_np, top_db=top_db, frame_length=frame_length, hop_length=hop_length

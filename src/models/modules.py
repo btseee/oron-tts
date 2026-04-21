@@ -108,7 +108,11 @@ class RotaryEmbedding(nn.Module):
 
 
 class ConvPositionEmbedding(nn.Module):
-    """Convolutional position embedding (from official F5-TTS)."""
+    """Convolutional position embedding (from official F5-TTS).
+
+    Re-applies the padding mask after each Conv1d layer to prevent
+    zero-padded positions from bleeding into adjacent real positions.
+    """
 
     def __init__(self, dim: int, kernel_size: int = 31, groups: int = 16) -> None:
         super().__init__()
@@ -119,16 +123,21 @@ class ConvPositionEmbedding(nn.Module):
             nn.Conv1d(dim, dim, kernel_size, groups=groups, padding=kernel_size // 2),
             nn.Mish(),
         )
+        # Indices of Conv1d layers in the sequential (for per-layer masking)
+        self._conv_indices = [
+            i for i, m in enumerate(self.conv1d) if isinstance(m, nn.Conv1d)
+        ]
 
     def forward(self, x: torch.Tensor, mask: torch.Tensor | None = None) -> torch.Tensor:
         x = x.permute(0, 2, 1)  # [B, N, D] → [B, D, N]
         mask_3d: torch.Tensor | None = None
         if mask is not None:
-            mask_3d = mask.unsqueeze(1)
+            mask_3d = mask.unsqueeze(1)  # [B, 1, N]
             x = x.masked_fill(~mask_3d, 0.0)
-        x = self.conv1d(x)
-        if mask_3d is not None:
-            x = x.masked_fill(~mask_3d, 0.0)
+        for i, layer in enumerate(self.conv1d):
+            x = layer(x)
+            if mask_3d is not None and i in self._conv_indices:
+                x = x.masked_fill(~mask_3d, 0.0)
         return x.permute(0, 2, 1)
 
 

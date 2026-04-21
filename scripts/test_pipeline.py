@@ -243,10 +243,6 @@ def step_model_forward(cfg: dict) -> F5TTS | None:
         tiny_cfg["model"]["ff_mult"] = 4
         tiny_cfg["model"]["conv_layers"] = 2
         tiny_cfg["model"]["text_dim"] = 64
-        tiny_cfg["model"]["vocos_dim"] = 64
-        tiny_cfg["model"]["vocos_layers"] = 2
-        tiny_cfg["model"]["vocos_intermediate"] = 128
-
         model = F5TTS.from_config(tiny_cfg)
         n_params = sum(p.numel() for p in model.parameters())
         _pass(f"F5TTS instantiated — {n_params:,} params")

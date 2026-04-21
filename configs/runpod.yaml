@@ -46,7 +46,4 @@ model:
   text_dim: 512
   conv_layers: 4
   p_dropout: 0.1
-  vocos_dim: 512
-  vocos_layers: 8
-  vocos_intermediate: 1536
 

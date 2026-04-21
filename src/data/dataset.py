@@ -127,7 +127,8 @@ class TTSDataset(Dataset):
         raw_ids = self.text_cleaner.text_to_sequence(text, lang=lang)
         if len(raw_ids) > T:
             raw_ids = raw_ids[:T]
-        text_ids = raw_ids + [0] * (T - len(raw_ids))
+        # Pad with -1: after TextEmbedding's +1 shift, -1→0 triggers text_mask
+        text_ids = raw_ids + [-1] * (T - len(raw_ids))
 
         return {
             "mel": mel,
@@ -222,7 +223,8 @@ class TTSCollator:
         n_mels = mels[0].shape[0]
 
         mels_padded = torch.zeros(len(batch), n_mels, max_T)
-        text_ids_padded = torch.zeros(len(batch), max_T, dtype=torch.long)
+        # Use -1 as filler: after TextEmbedding's +1 shift, -1→0 = filler token
+        text_ids_padded = torch.full((len(batch), max_T), -1, dtype=torch.long)
         masks_padded = torch.zeros(len(batch), max_T, dtype=torch.bool)
 
         for i, (mel, tids, msk) in enumerate(zip(mels, text_ids_list, masks, strict=True)):

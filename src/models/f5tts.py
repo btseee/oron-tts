@@ -1,4 +1,4 @@
-"""F5TTS: top-level model combining DiT + CFM + Vocos vocoder.
+"""F5TTS: top-level model combining DiT + CFM + pretrained Vocos vocoder.
 
 Usage (inference):
     model = F5TTS.from_config(config)
@@ -21,31 +21,18 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from src.models.decoder import VocosDecoder
 from src.models.dit import DiT
 from src.models.flow import CFM
 from src.utils.audio import AudioProcessor
 from src.utils.text_cleaner import TextCleaner
 
 
-def _load_pretrained_vocos(device: str = "cpu") -> Any:
-    """Load pretrained Vocos vocoder (24kHz, 100 mel bins).
+def _pad_text_to_len(token_ids: list[int], target_len: int, pad_id: int = -1) -> list[int]:
+    """Pad or truncate a token list to exactly target_len.
 
-    Falls back to the custom (untrained) VocosDecoder if the vocos package
-    is not installed.
+    Uses -1 as the default filler so that after TextEmbedding's +1 shift,
+    padding positions land at embedding index 0 (= the filler/mask row).
     """
-    try:
-        from vocos import Vocos
-
-        vocos = Vocos.from_pretrained("charactr/vocos-mel-24khz")
-        vocos.eval()
-        return vocos.to(device)
-    except ImportError:
-        return None
-
-
-def _pad_text_to_len(token_ids: list[int], target_len: int, pad_id: int = 0) -> list[int]:
-    """Zero-pad (or truncate) a token list to exactly target_len."""
     if len(token_ids) >= target_len:
         return token_ids[:target_len]
     return token_ids + [pad_id] * (target_len - len(token_ids))
@@ -70,10 +57,6 @@ class F5TTS(nn.Module):
         # CFM
         audio_drop_prob: float = 0.3,
         cond_drop_prob: float = 0.2,
-        # Vocoder
-        vocos_dim: int = 512,
-        vocos_layers: int = 8,
-        vocos_intermediate: int = 1536,
         # Audio
         sample_rate: int = 24000,
         n_fft: int = 1024,
@@ -89,6 +72,7 @@ class F5TTS(nn.Module):
         self._text_cleaner = TextCleaner()
         self._audio_processor = AudioProcessor(
             sample_rate=sample_rate,
+            n_fft=n_fft,
             hop_length=hop_length,
             n_mels=n_mels,
         )
@@ -113,16 +97,6 @@ class F5TTS(nn.Module):
             n_mels=n_mels,
         )
 
-        self.vocoder = VocosDecoder(
-            n_mels=n_mels,
-            dim=vocos_dim,
-            n_layers=vocos_layers,
-            intermediate_dim=vocos_intermediate,
-            n_fft=n_fft,
-            hop_length=hop_length,
-            sample_rate=sample_rate,
-        )
-
     def forward(
         self,
         mel: torch.Tensor,
@@ -140,6 +114,20 @@ class F5TTS(nn.Module):
         if lens is not None and lens.dtype == torch.bool and lens.ndim == 2:
             lens = lens.sum(dim=-1).long()
         return self.cfm(mel, text_ids, lens=lens)
+
+    def _get_vocos(self, device: str) -> Any:
+        """Lazily load and cache the pretrained Vocos vocoder.
+
+        Stored outside the nn.Module parameter tree so it is never trained
+        and never saved in checkpoints.
+        """
+        from vocos import Vocos  # required: pip install vocos
+
+        vocos: Any = self.__dict__.get("_vocos_cache")
+        if vocos is None:
+            vocos = Vocos.from_pretrained("charactr/vocos-mel-24khz").eval()
+            object.__setattr__(self, "_vocos_cache", vocos)
+        return vocos.to(device)
 
     @torch.inference_mode()
     def synthesize(
@@ -207,7 +195,7 @@ class F5TTS(nn.Module):
         T_total = ref_len + target_len
 
         # ── Build full text_ids padded to T_total ─────────────────────────────
-        full_ids = _pad_text_to_len(ref_ids + target_ids, T_total, pad_id=0)
+        full_ids = _pad_text_to_len(ref_ids + target_ids, T_total)
         text_ids_t = torch.tensor([full_ids], dtype=torch.long, device=device)
 
         # ── Build conditioning mel [1, T_total, n_mels] ──────────────────────
@@ -235,13 +223,7 @@ class F5TTS(nn.Module):
         gen_mel = gen_mel[:, ref_len:, :].transpose(1, 2)  # [1, n_mels, target_len]
 
         # ── Decode mel → waveform ─────────────────────────────────────────────
-        # Use pretrained Vocos if available (much better than untrained custom decoder)
-        pretrained_vocos = _load_pretrained_vocos(device)
-        if pretrained_vocos is not None:
-            with torch.inference_mode():
-                waveform = pretrained_vocos.decode(gen_mel).squeeze(0).cpu()
-        else:
-            waveform = self.vocoder(gen_mel).squeeze(0).cpu()
+        waveform = self._get_vocos(device).decode(gen_mel).squeeze(0).cpu()
         return waveform
 
     @classmethod
@@ -263,9 +245,6 @@ class F5TTS(nn.Module):
             p_dropout=model_cfg.get("p_dropout", 0.1),
             audio_drop_prob=model_cfg.get("audio_drop_prob", 0.3),
             cond_drop_prob=model_cfg.get("cond_drop_prob", 0.2),
-            vocos_dim=model_cfg.get("vocos_dim", 512),
-            vocos_layers=model_cfg.get("vocos_layers", 8),
-            vocos_intermediate=model_cfg.get("vocos_intermediate", 1536),
             sample_rate=audio_cfg.get("sample_rate", 24000),
             n_fft=audio_cfg.get("n_fft", 1024),
             hop_length=audio_cfg.get("hop_length", 256),
