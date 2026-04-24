@@ -10,7 +10,8 @@ Use this skill when the user asks about training, fine-tuning, resuming, or conf
 ## Architecture constraints
 
 - **Loss**: Flow matching MSE on velocity field, computed inline in `CFM.forward()` — no separate loss function.
-- **Infilling training**: random 70–100% span masking. Unmasked portion is the conditioning signal.
+- **Infilling training**: random span masking, fraction range from `model.frac_lengths_mask` (code default `[0.7, 1.0]`; all configs use `[0.3, 0.9]` for small-dataset training). Unmasked portion is the conditioning signal.
+- **Text token stretching**: text tokens are linearly stretched to mel length (`_stretch_text_to_len`) — every mel frame receives the text token at approximately its temporal position. This is done in both `dataset.py` (training) and `f5tts.py` (inference). Never use padding (filler -1) for in-sample text — it makes text conditioning ineffective.
 - **CFG dropout**: `audio_drop_prob=0.1`, `cond_drop_prob=0.05` in all three YAML configs (CFM code defaults are higher; configs override for the small ~3,846 sample dataset).
 - **Optimizer**: AdamW (`weight_decay=0.01`). **Scheduler**: `SequentialLR` — LinearLR warmup (`start_factor=1e-4`) for `warmup_steps`, then CosineAnnealingLR decaying to `eta_min=1e-6`.
 - **EMA**: maintained on rank-0 only via `torch_ema.ExponentialMovingAverage`.
@@ -83,6 +84,7 @@ model:
   p_dropout: 0.1
   audio_drop_prob: 0.1   # CFG audio dropout
   cond_drop_prob: 0.05   # CFG conditioning dropout
+  frac_lengths_mask: [0.3, 0.9]  # infilling mask range; [0.7, 1.0] default, lower for small datasets
 ```
 
 ### Config profiles
@@ -163,9 +165,19 @@ info = cm.load_pretrained_f5tts(model, "F5TTS_Base.safetensors", strict=False)
 
 ## Monitoring
 
-Console logging only (no TensorBoard integration currently).
+`F5Trainer` writes to TensorBoard (`log_dir`, default `output/logs`):
+- Step-level: `train/loss`, `train/lr`, `train/grad_norm`, `train/batch_size`, `train/mel_frames`, `system/vram_gb`
+- Epoch-level: `epoch/train_loss`, `epoch/val_loss`, `epoch/lr`
+- Every `audio_sample_interval` epochs (config key, default 10): synthesises diagnostic sentences using EMA weights and logs `audio/mn/{tag}` + `mel/mn/{tag}` images
 
-`F5Trainer` logs per-epoch: avg_loss, val_loss, throughput (samples/s), ETA.
+Add `audio_sample_interval: 5` to config for more frequent audio checks.
+
+Launch TensorBoard:
+```bash
+tensorboard --logdir output/logs
+```
+
+TB logs are uploaded to `tb_logs/` in the HF repo on `--push-to-hub`.
 
 ## RunPod setup
 

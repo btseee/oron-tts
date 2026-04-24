@@ -23,10 +23,12 @@ OronTTS is a non-autoregressive TTS system for Mongolian (Khalkha Cyrillic) and 
 
 ### Training
 - Flow matching loss (MSE on velocity field) is computed inline in `CFM.forward()` — no separate loss function.
-- **Infilling training**: random 70–100% span masking. The unmasked portion is the conditioning signal.
+- **Infilling training**: random span masking, fraction configurable via `model.frac_lengths_mask` (default `[0.7, 1.0]`, set to `[0.3, 0.9]` in all three YAML configs for small-dataset training). The unmasked portion is the conditioning signal.
+- **Text token stretching**: text tokens are linearly stretched to fill the full mel sequence (`_stretch_text_to_len` in both `dataset.py` and `f5tts.py`). Every mel frame receives the text token at approximately its temporal position — **not** padding. This is essential: padding 90%+ of frames with filler embeddings makes text conditioning ineffective.
 - **CFG dropout**: `audio_drop_prob=0.1`, `cond_drop_prob=0.05` (set in all three YAML configs; CFM code defaults are 0.3/0.2 but configs override for small-dataset training).
 - Optimizer: AdamW (`weight_decay=0.01`). Scheduler: `SequentialLR` — LinearLR warmup (`start_factor=1e-4`) for `warmup_steps`, then CosineAnnealingLR decaying to `eta_min=1e-6` over the remaining steps. EMA maintained via `torch_ema`.
 - **AMP**: Auto-detected — bf16 on SM≥8.0 (Ampere+), fp16 on SM<8.0 (Turing/T4), disabled on CPU. GradScaler used only for fp16.
+- **TensorBoard**: `F5Trainer` logs step-level (`train/loss`, `train/lr`, `train/grad_norm`) and epoch-level (`epoch/train_loss`, `epoch/val_loss`) metrics. Audio samples synthesised every `audio_sample_interval` epochs (default 10) and logged as `audio/mn/{tag}` + `mel/mn/{tag}`. TensorBoard logs are uploaded to HuggingFace `tb_logs/` on `--push-to-hub`.
 - **DynamicBatchSampler**: Frame-budget batching — sorts samples by duration, greedily packs batches where `sum(mel_frames) ≤ frames_threshold`. No samples are discarded.
 - **Gradient checkpointing**: Per-DiTBlock, enabled via `gradient_checkpointing: true` in config. Essential for T4/RTX 5070 Ti.
 - **torch.compile**: Compiles only `model.cfm.backbone` (DiT) with `dynamic=True`. Disabled on Colab T4 (`compile: false`). The CFM wrapper has Python branching that prevents compilation.
@@ -109,6 +111,7 @@ All three YAML configs use the same keys. Critical keys:
 - `model.dim`, `model.depth`, `model.heads`, `model.ff_mult`, `model.vocab_size` (must match tokenizer = 65)
 - `model.text_dim`, `model.conv_layers`, `model.p_dropout`
 - `model.audio_drop_prob`, `model.cond_drop_prob` — CFG dropout (set to 0.1/0.05 for small-dataset training)
+- `model.frac_lengths_mask` — infilling mask fraction range, e.g. `[0.3, 0.9]` (default `[0.7, 1.0]`; lower values leave more audio context visible, helping small-dataset text conditioning)
 - `sample_rate` (must be 24000), `n_mels` (must be 100) — top-level YAML keys, not nested
 - `batch_size`, `warmup_steps`, `num_epochs`, `learning_rate` — top-level YAML keys, not nested under `training`
 - `batch_size_type` (`"frame"` for DynamicBatchSampler, `"sample"` for fixed batch size)

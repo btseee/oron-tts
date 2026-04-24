@@ -99,3 +99,13 @@ If you extend the vocabulary, you **must**:
 | `kz` | Kazakh Cyrillic | + ә ғ қ ң ұ һ і |
 
 Pass `lang` to both `CyrillicTokenizer.encode()` and `TextCleaner.text_to_sequence()`.
+
+## How token IDs are used in the model
+
+After encoding, `TTSDataset.__getitem__` calls `_stretch_text_to_len(ids, T)` to map the `N`
+tokens across `T` mel frames. Frame `i` gets `ids[int(i * N / T)]`. This means every mel frame
+receives a real text token — not a filler placeholder.
+
+`TTSCollator` pads `text_ids` with `-1` only at the **batch level** to align sequences to
+the max-T within a batch. The `TextEmbedding` layer maps `-1` (after `+1` offset → 0) to its
+zero-embedding "filler" row, which is masked out and does not affect the attended output.

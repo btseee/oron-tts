@@ -18,6 +18,22 @@ from src.utils.text_cleaner import TextCleaner
 _logger = logging.getLogger(__name__)
 
 
+def _stretch_text_to_len(token_ids: list[int], target_len: int) -> list[int]:
+    """Linearly stretch token_ids to target_len by repetition.
+
+    Each mel frame receives the text token at approximately its temporal
+    position. This is the standard F5-TTS approach: every frame has a
+    real text token rather than 90%+ filler, enabling the model to learn
+    text-audio correspondence from local signals.
+    """
+    n = len(token_ids)
+    if n == 0:
+        return [-1] * target_len
+    if n >= target_len:
+        return token_ids[:target_len]
+    return [token_ids[int(i * n / target_len)] for i in range(target_len)]
+
+
 def _decode_audio_bytes(raw_bytes: bytes, target_sr: int) -> np.ndarray:
     """Decode raw audio bytes to float32 numpy array at target sample rate."""
     audio_array, sr = sf.read(io.BytesIO(raw_bytes))
@@ -125,10 +141,9 @@ class TTSDataset(Dataset):
         T = mel.shape[-1]
 
         raw_ids = self.text_cleaner.text_to_sequence(text, lang=lang)
-        if len(raw_ids) > T:
-            raw_ids = raw_ids[:T]
-        # Pad with -1: after TextEmbedding's +1 shift, -1→0 triggers text_mask
-        text_ids = raw_ids + [-1] * (T - len(raw_ids))
+        # Stretch text tokens to match mel length: every frame gets the
+        # text token at its approximate temporal position (F5-TTS approach).
+        text_ids = _stretch_text_to_len(raw_ids, T)
 
         return {
             "mel": mel,

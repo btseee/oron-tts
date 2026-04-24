@@ -122,12 +122,16 @@ Text cleaning pipeline (in `TextCleaner.clean()`):
 ### Loss
 Flow matching MSE on velocity field — computed inline in `CFM.forward()`. No separate loss file.
 
+### Text token stretching
+Text tokens are **stretched** (not padded) to match the mel sequence length. `_stretch_text_to_len(ids, T)` maps every mel frame at position `i` to text token `ids[int(i * N / T)]`. Every frame gets a real token; no frame ever receives a filler embedding. This is critical for text conditioning to work with small datasets.
+
 ### Infilling
-Random 70–100% span mask per sample. Unmasked frames = conditioning signal.
+Random span mask per sample, fraction sampled from `frac_lengths_mask` range (default `[0.7, 1.0]`; all configs set `[0.3, 0.9]` for small-dataset training). Unmasked frames = conditioning signal.
 
 ### CFG
 Drops audio/cond independently during training.
 - Config values: `audio_drop_prob: 0.1`, `cond_drop_prob: 0.05` (lower than CFM code defaults 0.3/0.2).
+- `frac_lengths_mask: [0.3, 0.9]` — all three YAML configs use this instead of the code default `[0.7, 1.0]`.
 
 ### Optimizer & scheduler
 ```
@@ -137,6 +141,9 @@ SequentialLR:
   [warmup_steps, T_total) → CosineAnnealingLR(eta_min=1e-6)
 ```
 `T_total` estimated at trainer init from `num_epochs × steps_per_epoch`.
+
+### Monitoring
+`F5Trainer` logs to TensorBoard (step-level: `train/loss`, `train/lr`, `train/grad_norm`; epoch-level: `epoch/train_loss`, `epoch/val_loss`). Every `audio_sample_interval` epochs (default 10), synthesises diagnostic sentences with EMA weights and logs audio waveforms (`audio/mn/...`) and mel images (`mel/mn/...`). TensorBoard logs are uploaded to `tb_logs/` in the HuggingFace repo on `--push-to-hub`.
 
 ### AMP
 Auto-detected at runtime:
@@ -245,6 +252,7 @@ model:
   p_dropout: 0.1
   audio_drop_prob: 0.1
   cond_drop_prob: 0.05
+  frac_lengths_mask: [0.3, 0.9]  # default [0.7, 1.0]; lower = more context visible during training
 ```
 
 ### Config profiles
@@ -267,7 +275,7 @@ Key methods:
 - `save(...)` — standard checkpoint
 - `load(...)` — returns `{step, loss, ema_state_dict}`
 - `load_pretrained_f5tts(model, path, device, strict)` — loads official F5-TTS `.safetensors` with key remapping
-- `push_to_hub(repo_id, token, private)` / `pull_from_hub(repo_id, filename, token)`
+- `push_to_hub(repo_id, token, private, log_dir=None)` / `pull_from_hub(repo_id, filename, token)` — when `log_dir` is provided, TB logs are uploaded to `tb_logs/` in the HF repo`
 
 ---
 
@@ -288,7 +296,8 @@ Key methods:
 - Class-level `nn.Buffer` annotations required (e.g. `inv_freq: torch.Tensor`) so Pyright resolves correctly.
 - Linter: Ruff (`line-length=100`, `target-version=py312`). No Black.
 - Imports: isort (`profile=black`, `line_length=100`).
-- `pad_id=-1` for text padding in `TTSDataset`/`TTSCollator` (not 0 — PAD token is a valid vocab ID).
+- `pad_id=-1` for **batch-level** padding in `TTSCollator` (batch padding to max-T; not 0 because PAD token is a valid vocab ID).
+- Text tokens within a sample are **stretched** to mel length via `_stretch_text_to_len`, not padded with -1.
 
 ---
 

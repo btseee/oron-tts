@@ -25,7 +25,15 @@ Use this skill when the user asks about preparing, processing, or cleaning audio
 - Minimum audio length after trimming: 1024 samples (~43 ms)
 - Duration gate in `clean_local_cv.py`: 0.5 s – 15.0 s
 
-## metadata.json format
+## Text IDs in TTSDataset
+
+`TTSDataset.__getitem__` encodes text via `TextCleaner.text_to_sequence(text, lang)` and then
+**stretches** the token list to exactly `T` (the mel frame count) using `_stretch_text_to_len`.
+Every mel frame gets the text token at approximately its temporal position — not filler.
+
+The collator (`TTSCollator`) pads `text_ids` with `-1` only when aligning samples within a
+**batch** to the max-T of that batch. Those batch-level filler frames are outside the valid
+sequence (covered by `mask=False`) and are never seen by the loss function.
 
 Each entry produced by `prepare.py` or `clean_local_cv.py`:
 

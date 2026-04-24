@@ -100,6 +100,28 @@ python scripts/infer.py \
 > **Note**: `cfg_strength` (default 2.0) and `sway_sampling_coef` (default -1.0) are available in the Python API via `F5TTS.synthesize()` but not yet exposed as CLI args.
 > If output sounds noisy or over-processed, try reducing `cfg_strength` to 1.0–1.5.
 
+## Text stretching in synthesize()
+
+`F5TTS.synthesize()` calls `_stretch_text_to_len` to map text tokens across mel frames:
+
+- If `ref_audio_path` is used, ref tokens are stretched to cover `ref_len` frames and target
+  tokens are stretched to cover the remaining `target_len` frames.
+- If no reference is used, target tokens are stretched across the full `T_total` frames.
+
+Never pass token lists with trailing `-1` filler to `synthesize()` — all stretching is internal.
+
+## F5TTS constructor
+
+```python
+F5TTS(
+    ...
+    frac_lengths_mask: tuple[float, float] = (0.7, 1.0),  # override via config
+)
+```
+
+`frac_lengths_mask` is passed to `CFM` and controls the infilling mask fraction at training time.
+At inference it has no effect.
+
 ## Vocoder
 
 `F5TTS` does not train a vocoder. On first call to `synthesize()`, `_get_vocos(device)` lazy-loads

@@ -20,7 +20,7 @@ ema_decay: 0.9999
 max_grad_norm: 1.0
 grad_accumulation_steps: 2
 batch_size_type: frame
-frames_threshold: 60000
+frames_threshold: 12000
 max_samples: 0
 num_workers: 2
 pin_memory: true
@@ -47,3 +47,6 @@ model:
   # CFG dropout — reduce from defaults (0.3/0.2) for small-dataset training
   audio_drop_prob: 0.1
   cond_drop_prob: 0.05
+  # Masking fraction — lower than default (0.7-1.0) for small datasets;
+  # keeps more audio context visible so the model learns text more easily
+  frac_lengths_mask: [0.3, 0.9]

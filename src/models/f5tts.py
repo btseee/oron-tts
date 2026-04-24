@@ -27,15 +27,20 @@ from src.utils.audio import AudioProcessor
 from src.utils.text_cleaner import TextCleaner
 
 
-def _pad_text_to_len(token_ids: list[int], target_len: int, pad_id: int = -1) -> list[int]:
-    """Pad or truncate a token list to exactly target_len.
+def _stretch_text_to_len(token_ids: list[int], target_len: int) -> list[int]:
+    """Linearly stretch token_ids to target_len by repetition.
 
-    Uses -1 as the default filler so that after TextEmbedding's +1 shift,
-    padding positions land at embedding index 0 (= the filler/mask row).
+    Each mel frame receives the text token at approximately its temporal
+    position (token j appears at frames j*T/N through (j+1)*T/N). This
+    gives every frame a meaningful text signal instead of leaving 90%+
+    of positions with a filler embedding — the standard F5-TTS approach.
     """
-    if len(token_ids) >= target_len:
+    n = len(token_ids)
+    if n == 0:
+        return [-1] * target_len
+    if n >= target_len:
         return token_ids[:target_len]
-    return token_ids + [pad_id] * (target_len - len(token_ids))
+    return [token_ids[int(i * n / target_len)] for i in range(target_len)]
 
 
 class F5TTS(nn.Module):
@@ -57,6 +62,7 @@ class F5TTS(nn.Module):
         # CFM
         audio_drop_prob: float = 0.3,
         cond_drop_prob: float = 0.2,
+        frac_lengths_mask: tuple[float, float] = (0.7, 1.0),
         # Audio
         sample_rate: int = 24000,
         n_fft: int = 1024,
@@ -94,6 +100,7 @@ class F5TTS(nn.Module):
             backbone,
             audio_drop_prob=audio_drop_prob,
             cond_drop_prob=cond_drop_prob,
+            frac_lengths_mask=frac_lengths_mask,
             n_mels=n_mels,
         )
 
@@ -194,8 +201,15 @@ class F5TTS(nn.Module):
 
         T_total = ref_len + target_len
 
-        # ── Build full text_ids padded to T_total ─────────────────────────────
-        full_ids = _pad_text_to_len(ref_ids + target_ids, T_total)
+        # ── Build full text_ids stretched to T_total ──────────────────────────────
+        # Each mel frame must have a real text token (not filler) for the model
+        # to learn text-audio correspondence — the standard F5-TTS approach.
+        if ref_len > 0:
+            ref_stretched = _stretch_text_to_len(ref_ids, ref_len)
+            target_stretched = _stretch_text_to_len(target_ids, target_len)
+            full_ids = ref_stretched + target_stretched
+        else:
+            full_ids = _stretch_text_to_len(target_ids, T_total)
         text_ids_t = torch.tensor([full_ids], dtype=torch.long, device=device)
 
         # ── Build conditioning mel [1, T_total, n_mels] ──────────────────────
@@ -232,6 +246,7 @@ class F5TTS(nn.Module):
         audio_cfg = config
         dim = model_cfg.get("dim", 1024)
         heads = model_cfg.get("heads", 16)
+        frac_lengths_mask_cfg = model_cfg.get("frac_lengths_mask", [0.7, 1.0])
         return cls(
             n_mels=audio_cfg.get("n_mels", 100),
             vocab_size=model_cfg.get("vocab_size", 65),
@@ -245,6 +260,7 @@ class F5TTS(nn.Module):
             p_dropout=model_cfg.get("p_dropout", 0.1),
             audio_drop_prob=model_cfg.get("audio_drop_prob", 0.3),
             cond_drop_prob=model_cfg.get("cond_drop_prob", 0.2),
+            frac_lengths_mask=tuple(frac_lengths_mask_cfg),
             sample_rate=audio_cfg.get("sample_rate", 24000),
             n_fft=audio_cfg.get("n_fft", 1024),
             hop_length=audio_cfg.get("hop_length", 256),
