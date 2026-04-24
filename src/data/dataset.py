@@ -141,8 +141,7 @@ class TTSDataset(Dataset):
         T = mel.shape[-1]
 
         raw_ids = self.text_cleaner.text_to_sequence(text, lang=lang)
-        # Stretch text tokens to match mel length: every frame gets the
-        # text token at its approximate temporal position (F5-TTS approach).
+        
         text_ids = _stretch_text_to_len(raw_ids, T)
 
         return {
@@ -169,8 +168,6 @@ class TTSDataset(Dataset):
         langs: list[str] = []
         durations: list[float] = []
 
-        # decode=False keeps audio as raw bytes — small in memory, fast to pickle
-        # across DataLoader workers. Each sample is decoded lazily in __getitem__.
         hf_dataset = hf_dataset.cast_column(audio_column, Audio(decode=False))
 
         if text_column is None:

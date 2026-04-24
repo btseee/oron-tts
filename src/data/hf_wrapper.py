@@ -34,9 +34,6 @@ class HFDatasetWrapper:
 
         self._dataset = load_dataset(**kwargs)
 
-        # NOTE: audio decoding is deferred to TTSDataset.from_hf_dataset()
-        # which uses Audio(decode=False) for lazy, pickle-friendly loading.
-
         if self._dataset is None:
             raise ValueError(f"Failed to load dataset: {self.dataset_name}")
 

@@ -44,7 +44,6 @@ MN_TENS: Final[dict[int, tuple[str, str]]] = {
 
 MN_HUNDRED: Final[tuple[str, str]] = ("зуу", "зуун")
 
-# (base form within compounds, attributive when terminal before noun)
 MN_LARGE: Final[dict[int, tuple[str, str]]] = {
     1_000: ("мянга", "мянган"),
     1_000_000: ("сая", "сая"),

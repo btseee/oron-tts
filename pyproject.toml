@@ -38,6 +38,7 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "torch-ema>=0.3.0",
     "vocos>=0.1.0",          # pretrained mel-to-waveform vocoder (24kHz)
+    "deepfilternet>=0.5.0", 
 ]
 
 [project.optional-dependencies]
