@@ -126,12 +126,15 @@ Flow matching MSE on velocity field — computed inline in `CFM.forward()`. No s
 Text tokens are **stretched** (not padded) to match the mel sequence length. `_stretch_text_to_len(ids, T)` maps every mel frame at position `i` to text token `ids[int(i * N / T)]`. Every frame gets a real token; no frame ever receives a filler embedding. This is critical for text conditioning to work with small datasets.
 
 ### Infilling
-Random span mask per sample, fraction sampled from `frac_lengths_mask` range (default `[0.7, 1.0]`; all configs set `[0.3, 0.9]` for small-dataset training). Unmasked frames = conditioning signal.
+Random span mask per sample, fraction sampled from `frac_lengths_mask` range (paper default `[0.7, 1.0]`, used by all three configs). Unmasked frames = conditioning signal.
 
 ### CFG
 Drops audio/cond independently during training.
-- Config values: `audio_drop_prob: 0.1`, `cond_drop_prob: 0.05` (lower than CFM code defaults 0.3/0.2).
-- `frac_lengths_mask: [0.3, 0.9]` — all three YAML configs use this instead of the code default `[0.7, 1.0]`.
+- Config values: `audio_drop_prob: 0.3`, `cond_drop_prob: 0.2` — paper defaults. High `audio_drop_prob` is required so the model is well-trained on pure-noise conditioning, which is what ref-free synthesis hits at inference time.
+- `frac_lengths_mask: [0.7, 1.0]` — paper default; all three YAML configs match.
+
+### Validation determinism
+`CFM.forward` switches to fixed `t=0.5`, centred mid-fraction span, deterministic noise, and no CFG dropout when `self.training is False`. `val_loss` is therefore comparable across epochs and `f5tts_best.pt` reflects a real signal.
 
 ### Optimizer & scheduler
 ```
@@ -173,7 +176,7 @@ EMA weights are used for inference, saved separately in checkpoints.
 
 `F5TTS.synthesize()` — two modes:
 
-**Voice cloning** (pass `ref_audio_path` + `ref_text`):
+**Voice cloning** (pass `ref_audio_path` + `ref_text`) — recommended:
 ```python
 audio = model.synthesize(
     text="Сайн байна уу", lang="mn",
@@ -181,15 +184,19 @@ audio = model.synthesize(
     n_steps=32, cfg_strength=2.0, sway_sampling_coef=-1.0,
 )
 ```
+Duration is set from the ref-text/target-text token-count ratio (paper-style).
 
-**Attribute tokens** (no reference audio):
+**Ref-free** (omit reference):
 ```python
 audio = model.synthesize(
     text="Сайн байна уу", lang="mn",
-    attr_tokens=["[FEMALE]", "[YOUNG]"],
+    speed=1.0,        # >1 faster, <1 slower
     n_steps=32,
 )
 ```
+Conditioning is zero; duration falls back to `chars * 13 / speed` frames. This is the OOD regime — expect lower fidelity than ref-based.
+
+> Attribute tokens (`[FEMALE]` etc.) exist in the tokenizer vocabulary but are **not** wired into the inference path — the model has no signal that ties them to acoustic identity, so passing them at inference would inject untrained noise.
 
 ### Vocoder
 `_get_vocos(device)` lazy-loads `Vocos.from_pretrained("charactr/vocos-mel-24khz")` on the first
@@ -207,19 +214,18 @@ All three YAMLs share the same key schema. No keys nested under `training:` — 
 top-level except `model:`.
 
 ```yaml
-# Audio (fixed)
+# Audio (fixed — do not change; matches pretrained Vocos)
 sample_rate: 24000
 n_mels: 100
 n_fft: 1024
 hop_length: 256
 win_length: 1024
-fmin: 0.0
-fmax: 8000.0
+# fmin/fmax are NOT configurable; torchaudio defaults (0, sr/2) are used.
 
 # Training
 batch_size: 16
 batch_size_type: frame        # "frame" = DynamicBatchSampler, "sample" = fixed
-frames_threshold: 3000        # 38400 for runpod, 12000 for colab
+frames_threshold: 3000        # 38400 for runpod, 48000 for colab
 max_samples: 8
 learning_rate: 1.0e-4
 betas: [0.9, 0.999]
@@ -229,7 +235,8 @@ ema_decay: 0.9999
 max_grad_norm: 1.0
 grad_accumulation_steps: 1
 log_interval: 100
-save_interval: 5
+save_interval: 5              # epochs between rotating checkpoints
+max_checkpoints: 5            # keep this many .pt files (+ f5tts_best.pt)
 use_tqdm: true
 num_workers: 6
 pin_memory: true
@@ -250,18 +257,18 @@ model:
   text_dim: 256       # 512 for runpod
   conv_layers: 4
   p_dropout: 0.1
-  audio_drop_prob: 0.1
-  cond_drop_prob: 0.05
-  frac_lengths_mask: [0.3, 0.9]  # default [0.7, 1.0]; lower = more context visible during training
+  audio_drop_prob: 0.3                # paper default
+  cond_drop_prob: 0.2                 # paper default
+  frac_lengths_mask: [0.7, 1.0]       # paper default
 ```
 
 ### Config profiles
 
-| Config | GPU | `model.dim` | `model.depth` | `frames_threshold` | `compile` |
-|--------|-----|-------------|---------------|-------------------|-----------|
-| `local.yaml` | RTX 5070 Ti | 512 | 12 | 3 000 | true |
-| `runpod.yaml` | A100/L40 | 1 024 | 22 | 38 400 | true |
-| `colab.yaml` | T4 (15 GB) | 512 | 12 | 12 000 | false |
+| Config | GPU | `model.dim` | `model.depth` | `frames_threshold` | `max_checkpoints` | `compile` |
+|--------|-----|-------------|---------------|--------------------|-------------------|-----------|
+| `local.yaml` | RTX 5070 Ti | 512 | 12 | 3 000 | 5 | true |
+| `runpod.yaml` | A100/L40 | 1 024 | 22 | 38 400 | 5 | true |
+| `colab.yaml` | T4 (15 GB) | 512 | 12 | 48 000 | 2 | false |
 
 ---
 
@@ -337,12 +344,14 @@ python scripts/train.py --config configs/runpod.yaml --dataset btsee/mbspeech_mn
 python scripts/train.py --config configs/runpod.yaml --dataset btsee/mbspeech_mn \
     --pretrain-ckpt F5TTS_Base.safetensors
 
-# Inference
-python scripts/infer.py --text "Сайн байна уу" --lang mn \
-    --attr-tokens "[FEMALE],[YOUNG]" --output out.wav
-
-python scripts/infer.py --text "Сайн байна уу" --lang mn \
+# Inference — voice cloning (recommended)
+python scripts/infer.py --checkpoint output/checkpoints/f5tts_best.pt \
+    --text "Сайн байна уу" --lang mn \
     --ref-audio ref.wav --ref-text "..." --output out.wav
+
+# Inference — ref-free
+python scripts/infer.py --checkpoint output/checkpoints/f5tts_best.pt \
+    --text "Сайн байна уу" --lang mn --speed 1.0 --output out.wav
 ```
 
 ---

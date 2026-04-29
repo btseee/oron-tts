@@ -23,9 +23,10 @@ OronTTS is a non-autoregressive TTS system for Mongolian (Khalkha Cyrillic) and 
 
 ### Training
 - Flow matching loss (MSE on velocity field) is computed inline in `CFM.forward()` — no separate loss function.
-- **Infilling training**: random span masking, fraction configurable via `model.frac_lengths_mask` (default `[0.7, 1.0]`, set to `[0.3, 0.9]` in all three YAML configs for small-dataset training). The unmasked portion is the conditioning signal.
+- **Infilling training**: random span masking, fraction configurable via `model.frac_lengths_mask` (paper default `[0.7, 1.0]`, also used in all three YAML configs). The unmasked portion is the conditioning signal.
 - **Text token stretching**: text tokens are linearly stretched to fill the full mel sequence (`_stretch_text_to_len` in both `dataset.py` and `f5tts.py`). Every mel frame receives the text token at approximately its temporal position — **not** padding. This is essential: padding 90%+ of frames with filler embeddings makes text conditioning ineffective.
-- **CFG dropout**: `audio_drop_prob=0.1`, `cond_drop_prob=0.05` (set in all three YAML configs; CFM code defaults are 0.3/0.2 but configs override for small-dataset training).
+- **CFG dropout**: `audio_drop_prob=0.3`, `cond_drop_prob=0.2` (paper defaults; configs match). High `audio_drop_prob` is required so the model is well-trained on pure-noise conditioning, which is what ref-free synthesis hits at inference time.
+- **Validation determinism**: `CFM.forward` switches to a fixed `t=0.5`, centred mid-fraction span, deterministic noise, and no CFG dropout when `self.training is False`. This makes `val_loss` comparable across epochs and prevents “best checkpoint” from being picked by RNG luck.
 - Optimizer: AdamW (`weight_decay=0.01`). Scheduler: `SequentialLR` — LinearLR warmup (`start_factor=1e-4`) for `warmup_steps`, then CosineAnnealingLR decaying to `eta_min=1e-6` over the remaining steps. EMA maintained via `torch_ema`.
 - **AMP**: Auto-detected — bf16 on SM≥8.0 (Ampere+), fp16 on SM<8.0 (Turing/T4), disabled on CPU. GradScaler used only for fp16.
 - **TensorBoard**: `F5Trainer` logs step-level (`train/loss`, `train/lr`, `train/grad_norm`) and epoch-level (`epoch/train_loss`, `epoch/val_loss`) metrics. Audio samples synthesised every `audio_sample_interval` epochs (default 10) and logged as `audio/mn/{tag}` + `mel/mn/{tag}`. TensorBoard logs are uploaded to HuggingFace `tb_logs/` on `--push-to-hub`.
@@ -35,9 +36,9 @@ OronTTS is a non-autoregressive TTS system for Mongolian (Khalkha Cyrillic) and 
 - Trainer class: `F5Trainer` (`src/training/trainer.py`).
 
 ### Inference modes
-1. **Voice cloning** — pass `ref_audio_path` to `F5TTS.synthesize()`, uses reference mel as conditioning.
-2. **Attribute tokens** — pass `attr_tokens` list (e.g. `["[FEMALE]", "[YOUNG]"]`), embedded as prefix.
-3. **Inference params**: `cfg_strength` (classifier-free guidance, default 2.0), `sway_sampling_coef` (sway sampling, default -1.0), `n_steps` (ODE steps, default 32).
+1. **Voice cloning** — pass `ref_audio_path` and `ref_text` to `F5TTS.synthesize()`; the reference mel + transcript are used as conditioning and to set duration via the token-count ratio.
+2. **Ref-free** — omit `ref_audio_path`. Conditioning is zero, duration is estimated from char count and `speed` (default 1.0; use `--speed` on the CLI). This is the OOD regime; expect lower fidelity than ref-based.
+3. **Inference params**: `cfg_strength` (classifier-free guidance, default 2.0), `sway_sampling_coef` (sway sampling, default -1.0), `n_steps` (ODE steps, default 32), `speed` (rate multiplier, default 1.0).
 4. **Vocoder**: `F5TTS._get_vocos(device)` lazy-loads `Vocos.from_pretrained("charactr/vocos-mel-24khz")` on first call and caches it outside the `nn.Module` parameter tree. It is never saved in checkpoints.
 
 ## Tokenizer
@@ -61,7 +62,8 @@ text = tokenizer.decode(ids)
 ## Audio
 
 - **Sample rate:** 24 000 Hz (all defaults must be 24000).
-- **Mel bins:** 100. **n_fft:** 1024. **hop_length:** 256. **win_length:** 1024. **fmin:** 0. **fmax:** 8000.
+- **Mel bins:** 100. **n_fft:** 1024. **hop_length:** 256. **win_length:** 1024.
+- `fmin`/`fmax` are **not** configurable — torchaudio defaults `(0, sr/2)` are used to match pretrained Vocos. The YAML keys were removed in April 2026 because they were silently ignored.
 - `AudioProcessor` in `src/utils/audio.py` — `load_audio()`, `mel_spectrogram()`, `normalize_audio()`, `trim_silence()`, `save_audio()`.
 - `AudioProcessor` receives `n_fft` explicitly from `F5TTS.__init__`.
 - Mel format matches pretrained Vocos: `torchaudio.transforms.MelSpectrogram(power=1, center=True)` + `log(clamp(x, 1e-5))`.
@@ -110,8 +112,8 @@ notebooks/
 All three YAML configs use the same keys. Critical keys:
 - `model.dim`, `model.depth`, `model.heads`, `model.ff_mult`, `model.vocab_size` (must match tokenizer = 65)
 - `model.text_dim`, `model.conv_layers`, `model.p_dropout`
-- `model.audio_drop_prob`, `model.cond_drop_prob` — CFG dropout (set to 0.1/0.05 for small-dataset training)
-- `model.frac_lengths_mask` — infilling mask fraction range, e.g. `[0.3, 0.9]` (default `[0.7, 1.0]`; lower values leave more audio context visible, helping small-dataset text conditioning)
+- `model.audio_drop_prob`, `model.cond_drop_prob` — CFG dropout (paper defaults 0.3/0.2; required for ref-free synthesis to be in-distribution)
+- `model.frac_lengths_mask` — infilling mask fraction range (paper default `[0.7, 1.0]`)
 - `sample_rate` (must be 24000), `n_mels` (must be 100) — top-level YAML keys, not nested
 - `batch_size`, `warmup_steps`, `num_epochs`, `learning_rate` — top-level YAML keys, not nested under `training`
 - `batch_size_type` (`"frame"` for DynamicBatchSampler, `"sample"` for fixed batch size)
@@ -155,8 +157,8 @@ All three YAML configs use the same keys. Critical keys:
    - Resume: add `--resume` flag. Fine-tune: add `--pretrain-ckpt F5TTS_Base.safetensors`.
    - Push to HF: add `--push-to-hub --hf-repo btsee/oron-tts`.
 3. **Inference:** `python scripts/infer.py --checkpoint output/checkpoints/f5tts_best.pt --text "Сайн байна уу" --lang mn --output out.wav`
-   - Optionally `--ref-audio ref.wav --ref-text "..."` for voice cloning.
-   - Optionally `--attr-tokens "[FEMALE],[YOUNG]"` for attribute tokens.
+   - Optionally `--ref-audio ref.wav --ref-text "..."` for voice cloning (recommended for best quality).
+   - Optionally `--speed 1.2` to adjust speaking rate (>1 faster, <1 slower).
 
 ## CLI Entry Points
 

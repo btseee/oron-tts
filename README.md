@@ -5,10 +5,10 @@ Non-autoregressive TTS for Mongolian (Khalkha Cyrillic) and Kazakh (Cyrillic) us
 ## Features
 
 - **F5-TTS**: OT-CFM + DiT backbone. No GAN, no duration predictor. Flow matching loss computed inline in CFM.
-- **Voice cloning**: pass a 3–10 s reference WAV at inference time.
-- **Attribute tokens**: `[FEMALE]`, `[MALE]`, `[YOUNG]`, `[MIDDLE]`, `[ELDERLY]`.
+- **Voice cloning**: pass a 3–10 s reference WAV at inference time (recommended for best quality).
+- **Ref-free synthesis**: skip the reference; duration is estimated from char count and `--speed`.
 - **Bilingual**: Mongolian + Kazakh Cyrillic, character-level tokenizer (vocab 65).
-- **Number normalisation**: Mongolian cardinal and ordinal.
+- **Number normalisation**: Mongolian + Kazakh cardinal, ordinal, fraction, percent, currency.
 - **Audio denoising**: DeepFilterNet for preprocessing non-professional recordings.
 
 ## Installation
@@ -107,26 +107,24 @@ Training auto-resumes from the latest checkpoint if one exists.
 ### Inference
 
 ```bash
-# Attribute-token synthesis
+# Voice cloning (recommended)
 python scripts/infer.py \
-    --text "Сайн байна уу" \
-    --lang mn \
-    --attr-tokens "[FEMALE],[YOUNG]" \
-    --output out.wav
-
-# Voice cloning
-python scripts/infer.py \
-    --text "Сайн байна уу" \
-    --lang mn \
+    --checkpoint output/checkpoints/f5tts_best.pt \
+    --text "Сайн байна уу" --lang mn \
     --ref-audio ref.wav \
     --ref-text "Энэ бол жишээ өгүүлбэр" \
     --output out.wav
 
+# Ref-free (lower fidelity; tune --speed if pacing is off)
+python scripts/infer.py \
+    --checkpoint output/checkpoints/f5tts_best.pt \
+    --text "Сайн байна уу" --lang mn \
+    --speed 1.0 --output out.wav
+
 # Kazakh
 python scripts/infer.py \
-    --text "Сәлеметсіз бе" \
-    --lang kz \
-    --attr-tokens "[FEMALE]" \
+    --checkpoint output/checkpoints/f5tts_best.pt \
+    --text "Сәлеметсіз бе" --lang kz \
     --output out_kz.wav
 ```
 
@@ -229,16 +227,19 @@ batch_size: 16
 warmup_steps: 1000
 num_epochs: 500
 ema_decay: 0.9999
-use_tqdm: true          # set false for RunPod container logs
+use_tqdm: true            # set false for RunPod container logs
 log_interval: 100
+save_interval: 5          # save a rotating checkpoint every N epochs
+max_checkpoints: 5        # keep this many rotating .pt files (+ f5tts_best.pt)
 
 model:
-  dim: 512        # 1024 for runpod.yaml
-  depth: 12       # 22 for runpod.yaml
-  heads: 8        # 16 for runpod.yaml
-  vocab_size: 65  # fixed — must match CyrillicTokenizer
-  audio_drop_prob: 0.1   # CFG audio dropout
-  cond_drop_prob: 0.05   # CFG conditioning dropout
+  dim: 512               # 1024 for runpod.yaml
+  depth: 12              # 22 for runpod.yaml
+  heads: 8               # 16 for runpod.yaml
+  vocab_size: 65         # fixed — must match CyrillicTokenizer
+  audio_drop_prob: 0.3   # CFG audio dropout (paper default)
+  cond_drop_prob: 0.2    # CFG conditioning dropout (paper default)
+  frac_lengths_mask: [0.7, 1.0]  # infilling mask range (paper default)
 ```
 
 ## Development

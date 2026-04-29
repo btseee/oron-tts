@@ -49,14 +49,14 @@ def main() -> None:
         help="3-10 s reference WAV for voice cloning (Option A)",
     )
     parser.add_argument("--ref-text", type=str, default=None, help="Transcript of ref-audio clip")
-    parser.add_argument(
-        "--attr-tokens",
-        type=str,
-        default=None,
-        help="Comma-separated attribute tags e.g. '[FEMALE],[YOUNG]' (Option B)",
-    )
     parser.add_argument("--steps", type=int, default=32, help="ODE integration steps")
     parser.add_argument("--duration", type=float, default=None, help="Target duration in seconds")
+    parser.add_argument(
+        "--speed",
+        type=float,
+        default=1.0,
+        help="Speaking-rate multiplier (>1 faster, <1 slower). Ignored if --duration set.",
+    )
     parser.add_argument("--no-ema", action="store_true", help="Use raw weights instead of EMA")
     parser.add_argument("--device", type=str, default=None)
     args = parser.parse_args()
@@ -67,19 +67,15 @@ def main() -> None:
     model = load_model(args.checkpoint, device, use_ema=not args.no_ema)
     print(f"Model loaded. Parameters: {sum(p.numel() for p in model.parameters()):,}")
 
-    attr_tokens = None
-    if args.attr_tokens:
-        attr_tokens = [t.strip() for t in args.attr_tokens.split(",")]
-
     print(f"Synthesising [{args.lang}]: {args.text}")
     waveform = model.synthesize(
         text=args.text,
         lang=args.lang,
-        attr_tokens=attr_tokens,
         ref_audio_path=args.ref_audio,
         ref_text=args.ref_text,
         n_steps=args.steps,
         target_duration_s=args.duration,
+        speed=args.speed,
         device=device,
     )
 

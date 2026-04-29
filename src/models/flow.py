@@ -98,29 +98,49 @@ class CFM(nn.Module):
             lens = torch.full((batch,), seq_len, device=device, dtype=torch.long)
         mask = _lens_to_mask(lens, length=seq_len)
 
-        # Random span mask for infilling (mask 70-100% of frames)
-        frac_lengths = torch.zeros(batch, device=device).float().uniform_(
-            *self.frac_lengths_mask
-        )
-        rand_span_mask = _mask_from_frac_lengths(lens, frac_lengths)
-        rand_span_mask = rand_span_mask & mask
+        # Deterministic schedule in eval mode so val_loss is comparable across epochs.
+        if self.training:
+            frac_lengths = torch.zeros(batch, device=device).float().uniform_(
+                *self.frac_lengths_mask
+            )
+            rand_span_mask = _mask_from_frac_lengths(lens, frac_lengths)
+            rand_span_mask = rand_span_mask & mask
+            time = torch.rand(batch, dtype=dtype, device=device)
+            drop_audio_cond = random() < self.audio_drop_prob
+            drop_text = random() < self.cond_drop_prob
+            if drop_text:
+                drop_audio_cond = True
+        else:
+            # Fixed mid-range span starting at a deterministic offset, fixed t=0.5,
+            # no CFG dropout — gives a stable validation signal.
+            mid_frac = sum(self.frac_lengths_mask) / 2
+            frac_lengths = torch.full((batch,), mid_frac, device=device).float()
+            span = (frac_lengths * lens).long()
+            start = ((lens - span) // 2).clamp(min=0)
+            end = start + span
+            seq_pos = torch.arange(seq_len, device=device).long()
+            rand_span_mask = (seq_pos[None, :] >= start[:, None]) & (
+                seq_pos[None, :] < end[:, None]
+            )
+            rand_span_mask = rand_span_mask & mask
+            time = torch.full((batch,), 0.5, dtype=dtype, device=device)
+            drop_audio_cond = False
+            drop_text = False
 
         x1 = inp
         cond = torch.where(rand_span_mask[..., None], torch.zeros_like(x1), x1)
 
-        x0 = torch.randn_like(x1)
-        time = torch.rand(batch, dtype=dtype, device=device)
+        # Deterministic noise in eval mode for stable val loss
+        if self.training:
+            x0 = torch.randn_like(x1)
+        else:
+            gen = torch.Generator(device=device).manual_seed(0)
+            x0 = torch.randn(x1.shape, generator=gen, device=device, dtype=dtype)
 
         # OT-CFM interpolation: x_t = (1-t)*x0 + t*x1
         t = time[:, None, None]
         phi = (1 - t) * x0 + t * x1
         flow = x1 - x0
-
-        # CFG dropout
-        drop_audio_cond = random() < self.audio_drop_prob
-        drop_text = random() < self.cond_drop_prob
-        if drop_text:
-            drop_audio_cond = True
 
         pred = self.backbone(
             x=phi,
@@ -195,8 +215,8 @@ class CFM(nn.Module):
         cond_mask_3d = cond_mask.unsqueeze(-1)  # [B, T, 1]
         step_cond = torch.where(cond_mask_3d, cond, torch.zeros_like(cond))
 
-        # Attention mask for padding
-        attn_mask = _lens_to_mask(duration) if batch > 1 else None
+        # Attention mask for padding (always pass; protects DiT from attending to padding)
+        attn_mask = _lens_to_mask(duration, length=max_dur)
 
         # ODE velocity function
         def fn(t_val: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
@@ -224,19 +244,18 @@ class CFM(nn.Module):
             pred, null_pred = torch.chunk(pred_cfg, 2, dim=0)
             return pred + (pred - null_pred) * cfg_strength
 
-        # Initial noise (per-sample seeding for batch consistency)
-        y0_list: list[torch.Tensor] = []
-        for dur in duration:
-            if seed is not None:
-                torch.manual_seed(seed)
-            y0_list.append(
-                torch.randn(
-                    int(dur.item()),
-                    self.n_mels,
-                    device=device,
-                    dtype=step_cond.dtype,
-                )
+        # Initial noise — per-sample independent draws.
+        if seed is not None:
+            torch.manual_seed(seed)
+        y0_list: list[torch.Tensor] = [
+            torch.randn(
+                int(dur.item()),
+                self.n_mels,
+                device=device,
+                dtype=step_cond.dtype,
             )
+            for dur in duration
+        ]
         y0 = pad_sequence(y0_list, padding_value=0, batch_first=True)
 
         # Timestep schedule

@@ -7,8 +7,6 @@ n_fft: 1024
 hop_length: 256
 win_length: 1024
 n_mels: 100
-fmin: 0.0
-fmax: 8000.0
 
 # == Logging ===============================================================
 
@@ -46,9 +44,6 @@ model:
   text_dim: 512
   conv_layers: 4
   p_dropout: 0.1
-  # CFG dropout — reduce from defaults (0.3/0.2) for small-dataset training
-  audio_drop_prob: 0.1
-  cond_drop_prob: 0.05
-  # Masking fraction — lower than default (0.7-1.0) for small datasets;
-  # keeps more audio context visible so the model learns text more easily
-  frac_lengths_mask: [0.3, 0.9]
+  audio_drop_prob: 0.3
+  cond_drop_prob: 0.2
+  frac_lengths_mask: [0.7, 1.0]

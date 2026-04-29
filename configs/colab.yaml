@@ -7,8 +7,6 @@ n_fft: 1024
 hop_length: 256
 win_length: 1024
 n_mels: 100
-fmin: 0.0
-fmax: 8000.0
 
 # == Training ===============================================================
 batch_size: 8
@@ -18,14 +16,15 @@ betas: [0.9, 0.999]
 warmup_steps: 1000
 ema_decay: 0.9999
 max_grad_norm: 1.0
-grad_accumulation_steps: 2
+grad_accumulation_steps: 1
 batch_size_type: frame
-frames_threshold: 12000
-max_samples: 0
-num_workers: 2
+frames_threshold: 48000
+max_samples: 96
+num_workers: 4
 pin_memory: true
 log_interval: 50
-save_interval: 10
+save_interval: 5
+max_checkpoints: 2
 use_tqdm: true
 
 # CUDA (T4 — SM 7.5, fp16 only)
@@ -44,9 +43,6 @@ model:
   text_dim: 256
   conv_layers: 4
   p_dropout: 0.1
-  # CFG dropout — reduce from defaults (0.3/0.2) for small-dataset training
-  audio_drop_prob: 0.1
-  cond_drop_prob: 0.05
-  # Masking fraction — lower than default (0.7-1.0) for small datasets;
-  # keeps more audio context visible so the model learns text more easily
-  frac_lengths_mask: [0.3, 0.9]
+  audio_drop_prob: 0.3
+  cond_drop_prob: 0.2
+  frac_lengths_mask: [0.7, 1.0]

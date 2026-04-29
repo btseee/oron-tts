@@ -67,7 +67,8 @@ class TTSDataset(Dataset):
         langs: list[str] | None = None,
         sample_rate: int = 24000,
         n_mels: int = 100,
-        min_audio_len: int = 2048,
+        min_duration_s: float = 1.0,
+        max_duration_s: float = 30.0,
         audio_arrays: list[np.ndarray] | None = None,
         audio_bytes_list: list[bytes] | None = None,
     ) -> None:
@@ -97,7 +98,9 @@ class TTSDataset(Dataset):
         self.langs = langs or ["mn"] * self._len
         self.sample_rate = sample_rate
         self.n_mels = n_mels
-        self.min_audio_len = min_audio_len
+        self.min_duration_s = min_duration_s
+        self.max_duration_s = max_duration_s
+        self.min_audio_len = int(min_duration_s * sample_rate)
 
         self.audio_processor = AudioProcessor(sample_rate=sample_rate, n_mels=n_mels)
         self.text_cleaner = TextCleaner()
@@ -110,38 +113,29 @@ class TTSDataset(Dataset):
         text = self.texts[idx]
         lang = self.langs[idx]
 
-        try:
-            if self.audio_bytes_list is not None:
-                audio_np = _decode_audio_bytes(self.audio_bytes_list[idx], self.sample_rate)
-                audio = torch.from_numpy(audio_np).float()
-            elif self.audio_arrays is not None:
-                audio = torch.from_numpy(self.audio_arrays[idx]).float()
-            else:
-                assert self.audio_paths is not None
-                audio, _ = self.audio_processor.load_audio(self.audio_paths[idx])
+        if self.audio_bytes_list is not None:
+            audio_np = _decode_audio_bytes(self.audio_bytes_list[idx], self.sample_rate)
+            audio = torch.from_numpy(audio_np).float()
+        elif self.audio_arrays is not None:
+            audio = torch.from_numpy(self.audio_arrays[idx]).float()
+        else:
+            assert self.audio_paths is not None
+            audio, _ = self.audio_processor.load_audio(self.audio_paths[idx])
 
-            audio = self.audio_processor.normalize_audio(audio)
+        audio = self.audio_processor.normalize_audio(audio)
 
-            if torch.isnan(audio).any() or torch.isinf(audio).any():
-                raise ValueError(f"Invalid audio values at index {idx}")
-            if len(audio) < self.min_audio_len:
-                raise ValueError(f"Audio too short at index {idx}: {len(audio)}")
+        if torch.isnan(audio).any() or torch.isinf(audio).any():
+            raise ValueError(f"Invalid audio values at sample {idx}")
+        if len(audio) < self.min_audio_len:
+            raise ValueError(
+                f"Audio too short at sample {idx}: "
+                f"{len(audio) / self.sample_rate:.2f}s < {self.min_duration_s:.2f}s"
+            )
 
-            mel = self.audio_processor.mel_spectrogram(audio)  # [n_mels, T]
-        except Exception as e:
-            _logger.warning("Sample %d failed, trying next", idx, exc_info=True)
-            for offset in range(1, min(11, len(self))):
-                next_idx = (idx + offset) % len(self)
-                try:
-                    return self.__getitem__(next_idx)
-                except Exception:
-                    continue
-            raise RuntimeError("All fallback samples failed") from e
-
+        mel = self.audio_processor.mel_spectrogram(audio)  # [n_mels, T]
         T = mel.shape[-1]
 
         raw_ids = self.text_cleaner.text_to_sequence(text, lang=lang)
-        
         text_ids = _stretch_text_to_len(raw_ids, T)
 
         return {
@@ -162,16 +156,22 @@ class TTSDataset(Dataset):
         sample_rate: int = 24000,
         n_mels: int = 100,
         default_lang: str = "mn",
+        min_duration_s: float = 1.0,
+        max_duration_s: float = 30.0,
     ) -> "TTSDataset":
         audio_bytes_list: list[bytes] = []
         texts: list[str] = []
         langs: list[str] = []
         durations: list[float] = []
+        skipped_short = 0
+        skipped_long = 0
+        skipped_empty = 0
+        skipped_no_audio = 0
 
         hf_dataset = hf_dataset.cast_column(audio_column, Audio(decode=False))
 
         if text_column is None:
-            candidates = ["text", "sentence_norm", "sentence", "transcript", "transcription"]
+            candidates = ["sentence_norm", "text", "sentence", "transcript", "transcription"]
             for c in candidates:
                 if c in hf_dataset.column_names:
                     text_column = c
@@ -187,23 +187,33 @@ class TTSDataset(Dataset):
                 audio_info.get("bytes") if isinstance(audio_info, dict) else None
             )
             if not raw_bytes:
-                # Fallback: path-based reference — read file to bytes
                 path = audio_info.get("path") if isinstance(audio_info, dict) else None
                 if path and Path(path).exists():
                     raw_bytes = Path(path).read_bytes()
             if not raw_bytes:
-                _logger.warning("Skipping sample: no audio bytes or path")
+                skipped_no_audio += 1
                 continue
 
-            # Read duration from audio header (fast, no full decode)
             try:
                 info = sf.info(io.BytesIO(raw_bytes))
                 dur = info.duration
             except Exception:
-                dur = 0.0
+                skipped_no_audio += 1
+                continue
+
+            text_val = item[text_column]
+            if not text_val or not str(text_val).strip():
+                skipped_empty += 1
+                continue
+            if dur < min_duration_s:
+                skipped_short += 1
+                continue
+            if dur > max_duration_s:
+                skipped_long += 1
+                continue
 
             audio_bytes_list.append(raw_bytes)
-            texts.append(item[text_column])
+            texts.append(text_val)
             durations.append(dur)
 
             lang = default_lang
@@ -211,12 +221,27 @@ class TTSDataset(Dataset):
                 lang = item[lang_column]
             langs.append(lang)
 
+        total_skipped = skipped_short + skipped_long + skipped_empty + skipped_no_audio
+        if total_skipped > 0:
+            _logger.warning(
+                "Filtered %d samples (short=%d, long=%d, empty_text=%d, no_audio=%d). Kept %d.",
+                total_skipped, skipped_short, skipped_long,
+                skipped_empty, skipped_no_audio, len(audio_bytes_list),
+            )
+        if not audio_bytes_list:
+            raise RuntimeError(
+                "No valid samples after filtering. "
+                f"Check min_duration_s={min_duration_s}, max_duration_s={max_duration_s}."
+            )
+
         dataset = cls(
             audio_bytes_list=audio_bytes_list,
             texts=texts,
             langs=langs,
             sample_rate=sample_rate,
             n_mels=n_mels,
+            min_duration_s=min_duration_s,
+            max_duration_s=max_duration_s,
         )
         dataset.durations = durations
         return dataset

@@ -115,7 +115,9 @@ class F5Trainer:
 
         if self.is_main:
             self.checkpoint_manager: CheckpointManager | None = CheckpointManager(
-                checkpoint_dir, model_name="f5tts"
+                checkpoint_dir,
+                model_name="f5tts",
+                max_checkpoints=config.get("max_checkpoints", 5),
             )
             self.logger = self._setup_logger()
             self.writer: SummaryWriter | None = self._setup_tensorboard()
@@ -390,8 +392,11 @@ class F5Trainer:
                 mel_img = mel.squeeze(0).flip(0).unsqueeze(0).float()
                 mel_img = (mel_img - mel_img.min()) / (mel_img.max() - mel_img.min() + 1e-8)
                 self.writer.add_image(f"mel/{tag}", mel_img, epoch)
-            except Exception:
-                pass  # never crash training on sample failure
+            except Exception as e:
+                if self.logger:
+                    self.logger.warning(
+                        "Audio sample synthesis failed for %r: %s", text, e, exc_info=True
+                    )
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
