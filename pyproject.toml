@@ -37,8 +37,6 @@ dependencies = [
     "tqdm>=4.66.0",
     "python-dotenv>=1.0.0",
     "torch-ema>=0.3.0",
-    "vocos>=0.1.0",          # pretrained mel-to-waveform vocoder (24kHz)
-    "deepfilternet>=0.5.0", 
 ]
 
 [project.optional-dependencies]
@@ -47,6 +45,9 @@ dev = [
     "isort>=5.12.0",
     "pytest>=7.4.0",
     "tensorboard>=2.15.0",  # optional local fallback
+]
+inference = [
+    "vocos>=0.1.0",          # pretrained mel-to-waveform vocoder (24kHz)
 ]
 denoise = [
     "deepfilternet>=0.5.0",  # requires Rust/Cargo: https://rustup.rs

@@ -171,7 +171,7 @@ oron-infer     # → scripts.infer:main
 ```powershell
 # Use exactly Python 3.12 — the only fully supported version
 py -3.12 -m venv .venv
-.venv\Scripts\pip install -e ".[dev]"
+.venv\Scripts\pip install -e ".[dev,inference]"
 
 # Secrets — create .env at repo root (never commit)
 # HF_TOKEN=hf_...         (HuggingFace personal access token)
