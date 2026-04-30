@@ -441,7 +441,7 @@ class NumberNormalizer:
             return f"{self.convert_attributive(num)} {self._currency_name(sym)}"
 
         text = re.sub(
-            rf"(\d+)\s*({_sym_pattern}|{_code_pattern})",
+            rf"(\d+)\s*({_sym_pattern}|(?:{_code_pattern})(?!\w))",
             _currency_after,
             text,
         )
@@ -490,9 +490,11 @@ class NumberNormalizer:
         text = re.sub(r"(\d{1,2})/(\d{1,2})", _fraction, text)
 
         # --- Phone numbers: +XXXXXXXXXXX or +XXX XXXX XXXX ---
+        plus_word = MATH_SYMBOLS["+"][self._lang_idx]
+
         def _phone(m: re.Match[str]) -> str:
             digits = re.sub(r"\D", "", m.group(0)[1:])  # strip + and spaces
-            return "нэмэх " + self._digit_by_digit(digits)
+            return f"{plus_word} " + self._digit_by_digit(digits)
 
         text = re.sub(r"\+\d[\d\s\-]{6,15}\d", _phone, text)
 

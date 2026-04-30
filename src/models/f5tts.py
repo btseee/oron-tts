@@ -14,6 +14,7 @@ Usage (training):
     loss.backward()
 """
 
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +26,13 @@ from src.models.dit import DiT
 from src.models.flow import CFM
 from src.utils.audio import AudioProcessor
 from src.utils.text_cleaner import TextCleaner
+
+_logger = logging.getLogger(__name__)
+
+# Characters present only in the Kazakh extra set; warn if seen in MN input
+# (and vice-versa) because the model has only been trained on the matching
+# language tag and will produce out-of-distribution audio.
+_KZ_ONLY_CHARS: frozenset[str] = frozenset("әғқңұһі")
 
 
 def _stretch_text_to_len(token_ids: list[int], target_len: int) -> list[int]:
@@ -136,17 +144,30 @@ class F5TTS(nn.Module):
             object.__setattr__(self, "_vocos_cache", vocos)
         return vocos.to(device)
 
+    @staticmethod
+    def _warn_lang_contamination(text: str, lang: str) -> None:
+        """Warn once if text contains chars the model only saw in the other lang."""
+        if lang == "mn":
+            bad = {c for c in text.lower() if c in _KZ_ONLY_CHARS}
+            if bad:
+                _logger.warning(
+                    "Mongolian input contains Kazakh-only characters %s; "
+                    "the model was conditioned with [LANG_MN] and may produce "
+                    "out-of-distribution audio.",
+                    sorted(bad),
+                )
+
     @torch.inference_mode()
     def synthesize(
         self,
         text: str,
         lang: str = "mn",
-        attr_tokens: list[str] | None = None,
         ref_audio_path: str | Path | None = None,
         ref_text: str | None = None,
         n_steps: int = 32,
         cfg_strength: float = 2.0,
         sway_sampling_coef: float | None = -1.0,
+        speed: float = 1.0,
         target_duration_s: float | None = None,
         device: str = "cuda",
     ) -> torch.Tensor:
@@ -155,26 +176,31 @@ class F5TTS(nn.Module):
         Args:
             text: Input Cyrillic text.
             lang: "mn" or "kz".
-            attr_tokens: Optional style tags, e.g. ["[FEMALE]", "[YOUNG]"].
             ref_audio_path: Path to 3-10 s reference WAV for voice cloning.
             ref_text: Transcript of the reference audio clip.
             n_steps: ODE integration steps (more = slower but better quality).
             cfg_strength: Classifier-free guidance strength (0 = none).
             sway_sampling_coef: Sway sampling coefficient (None = uniform).
+            speed: Speaking-rate multiplier (>1 faster, <1 slower).
+                Ignored when ``target_duration_s`` is set.
             target_duration_s: Override target duration. Defaults to estimate.
             device: Inference device.
 
         Returns:
             Waveform tensor [T_samples] on CPU.
         """
+        if speed <= 0:
+            raise ValueError(f"speed must be > 0, got {speed}")
         self.eval()
         self.to(device)
+
+        self._warn_lang_contamination(text, lang)
 
         cleaner = self._text_cleaner
         audio_proc = self._audio_processor
 
         # ── Encode target text ────────────────────────────────────────────────
-        target_ids = cleaner.text_to_sequence(text, lang=lang, attr_tokens=attr_tokens)
+        target_ids = cleaner.text_to_sequence(text, lang=lang)
 
         # ── Load & encode reference audio ─────────────────────────────────────
         ref_mel: torch.Tensor | None = None
@@ -182,6 +208,7 @@ class F5TTS(nn.Module):
         ref_ids: list[int] = []
 
         if ref_audio_path is not None:
+            self._warn_lang_contamination(ref_text or "", lang)
             ref_wav, _ = audio_proc.load_audio(ref_audio_path)
             ref_wav = audio_proc.normalize_audio(ref_wav).to(device)
             ref_mel_raw = audio_proc.mel_spectrogram(ref_wav)  # [n_mels, T_ref]
@@ -194,10 +221,14 @@ class F5TTS(nn.Module):
         # ── Estimate target length ────────────────────────────────────────────
         if target_duration_s is not None:
             target_len = int(target_duration_s * self.sample_rate / self.hop_length)
+        elif ref_len > 0 and ref_ids:
+            # Reference-aware: scale ref-mel duration by token-count ratio.
+            # This is the paper-faithful approach used by official F5-TTS.
+            target_len = max(50, int(ref_len * len(target_ids) / len(ref_ids) / speed))
         else:
-            # ~0.12 s per character is a rough estimate for Mongolian
-            chars = len(text.replace(" ", ""))
-            target_len = max(50, int(chars * 0.12 * self.sample_rate / self.hop_length))
+            # Ref-free: ~13 mel frames per char ≈ 0.139s/char at hop=256/sr=24k.
+            chars = max(1, len(text.replace(" ", "")))
+            target_len = max(50, int(chars * 13 / speed))
 
         T_total = ref_len + target_len
 
