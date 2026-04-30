@@ -141,7 +141,14 @@ class F5Trainer:
         try:
             from torch.utils.tensorboard.writer import SummaryWriter
 
-            writer = SummaryWriter(log_dir=self.log_dir)
+            from pathlib import Path
+
+            resolved = Path(self.log_dir).expanduser().resolve()
+            resolved.mkdir(parents=True, exist_ok=True)
+            self.log_dir = str(resolved)
+            writer = SummaryWriter(log_dir=self.log_dir, flush_secs=30)
+            if self.logger:
+                self.logger.info("TensorBoard log_dir = %s", self.log_dir)
             return writer
         except ImportError:
             if self.logger:
