@@ -26,12 +26,12 @@ from src.models.dit import DiT
 from src.models.flow import CFM
 from src.utils.audio import AudioProcessor
 from src.utils.text_cleaner import TextCleaner
+from src.utils.tokenizer import validate_language
 
 _logger = logging.getLogger(__name__)
 
 # Characters present only in the Kazakh extra set; warn if seen in MN input
-# (and vice-versa) because the model has only been trained on the matching
-# language tag and will produce out-of-distribution audio.
+# because the model has only been trained on the matching language tag.
 _KZ_ONLY_CHARS: frozenset[str] = frozenset("әғқңұһі")
 
 
@@ -147,6 +147,7 @@ class F5TTS(nn.Module):
     @staticmethod
     def _warn_lang_contamination(text: str, lang: str) -> None:
         """Warn once if text contains chars the model only saw in the other lang."""
+        lang = validate_language(lang)
         if lang == "mn":
             bad = {c for c in text.lower() if c in _KZ_ONLY_CHARS}
             if bad:
@@ -189,8 +190,15 @@ class F5TTS(nn.Module):
         Returns:
             Waveform tensor [T_samples] on CPU.
         """
+        lang = validate_language(lang)
+        if n_steps < 1:
+            raise ValueError(f"n_steps must be >= 1, got {n_steps}")
+        if cfg_strength < 0:
+            raise ValueError(f"cfg_strength must be >= 0, got {cfg_strength}")
         if speed <= 0:
             raise ValueError(f"speed must be > 0, got {speed}")
+        if target_duration_s is not None and target_duration_s <= 0:
+            raise ValueError(f"target_duration_s must be > 0, got {target_duration_s}")
         self.eval()
         self.to(device)
 
@@ -208,6 +216,11 @@ class F5TTS(nn.Module):
         ref_ids: list[int] = []
 
         if ref_audio_path is not None:
+            if not ref_text:
+                _logger.warning(
+                    "ref_audio_path was provided without ref_text; duration will fall back "
+                    "to the ref-free estimate and the reference region will use filler text."
+                )
             self._warn_lang_contamination(ref_text or "", lang)
             ref_wav, _ = audio_proc.load_audio(ref_audio_path)
             ref_wav = audio_proc.normalize_audio(ref_wav).to(device)
@@ -220,7 +233,7 @@ class F5TTS(nn.Module):
 
         # ── Estimate target length ────────────────────────────────────────────
         if target_duration_s is not None:
-            target_len = int(target_duration_s * self.sample_rate / self.hop_length)
+            target_len = max(1, int(target_duration_s * self.sample_rate / self.hop_length))
         elif ref_len > 0 and ref_ids:
             # Reference-aware: scale ref-mel duration by token-count ratio.
             # This is the paper-faithful approach used by official F5-TTS.

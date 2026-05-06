@@ -167,7 +167,7 @@ class CheckpointManager:
 language:
   - mn
   - kk
-license: apache-2.0
+license: mit
 tags:
   - tts
   - text-to-speech

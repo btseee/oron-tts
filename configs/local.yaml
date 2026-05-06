@@ -26,6 +26,8 @@ num_workers: 6
 pin_memory: true
 log_interval: 100
 save_interval: 5
+max_checkpoints: 5
+audio_sample_interval: 10
 use_tqdm: true
 
 # CUDA (RTX 5070 Ti)

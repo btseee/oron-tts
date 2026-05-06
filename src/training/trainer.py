@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import sys
 import time
 from collections.abc import Sized
@@ -111,6 +112,8 @@ class F5Trainer:
         self.global_step = 0
         self.epoch = 0
         self._best_val: float = float("inf")
+        self._pending_loss_sum = 0.0
+        self._pending_loss_count = 0
         self.log_dir = log_dir
 
         if self.is_main:
@@ -141,14 +144,19 @@ class F5Trainer:
         try:
             from torch.utils.tensorboard.writer import SummaryWriter
 
-            from pathlib import Path
-
-            resolved = Path(self.log_dir).expanduser().resolve()
+            configured = Path(self.log_dir).expanduser()
+            resolved = configured.resolve()
             resolved.mkdir(parents=True, exist_ok=True)
             self.log_dir = str(resolved)
             writer = SummaryWriter(log_dir=self.log_dir, flush_secs=30)
             if self.logger:
                 self.logger.info("TensorBoard log_dir = %s", self.log_dir)
+                if not configured.is_absolute():
+                    self.logger.info(
+                        "TensorBoard log_dir was relative; in Colab, pass an absolute "
+                        "Drive path such as /content/drive/MyDrive/oron-tts/logs "
+                        "if logs must persist after runtime shutdown."
+                    )
             return writer
         except ImportError:
             if self.logger:
@@ -163,6 +171,43 @@ class F5Trainer:
         total = torch.norm(torch.stack([torch.norm(g.detach()) for g in grads]))
         return total.item()
 
+    def _clear_pending_loss(self) -> None:
+        self._pending_loss_sum = 0.0
+        self._pending_loss_count = 0
+
+    def _pop_pending_loss(self) -> float:
+        count = getattr(self, "_pending_loss_count", 0)
+        if count == 0:
+            return 0.0
+        value = getattr(self, "_pending_loss_sum", 0.0) / count
+        self._clear_pending_loss()
+        return value
+
+    def _optimizer_step(self) -> float | None:
+        if self.scaler is not None:
+            self.scaler.unscale_(self.optimizer)
+        grad_norm = self._grad_norm()
+        if not math.isfinite(grad_norm):
+            if self.is_main and self.logger:
+                self.logger.warning("Skipping optimizer step due to non-finite grad_norm=%s", grad_norm)
+            self.optimizer.zero_grad(set_to_none=True)
+            self._clear_pending_loss()
+            if self.scaler is not None:
+                self.scaler.update()
+            return None
+
+        nn.utils.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
+        if self.scaler is not None:
+            self.scaler.step(self.optimizer)
+            self.scaler.update()
+        else:
+            self.optimizer.step()
+        self.scheduler.step()
+        self.optimizer.zero_grad(set_to_none=True)
+        if self.ema:
+            self.ema.update()
+        return grad_norm
+
     def train_step(self, batch: dict[str, torch.Tensor], accum_step: int) -> float | None:
         """Single forward+backward step; returns loss on final accum step, else None."""
         mel = batch["mel"].to(self.device, non_blocking=True)  # [B, n_mels, T]
@@ -172,6 +217,10 @@ class F5Trainer:
         self._last_mel_frames = mel.shape[2]
 
         if torch.isnan(mel).any() or torch.isinf(mel).any():
+            if self.is_main and self.logger:
+                self.logger.warning("Skipping batch due to non-finite mel values")
+            self.optimizer.zero_grad(set_to_none=True)
+            self._clear_pending_loss()
             return None
 
         self.model.train()
@@ -179,32 +228,33 @@ class F5Trainer:
         with autocast(self.device, dtype=self.amp_dtype, enabled=self.amp_dtype is not None):
             loss = self.model(mel, text_ids, mel_lengths) / self.grad_accum
 
+        if not bool(torch.isfinite(loss.detach()).item()):
+            if self.is_main and self.logger:
+                self.logger.warning("Skipping batch due to non-finite loss=%s", loss.detach().item())
+            self.optimizer.zero_grad(set_to_none=True)
+            self._clear_pending_loss()
+            return None
+
+        self._pending_loss_sum += loss.detach().item() * self.grad_accum
+        self._pending_loss_count += 1
+
         if self.scaler is not None:
             self.scaler.scale(loss).backward()
         else:
             loss.backward()
 
         if (accum_step + 1) % self.grad_accum == 0:
-            if self.scaler is not None:
-                self.scaler.unscale_(self.optimizer)
-            grad_norm = self._grad_norm()
-            nn.utils.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
-            if self.scaler is not None:
-                self.scaler.step(self.optimizer)
-                self.scaler.update()
-            else:
-                self.optimizer.step()
-            self.scheduler.step()
-            self.optimizer.zero_grad()
-            if self.ema:
-                self.ema.update()
+            grad_norm = self._optimizer_step()
+            if grad_norm is None:
+                return None
             self._last_grad_norm = grad_norm
-            return loss.item() * self.grad_accum
+            return self._pop_pending_loss()
 
         return None
 
     def train_epoch(self, total_epochs: int) -> float:
-        self.optimizer.zero_grad()
+        self.optimizer.zero_grad(set_to_none=True)
+        self._clear_pending_loss()
         total_loss = 0.0
         n = 0
         accum_step = -1
@@ -259,18 +309,12 @@ class F5Trainer:
 
         # Flush any accumulated gradients that didn't complete a full accumulation window
         if accum_step >= 0 and (accum_step + 1) % self.grad_accum != 0:
-            if self.scaler is not None:
-                self.scaler.unscale_(self.optimizer)
-                nn.utils.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
-                self.scaler.step(self.optimizer)
-                self.scaler.update()
-            else:
-                nn.utils.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
-                self.optimizer.step()
-            self.scheduler.step()
-            self.optimizer.zero_grad()
-            if self.ema:
-                self.ema.update()
+            grad_norm = self._optimizer_step()
+            if grad_norm is not None:
+                self._last_grad_norm = grad_norm
+                total_loss += self._pop_pending_loss()
+                n += 1
+                self.global_step += 1
 
         self.epoch += 1
         epoch_time = time.monotonic() - epoch_start
@@ -463,6 +507,25 @@ class F5Trainer:
         self.global_step = info["step"]
         self.epoch = info.get("epoch", 0)
         self._best_val = info.get("best_val", float("inf"))
+        ema_state = info.get("ema_state_dict")
+        if self.ema is not None and isinstance(ema_state, dict):
+            self._restore_ema_from_model_state(raw_model, ema_state)
+
+    def _restore_ema_from_model_state(
+        self, raw_model: nn.Module, ema_model_state: dict[str, torch.Tensor]
+    ) -> None:
+        raw_state = {k: v.detach().clone() for k, v in raw_model.state_dict().items()}
+        incompatible = raw_model.load_state_dict(ema_model_state, strict=False)
+        if self.logger and (incompatible.missing_keys or incompatible.unexpected_keys):
+            self.logger.warning(
+                "EMA resume state mismatch: missing=%d unexpected=%d",
+                len(incompatible.missing_keys),
+                len(incompatible.unexpected_keys),
+            )
+        self.ema = ExponentialMovingAverage(
+            self.model.parameters(), decay=self.config.get("ema_decay", 0.9999)
+        )
+        raw_model.load_state_dict(raw_state)
 
     def push_to_hub(self, repo_id: str, token: str | None = None) -> str:
         if self.checkpoint_manager is None:

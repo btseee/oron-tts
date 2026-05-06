@@ -50,7 +50,7 @@ def _make_audio(seconds: float = 2.0, sr: int = 24000) -> np.ndarray:
 def step_config() -> dict:
     _section("Step 1 — Load and validate configs")
     results: dict = {}
-    for name in ("local.yaml", "runpod.yaml"):
+    for name in ("local.yaml", "runpod.yaml", "colab.yaml"):
         path = Path("configs") / name
         try:
             with open(path) as f:
@@ -63,6 +63,8 @@ def step_config() -> dict:
             assert "depth" in m, f"model.depth missing in {name}"
             assert "vocab_size" in m, f"model.vocab_size missing in {name}"
             assert m["vocab_size"] == 65, f"vocab_size != 65 in {name}"
+            assert "max_checkpoints" in cfg, f"max_checkpoints missing in {name}"
+            assert "audio_sample_interval" in cfg, f"audio_sample_interval missing in {name}"
             # Reject VITS keys that must no longer exist
             vits_keys = {"inter_channels", "hidden_channels", "n_layers", "segment_size"}
             found = vits_keys & set(m.keys())
@@ -104,6 +106,13 @@ def step_tokenizer() -> None:
         assert ids_attr[1] == 6, f"[FEMALE] token id should be 6, got {ids_attr[1]}"  # after BOS
         _pass("[FEMALE] attr token at correct position")
 
+        try:
+            tok.encode(text, lang="en")
+        except ValueError:
+            _pass("invalid language rejected")
+        else:
+            raise AssertionError("invalid language should raise ValueError")
+
     except Exception as exc:
         _fail("CyrillicTokenizer", exc)
 
@@ -126,6 +135,13 @@ def step_text_cleaner() -> None:
         assert all(isinstance(x, int) for x in ids), "non-int in ids"
         assert 3 not in ids, f"UNK in text_to_sequence: {ids}"
         _pass(f"text_to_sequence('сайн байна уу') → {ids[:6]}… (len={len(ids)})")
+
+        try:
+            tc.clean("hello", lang="en")
+        except ValueError:
+            _pass("TextCleaner rejects invalid language")
+        else:
+            raise AssertionError("TextCleaner should reject invalid language")
 
     except Exception as exc:
         _fail("TextCleaner", exc)

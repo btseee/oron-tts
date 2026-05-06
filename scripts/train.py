@@ -8,8 +8,8 @@ from typing import cast
 
 import torch
 import torch.distributed as dist
-from torch.multiprocessing.spawn import spawn as mp_spawn
 from dotenv import load_dotenv
+from torch.multiprocessing.spawn import spawn as mp_spawn
 from torch.utils.data import DataLoader, DistributedSampler
 
 from src.data.dataset import DynamicBatchSampler, TTSCollator, TTSDataset

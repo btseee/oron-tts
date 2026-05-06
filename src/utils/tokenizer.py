@@ -2,6 +2,16 @@
 
 from typing import Final
 
+SUPPORTED_LANGS: Final[frozenset[str]] = frozenset({"mn", "kz"})
+
+
+def validate_language(lang: str) -> str:
+    """Validate and return a supported language code."""
+    if lang not in SUPPORTED_LANGS:
+        supported = ", ".join(sorted(SUPPORTED_LANGS))
+        raise ValueError(f"Unsupported language '{lang}'. Expected one of: {supported}")
+    return lang
+
 # ── Special tokens ────────────────────────────────────────────────────────────
 _PAD = "<PAD>"
 _BOS = "<BOS>"
@@ -80,6 +90,7 @@ class CyrillicTokenizer:
             lang: "mn" for Mongolian Khalkha, "kz" for Kazakh.
             attr_tokens: Optional attribute tags, e.g. ["[FEMALE]", "[YOUNG]"].
         """
+        lang = validate_language(lang)
         ids: list[int] = []
 
         lang_tag = _LANG_MN if lang == "mn" else _LANG_KZ

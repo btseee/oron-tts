@@ -166,10 +166,19 @@ _ROMAN_RE: Final[re.Pattern[str]] = re.compile(
 # KZ: "3/4" → "төрттен үш" (denominator + -тен/тан + numerator)
 MN_FRACTION_HALF: Final[str] = "хагас"
 KZ_FRACTION_HALF: Final[str] = "жарты"
+SUPPORTED_LANGS: Final[frozenset[str]] = frozenset({"mn", "kz"})
+
+
+def _validate_language(lang: str) -> str:
+    if lang not in SUPPORTED_LANGS:
+        supported = ", ".join(sorted(SUPPORTED_LANGS))
+        raise ValueError(f"Unsupported language '{lang}'. Expected one of: {supported}")
+    return lang
 
 
 class NumberNormalizer:
     def __init__(self, lang: str = "mn") -> None:
+        lang = _validate_language(lang)
         self._lang = lang
         self._cache: dict[tuple[str, int, bool], str] = {}
         self._setup_tables(lang)
@@ -220,6 +229,7 @@ class NumberNormalizer:
 
     @lang.setter
     def lang(self, value: str) -> None:
+        value = _validate_language(value)
         if value != self._lang:
             self._lang = value
             self._setup_tables(value)

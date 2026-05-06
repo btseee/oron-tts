@@ -188,6 +188,10 @@ class CFM(nn.Module):
         Returns:
             (output_mel, trajectory) where output_mel is [B, T, n_mels].
         """
+        if steps < 1:
+            raise ValueError(f"steps must be >= 1, got {steps}")
+        if cfg_strength < 0:
+            raise ValueError(f"cfg_strength must be >= 0, got {cfg_strength}")
         self.eval()
 
         batch, cond_seq_len, device = cond.shape[0], cond.shape[1], cond.device
@@ -196,6 +200,10 @@ class CFM(nn.Module):
             lens = torch.full(
                 (batch,), cond_seq_len, device=device, dtype=torch.long
             )
+        else:
+            lens = lens.to(device=device, dtype=torch.long)
+        if lens.numel() != batch:
+            raise ValueError(f"lens must have {batch} values, got {lens.numel()}")
 
         # Conditioning mask: True where reference audio exists
         cond_mask = _lens_to_mask(lens)
@@ -204,8 +212,22 @@ class CFM(nn.Module):
             duration = torch.full(
                 (batch,), duration, device=device, dtype=torch.long
             )
+        else:
+            duration = duration.to(device=device, dtype=torch.long)
+        if duration.numel() != batch:
+            raise ValueError(f"duration must have {batch} values, got {duration.numel()}")
+        if torch.any(duration <= 0):
+            raise ValueError("duration values must be > 0")
+        if torch.any(lens < 0):
+            raise ValueError("lens values must be >= 0")
+        if torch.any(lens > duration):
+            raise ValueError("conditioning lens must be <= duration for every sample")
+        if torch.any(duration > max_duration):
+            raise ValueError(f"duration exceeds max_duration={max_duration}")
         duration = duration.clamp(max=max_duration)
         max_dur = int(duration.amax().item())
+        if cond_seq_len > max_dur:
+            raise ValueError("conditioning sequence length must be <= max duration")
 
         # Pad conditioning to max duration
         cond = F.pad(cond, (0, 0, 0, max_dur - cond_seq_len), value=0.0)
@@ -245,18 +267,20 @@ class CFM(nn.Module):
             return pred + (pred - null_pred) * cfg_strength
 
         # Initial noise — per-sample independent draws.
+        generator = None
         if seed is not None:
-            torch.manual_seed(seed)
+            generator = torch.Generator(device=device).manual_seed(seed)
         y0_list: list[torch.Tensor] = [
             torch.randn(
                 int(dur.item()),
                 self.n_mels,
                 device=device,
                 dtype=step_cond.dtype,
+                generator=generator,
             )
             for dur in duration
         ]
-        y0 = pad_sequence(y0_list, padding_value=0, batch_first=True)
+        y0 = pad_sequence(y0_list, padding_value=0.0, batch_first=True)
 
         # Timestep schedule
         t = torch.linspace(0, 1, steps + 1, device=device, dtype=step_cond.dtype)

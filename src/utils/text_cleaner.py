@@ -5,7 +5,7 @@ import unicodedata
 from typing import Final
 
 from src.utils.number_norm import NumberNormalizer
-from src.utils.tokenizer import CyrillicTokenizer
+from src.utils.tokenizer import CyrillicTokenizer, validate_language
 
 PUNCTUATION_MAP: Final[dict[str, str]] = {
     "…": "...",
@@ -99,6 +99,7 @@ class TextCleaner:
         return self._multi_punct_re.sub(r"\1", text)
 
     def expand_abbreviations(self, text: str, lang: str = "mn") -> str:
+        lang = validate_language(lang)
         if lang == "kz":
             abbrevs = KZ_ABBREVIATIONS
             units = KZ_UNIT_ABBREVS
@@ -117,6 +118,7 @@ class TextCleaner:
         return text
 
     def clean(self, text: str, lang: str = "mn") -> str:
+        lang = validate_language(lang)
         text = self.normalize_unicode(text)
         text = self.replace_punctuation(text)
         text = self.expand_abbreviations(text, lang=lang)

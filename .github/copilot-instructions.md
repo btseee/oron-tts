@@ -1,6 +1,7 @@
 # OronTTS Project Instructions
 
 ## General Principles
+
 - **Language:** Python 3.12 (exactly). Strict type hints on every function.
 - **Style:** Functional and modular. Avoid monolithic files.
 - **Documentation:** Minimal, meaningful comments only. Self-documenting code.
@@ -12,8 +13,9 @@
 OronTTS is a non-autoregressive TTS system for Mongolian (Khalkha Cyrillic) and Kazakh (Cyrillic) based on the F5-TTS paper.
 
 ### Model stack
+
 | Component | Class | File |
-|-----------|-------|------|
+| --------- | ----- | ---- |
 | Text encoder | `TextEmbedding` | `src/models/encoder.py` |
 | Backbone | `DiT` (Diffusion Transformer) | `src/models/dit.py` |
 | Flow matching | `CFM` (OT-Conditional Flow Matching) | `src/models/flow.py` |
@@ -22,6 +24,7 @@ OronTTS is a non-autoregressive TTS system for Mongolian (Khalkha Cyrillic) and 
 | DiT blocks | `RMSNorm, AdaLayerNorm, Attention, DiTBlock, RotaryEmbedding, ...` | `src/models/modules.py` |
 
 ### Training
+
 - Flow matching loss (MSE on velocity field) is computed inline in `CFM.forward()` — no separate loss function.
 - **Infilling training**: random span masking, fraction configurable via `model.frac_lengths_mask` (paper default `[0.7, 1.0]`, also used in all three YAML configs). The unmasked portion is the conditioning signal.
 - **Text token stretching**: text tokens are linearly stretched to fill the full mel sequence (`_stretch_text_to_len` in both `dataset.py` and `f5tts.py`). Every mel frame receives the text token at approximately its temporal position — **not** padding. This is essential: padding 90%+ of frames with filler embeddings makes text conditioning ineffective.
@@ -36,6 +39,7 @@ OronTTS is a non-autoregressive TTS system for Mongolian (Khalkha Cyrillic) and 
 - Trainer class: `F5Trainer` (`src/training/trainer.py`).
 
 ### Inference modes
+
 1. **Voice cloning** — pass `ref_audio_path` and `ref_text` to `F5TTS.synthesize()`; the reference mel + transcript are used as conditioning and to set duration via the token-count ratio.
 2. **Ref-free** — omit `ref_audio_path`. Conditioning is zero, duration is estimated from char count and `speed` (default 1.0; use `--speed` on the CLI). This is the OOD regime; expect lower fidelity than ref-based.
 3. **Inference params**: `cfg_strength` (classifier-free guidance, default 2.0), `sway_sampling_coef` (sway sampling, default -1.0), `n_steps` (ODE steps, default 32), `speed` (rate multiplier, default 1.0).
@@ -49,8 +53,10 @@ OronTTS is a non-autoregressive TTS system for Mongolian (Khalkha Cyrillic) and 
 - Special tokens: `<PAD>=0, <BOS>=1, <EOS>=2, <UNK>=3`
 - Language tags: `[LANG_MN]=4, [LANG_KZ]=5`
 - Attribute tags: `[FEMALE]=6, [MALE]=7, [YOUNG]=8, [MIDDLE]=9, [ELDERLY]=10`
+- Supported language codes are exactly `mn` and `kz`; unknown codes raise `ValueError` instead of silently falling through.
 
 Usage:
+
 ```python
 tokenizer = CyrillicTokenizer()
 ids = tokenizer.encode("сайн байна уу", lang="mn", attr_tokens=["[FEMALE]"])
@@ -70,7 +76,7 @@ text = tokenizer.decode(ids)
 
 ## Project Structure
 
-```
+```text
 src/
   data/
     dataset.py       # TTSDataset, TTSCollator, DynamicBatchSampler
@@ -110,6 +116,7 @@ notebooks/
 ## Configs
 
 All three YAML configs use the same keys. Critical keys:
+
 - `model.dim`, `model.depth`, `model.heads`, `model.ff_mult`, `model.vocab_size` (must match tokenizer = 65)
 - `model.text_dim`, `model.conv_layers`, `model.p_dropout`
 - `model.audio_drop_prob`, `model.cond_drop_prob` — CFG dropout (paper defaults 0.3/0.2; required for ref-free synthesis to be in-distribution)
@@ -119,26 +126,32 @@ All three YAML configs use the same keys. Critical keys:
 - `batch_size_type` (`"frame"` for DynamicBatchSampler, `"sample"` for fixed batch size)
 - `frames_threshold` (max total mel frames per batch when `batch_size_type="frame"`)
 - `max_samples` (max samples per batch cap when using frame-budget batching)
+- `max_checkpoints` (rotating `.pt` checkpoint retention; best checkpoint is kept separately)
+- `audio_sample_interval` (epochs between TensorBoard audio/mel diagnostics)
 - `gradient_checkpointing` (enable for VRAM-constrained GPUs like T4/RTX 5070 Ti)
 - `compile` (default `true`; set `false` on T4/Colab to avoid torch.compile overhead)
 - `use_tf32`, `cudnn_benchmark` — performance flags (disabled on T4)
 - `grad_accumulation_steps` — effective batch multiplier
 
 ### Config profiles
-| Config | Target GPU | model.dim | model.depth | frames_threshold | compile |
-|--------|-----------|-----------|-------------|-----------------|---------|
-| `local.yaml` | RTX 5070 Ti | 512 | 12 | 3000 | true |
-| `runpod.yaml` | A100/L40 | 1024 | 22 | 38400 | true |
-| `colab.yaml` | T4 (15 GB) | 512 | 12 | 12000 | false |
+
+| Config | Target GPU | model.dim | model.depth | frames_threshold | max_checkpoints | compile |
+| ------ | ---------- | --------- | ----------- | ---------------- | --------------- | ------- |
+| `local.yaml` | RTX 5070 Ti | 512 | 12 | 3000 | 5 | true |
+| `runpod.yaml` | A100/L40 | 1024 | 22 | 38400 | 5 | true |
+| `colab.yaml` | T4 (15 GB) | 512 | 12 | 48000 | 2 | false |
 
 ## Checkpoints
 
 `CheckpointManager` (`src/utils/checkpoint.py`):
+
 - `save(step, model, optimizer, scheduler, ema_state, loss, config, is_best)` — saves `.pt` checkpoint, auto-rotates (keeps last `max_checkpoints`)
 - `load(model, optimizer, scheduler, path, load_best, device)` — loads `.pt` checkpoint, returns `{step, loss, ema_state_dict}`
 - `load_pretrained_f5tts(model, checkpoint_path, device, strict)` — loads official F5-TTS `.safetensors` or `.pt` with key remapping
-- `push_to_hub(repo_id, token, private)` — uploads checkpoint dir to HuggingFace
+- `push_to_hub(repo_id, token, private, log_dir=None)` — uploads checkpoint dir to HuggingFace; when `log_dir` is provided, TensorBoard logs are uploaded under `tb_logs/`
 - `pull_from_hub(repo_id, filename, token)` — downloads checkpoint from HuggingFace
+
+Training resume restores raw model weights and rebuilds the EMA tracker from `ema_state_dict`, so resumed long runs continue from the same EMA state used for inference.
 
 ## Formatting and Quality
 
@@ -156,9 +169,14 @@ All three YAML configs use the same keys. Critical keys:
    - Pulls dataset from HF → trains F5-TTS → saves checkpoints → logs metrics to console.
    - Resume: add `--resume` flag. Fine-tune: add `--pretrain-ckpt F5TTS_Base.safetensors`.
    - Push to HF: add `--push-to-hub --hf-repo btsee/oron-tts`.
+
+Colab persistence: pass absolute Drive paths with `--log-dir` and `--checkpoint-dir`; relative paths such as `output/logs` stay on ephemeral `/content/oron-tts`.
+
 3. **Inference:** `python scripts/infer.py --checkpoint output/checkpoints/f5tts_best.pt --text "Сайн байна уу" --lang mn --output out.wav`
    - Optionally `--ref-audio ref.wav --ref-text "..."` for voice cloning (recommended for best quality).
    - Optionally `--speed 1.2` to adjust speaking rate (>1 faster, <1 slower).
+
+Runtime guards skip non-finite mel/loss batches and non-finite unscaled gradients before optimizer, scheduler, or EMA updates. `CFM.sample()` also validates durations, lens, `n_steps`, and `cfg_strength`, and seeded sampling uses a local `torch.Generator`.
 
 ## CLI Entry Points
 

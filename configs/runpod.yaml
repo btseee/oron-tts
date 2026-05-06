@@ -27,11 +27,14 @@ prefetch_factor: 4
 pin_memory: true
 log_interval: 50
 save_interval: 5
+max_checkpoints: 5
+audio_sample_interval: 10
 use_tqdm: false
 
 # CUDA
 cudnn_benchmark: true
 use_tf32: true
+compile: true
 gradient_checkpointing: false
 
 # == Model (F5-TTS Base -- compatible with pretrained checkpoint) ===========

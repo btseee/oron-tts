@@ -17,7 +17,7 @@ Non-autoregressive TTS for Mongolian (Khalkha Cyrillic) and Kazakh (Cyrillic) us
 
 ```powershell
 py -3.12 -m venv .venv
-.venv\Scripts\pip install -e ".[dev]"
+.venv\Scripts\pip install -e ".[dev,inference]"
 ```
 
 **Linux / RunPod**:
@@ -25,7 +25,7 @@ py -3.12 -m venv .venv
 ```bash
 python3.12 -m venv .venv
 source .venv/bin/activate
-pip install -e ".[dev]"
+pip install -e ".[dev,inference]"
 ```
 
 ## Project Structure
@@ -102,7 +102,20 @@ python scripts/train.py \
     --pretrain-ckpt F5TTS_Base.safetensors
 ```
 
-Training auto-resumes from the latest checkpoint if one exists.
+Resume explicitly with `--resume`. Training does not auto-resume, which keeps accidental restarts from silently continuing an old run.
+
+**Colab** (persistent Drive logs and checkpoints):
+
+```bash
+python scripts/train.py \
+    --config configs/colab.yaml \
+    --dataset btsee/mbspeech_mn \
+    --log-dir /content/drive/MyDrive/oron-tts/logs \
+    --checkpoint-dir /content/drive/MyDrive/oron-tts/checkpoints \
+    --resume
+```
+
+Relative paths such as `output/logs` live on Colab's ephemeral `/content/oron-tts`, not on Google Drive. Use absolute Drive paths when TensorBoard logs must persist.
 
 ### Inference
 
@@ -130,14 +143,14 @@ python scripts/infer.py \
 
 ## Mongolian Numbers
 
-|Input | Output                  |
-|------|-------------------------|
-| 10   | арван                   |
-| 25   | хорин тав               |
-| 100  | зуун                    |
-| 1-р  | нэгдүгээр               |
-| 2024 | хоёр мянга хорин дөрөв  |
-| 3/4  | дөрөвдүгээрийн гурав   |
+|Input    | Output                  |
+|---------|-------------------------|
+| 10      | арван                   |
+| 25      | хорин тав               |
+| 100     | зуун                    |
+| 1-р     | нэгдүгээр               |
+| 2024    | хоёр мянга хорин дөрөв  |
+| 3/4     | дөрөвдүгээрийн гурав    |
 | 2024-ны | хоёр мянга хорин дөрвөн |
 
 ## Environment
@@ -201,7 +214,7 @@ python scripts/train.py \
     --hf-repo btsee/oron-tts
 ```
 
-Metrics are logged to console (loss, val_loss, samples/s, ETA). Checkpoints land on the 50 GB volume and survive pod restarts — re-run the same command to resume.
+Metrics are logged to console (loss, val_loss, samples/s, ETA) and TensorBoard. Checkpoints land on the 50 GB volume and survive pod restarts. Logs are uploaded to Hugging Face under `tb_logs/` when `--push-to-hub` is used. To resume after a pod restart, re-run training with `--resume`.
 
 ### Cost
 
@@ -215,7 +228,7 @@ Terminate the pod (not just stop it) after training to end container disk billin
 
 ## Configuration
 
-Both configs use the same keys (all top-level, no nesting):
+All three configs use the same keys (all top-level, no `training:` nesting):
 
 ```yaml
 sample_rate: 24000
@@ -224,6 +237,9 @@ n_fft: 1024
 hop_length: 256
 
 batch_size: 16
+batch_size_type: frame      # "frame" = DynamicBatchSampler, "sample" = fixed
+frames_threshold: 3000      # 38400 for runpod.yaml, 48000 for colab.yaml
+max_samples: 8              # cap samples per frame-budget batch
 warmup_steps: 1000
 num_epochs: 500
 ema_decay: 0.9999
@@ -231,6 +247,9 @@ use_tqdm: true            # set false for RunPod container logs
 log_interval: 100
 save_interval: 5          # save a rotating checkpoint every N epochs
 max_checkpoints: 5        # keep this many rotating .pt files (+ f5tts_best.pt)
+audio_sample_interval: 10 # TensorBoard audio/mel diagnostics every N epochs
+gradient_checkpointing: true
+compile: true             # false in colab.yaml
 
 model:
   dim: 512               # 1024 for runpod.yaml

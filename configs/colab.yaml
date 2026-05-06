@@ -25,6 +25,7 @@ pin_memory: true
 log_interval: 50
 save_interval: 5
 max_checkpoints: 2
+audio_sample_interval: 10
 use_tqdm: true
 
 # CUDA (T4 — SM 7.5, fp16 only)
