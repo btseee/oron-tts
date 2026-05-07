@@ -90,7 +90,8 @@ python scripts/train.py \
     --config configs/runpod.yaml \
     --dataset btsee/mbspeech_mn \
     --push-to-hub \
-    --hf-repo btsee/oron-tts
+    --hf-repo btsee/oron-tts \
+    --hub-upload-interval 1
 ```
 
 Fine-tune from a pretrained F5-TTS checkpoint:
@@ -132,7 +133,10 @@ python scripts/infer.py \
 python scripts/infer.py \
     --checkpoint output/checkpoints/f5tts_best.pt \
     --text "Сайн байна уу" --lang mn \
-    --speed 1.0 --output out.wav
+    --speed 1.0 \
+    --cfg-strength 1.5 \
+    --max-chars-per-chunk 120 \
+    --output out.wav
 
 # Kazakh
 python scripts/infer.py \
@@ -140,6 +144,8 @@ python scripts/infer.py \
     --text "Сәлеметсіз бе" --lang kz \
     --output out_kz.wav
 ```
+
+Long inputs are split automatically at punctuation or word boundaries. This keeps each generated segment close to the 1-30 s training range and prevents long ref-free passages from turning into speech-like but unintelligible audio. Use `--max-chars-per-chunk 0` only for short texts or debugging.
 
 ## Mongolian Numbers
 
@@ -211,10 +217,11 @@ python scripts/train.py \
     --config configs/runpod.yaml \
     --dataset btsee/mbspeech_mn \
     --push-to-hub \
-    --hf-repo btsee/oron-tts
+    --hf-repo btsee/oron-tts \
+    --hub-upload-interval 1
 ```
 
-Metrics are logged to console (loss, val_loss, samples/s, ETA) and TensorBoard. Checkpoints land on the 50 GB volume and survive pod restarts. Logs are uploaded to Hugging Face under `tb_logs/` when `--push-to-hub` is used. To resume after a pod restart, re-run training with `--resume`.
+Metrics are logged to console (loss, val_loss, samples/s, ETA) and TensorBoard. Checkpoints land on the 50 GB volume and survive pod restarts. When `--push-to-hub` is used, checkpoints and TensorBoard logs are uploaded under `tb_logs/` at every checkpoint save and again at the end of training. To resume after a pod restart, re-run training with `--resume`.
 
 ### Cost
 

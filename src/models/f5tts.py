@@ -15,6 +15,7 @@ Usage (training):
 """
 
 import logging
+import re
 from pathlib import Path
 from typing import Any
 
@@ -33,6 +34,62 @@ _logger = logging.getLogger(__name__)
 # Characters present only in the Kazakh extra set; warn if seen in MN input
 # because the model has only been trained on the matching language tag.
 _KZ_ONLY_CHARS: frozenset[str] = frozenset("әғқңұһі")
+_DEFAULT_MAX_CHARS_PER_CHUNK = 120
+_DEFAULT_PAUSE_S = 0.25
+_MAJOR_BREAK_CHARS = ".!?…"
+_MINOR_BREAK_CHARS = ",;:"
+
+
+def _normalise_synthesis_text(text: str) -> str:
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _find_split_index(text: str, max_chars: int) -> int:
+    upper = min(max_chars, len(text))
+    lower = max(1, int(max_chars * 0.55))
+    for break_chars in (_MAJOR_BREAK_CHARS, _MINOR_BREAK_CHARS, " "):
+        for idx in range(upper, lower, -1):
+            if text[idx - 1] in break_chars:
+                return idx
+    return upper
+
+
+def split_text_for_synthesis(text: str, max_chars: int) -> list[str]:
+    """Split long text into inference chunks near punctuation or word boundaries."""
+    normalized = _normalise_synthesis_text(text)
+    if not normalized:
+        return []
+    if max_chars < 1:
+        return [normalized]
+
+    chunks: list[str] = []
+    remaining = normalized
+    while len(remaining) > max_chars:
+        split_at = _find_split_index(remaining, max_chars)
+        chunk = remaining[:split_at].strip()
+        if chunk:
+            chunks.append(chunk)
+        remaining = remaining[split_at:].strip()
+    if remaining:
+        chunks.append(remaining)
+    return chunks
+
+
+def _concat_with_pause(waveforms: list[torch.Tensor], sample_rate: int, pause_s: float) -> torch.Tensor:
+    if not waveforms:
+        return torch.empty(0)
+    if len(waveforms) == 1 or pause_s <= 0:
+        return torch.cat(waveforms)
+    pause_len = int(sample_rate * pause_s)
+    if pause_len <= 0:
+        return torch.cat(waveforms)
+    pause = torch.zeros(pause_len, dtype=waveforms[0].dtype)
+    parts: list[torch.Tensor] = []
+    for idx, waveform in enumerate(waveforms):
+        if idx > 0:
+            parts.append(pause)
+        parts.append(waveform)
+    return torch.cat(parts)
 
 
 def _stretch_text_to_len(token_ids: list[int], target_len: int) -> list[int]:
@@ -170,6 +227,9 @@ class F5TTS(nn.Module):
         sway_sampling_coef: float | None = -1.0,
         speed: float = 1.0,
         target_duration_s: float | None = None,
+        max_chars_per_chunk: int | None = _DEFAULT_MAX_CHARS_PER_CHUNK,
+        pause_s: float = _DEFAULT_PAUSE_S,
+        seed: int | None = None,
         device: str = "cuda",
     ) -> torch.Tensor:
         """Synthesize speech from text with optional reference audio.
@@ -185,6 +245,10 @@ class F5TTS(nn.Module):
             speed: Speaking-rate multiplier (>1 faster, <1 slower).
                 Ignored when ``target_duration_s`` is set.
             target_duration_s: Override target duration. Defaults to estimate.
+            max_chars_per_chunk: Split long input into chunks at punctuation or word boundaries.
+                Set to 0 or None to force a single generation.
+            pause_s: Silence inserted between chunks.
+            seed: Optional local seed for reproducible sampling.
             device: Inference device.
 
         Returns:
@@ -199,10 +263,78 @@ class F5TTS(nn.Module):
             raise ValueError(f"speed must be > 0, got {speed}")
         if target_duration_s is not None and target_duration_s <= 0:
             raise ValueError(f"target_duration_s must be > 0, got {target_duration_s}")
+        if max_chars_per_chunk is not None and max_chars_per_chunk < 0:
+            raise ValueError(f"max_chars_per_chunk must be >= 0, got {max_chars_per_chunk}")
+        if pause_s < 0:
+            raise ValueError(f"pause_s must be >= 0, got {pause_s}")
         self.eval()
         self.to(device)
 
         self._warn_lang_contamination(text, lang)
+        if ref_text:
+            self._warn_lang_contamination(ref_text, lang)
+
+        max_chars = max_chars_per_chunk or 0
+        chunks = split_text_for_synthesis(text, max_chars) if max_chars > 0 else [text.strip()]
+        chunks = [chunk for chunk in chunks if chunk]
+        if not chunks:
+            raise ValueError("text must not be empty")
+        if len(chunks) == 1:
+            return self._synthesize_segment(
+                text=chunks[0],
+                lang=lang,
+                ref_audio_path=ref_audio_path,
+                ref_text=ref_text,
+                n_steps=n_steps,
+                cfg_strength=cfg_strength,
+                sway_sampling_coef=sway_sampling_coef,
+                speed=speed,
+                target_duration_s=target_duration_s,
+                seed=seed,
+                device=device,
+            )
+
+        _logger.info("Splitting long synthesis request into %d chunks", len(chunks))
+        weights = [max(1, len(chunk.replace(" ", ""))) for chunk in chunks]
+        total_weight = sum(weights)
+        waveforms: list[torch.Tensor] = []
+        for idx, chunk in enumerate(chunks):
+            chunk_duration_s = None
+            if target_duration_s is not None:
+                chunk_duration_s = target_duration_s * weights[idx] / total_weight
+            chunk_seed = None if seed is None else seed + idx
+            waveforms.append(
+                self._synthesize_segment(
+                    text=chunk,
+                    lang=lang,
+                    ref_audio_path=ref_audio_path,
+                    ref_text=ref_text,
+                    n_steps=n_steps,
+                    cfg_strength=cfg_strength,
+                    sway_sampling_coef=sway_sampling_coef,
+                    speed=speed,
+                    target_duration_s=chunk_duration_s,
+                    seed=chunk_seed,
+                    device=device,
+                )
+            )
+        return _concat_with_pause(waveforms, self.sample_rate, pause_s)
+
+    def _synthesize_segment(
+        self,
+        text: str,
+        lang: str,
+        ref_audio_path: str | Path | None,
+        ref_text: str | None,
+        n_steps: int,
+        cfg_strength: float,
+        sway_sampling_coef: float | None,
+        speed: float,
+        target_duration_s: float | None,
+        seed: int | None,
+        device: str,
+    ) -> torch.Tensor:
+        """Synthesize one chunk that is short enough to match training lengths."""
 
         cleaner = self._text_cleaner
         audio_proc = self._audio_processor
@@ -221,7 +353,6 @@ class F5TTS(nn.Module):
                     "ref_audio_path was provided without ref_text; duration will fall back "
                     "to the ref-free estimate and the reference region will use filler text."
                 )
-            self._warn_lang_contamination(ref_text or "", lang)
             ref_wav, _ = audio_proc.load_audio(ref_audio_path)
             ref_wav = audio_proc.normalize_audio(ref_wav).to(device)
             ref_mel_raw = audio_proc.mel_spectrogram(ref_wav)  # [n_mels, T_ref]
@@ -276,6 +407,7 @@ class F5TTS(nn.Module):
             steps=n_steps,
             cfg_strength=cfg_strength,
             sway_sampling_coef=sway_sampling_coef,
+            seed=seed,
         )
         # gen_mel: [1, T_total, n_mels] → take target portion
         gen_mel = gen_mel[:, ref_len:, :].transpose(1, 2)  # [1, n_mels, target_len]

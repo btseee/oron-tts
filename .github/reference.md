@@ -160,7 +160,7 @@ SequentialLR:
 
 ### Monitoring
 
-`F5Trainer` logs to TensorBoard (step-level: `train/loss`, `train/lr`, `train/grad_norm`; epoch-level: `epoch/train_loss`, `epoch/val_loss`). Every `audio_sample_interval` epochs (default 10), synthesises diagnostic sentences with EMA weights and logs audio waveforms (`audio/mn/...`) and mel images (`mel/mn/...`). TensorBoard logs are uploaded to `tb_logs/` in the HuggingFace repo on `--push-to-hub`.
+`F5Trainer` logs to TensorBoard (step-level: `train/loss`, `train/lr`, `train/grad_norm`; epoch-level: `epoch/train_loss`, `epoch/val_loss`). Every `audio_sample_interval` epochs (default 10), synthesises diagnostic sentences with EMA weights and logs audio waveforms (`audio/mn/...`) and mel images (`mel/mn/...`). With `--push-to-hub`, checkpoints and TensorBoard logs are uploaded to HuggingFace `tb_logs/` at each checkpoint save and again at the end of training.
 
 `log_dir` is resolved to an absolute path and printed at trainer startup. In Colab, relative paths
 such as `output/logs` live on ephemeral `/content/oron-tts`, **not** Google Drive. Use an absolute
@@ -242,10 +242,17 @@ audio = model.synthesize(
     text="Сайн байна уу", lang="mn",
     speed=1.0,        # >1 faster, <1 slower
     n_steps=32,
+    cfg_strength=1.5,
+    max_chars_per_chunk=120,
 )
 ```
 
 Conditioning is zero; duration falls back to `chars * 13 / speed` frames. This is the OOD regime — expect lower fidelity than ref-based.
+
+Long text is split automatically at punctuation or word boundaries (`max_chars_per_chunk=120` by
+default) and concatenated with short silence (`pause_s=0.25`). Do not synthesize poems, chapters,
+or other long passages as one ref-free sequence; the training loader filters clips above 30 s, so
+single-pass long-form generation is out of distribution and usually becomes unintelligible.
 
 Inference validates inputs at the boundary:
 
@@ -254,6 +261,8 @@ Inference validates inputs at the boundary:
 - `cfg_strength >= 0`
 - `speed > 0`
 - `target_duration_s > 0` when provided
+- `max_chars_per_chunk >= 0` when provided
+- `pause_s >= 0`
 
 For Mongolian (`lang="mn"`), `F5TTS.synthesize()` warns if raw input contains Kazakh-only
 characters `ә ғ қ ң ұ һ і`, because that mixes `[LANG_MN]` conditioning with characters seen only
@@ -415,7 +424,7 @@ python scripts/prepare.py --output-dir data/processed --dataset all
 
 # Training
 python scripts/train.py --config configs/runpod.yaml --dataset btsee/mbspeech_mn \
-    --push-to-hub --hf-repo btsee/oron-tts
+  --push-to-hub --hf-repo btsee/oron-tts --hub-upload-interval 1
 
 # Colab training with persistent Drive logs/checkpoints
 python scripts/train.py --config configs/colab.yaml --dataset btsee/mbspeech_mn \
@@ -434,7 +443,8 @@ python scripts/infer.py --checkpoint output/checkpoints/f5tts_best.pt \
 
 # Inference — ref-free
 python scripts/infer.py --checkpoint output/checkpoints/f5tts_best.pt \
-    --text "Сайн байна уу" --lang mn --speed 1.0 --output out.wav
+  --text "Сайн байна уу" --lang mn --speed 1.0 \
+  --cfg-strength 1.5 --max-chars-per-chunk 120 --output out.wav
 ```
 
 ---

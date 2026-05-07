@@ -32,7 +32,7 @@ OronTTS is a non-autoregressive TTS system for Mongolian (Khalkha Cyrillic) and 
 - **Validation determinism**: `CFM.forward` switches to a fixed `t=0.5`, centred mid-fraction span, deterministic noise, and no CFG dropout when `self.training is False`. This makes `val_loss` comparable across epochs and prevents “best checkpoint” from being picked by RNG luck.
 - Optimizer: AdamW (`weight_decay=0.01`). Scheduler: `SequentialLR` — LinearLR warmup (`start_factor=1e-4`) for `warmup_steps`, then CosineAnnealingLR decaying to `eta_min=1e-6` over the remaining steps. EMA maintained via `torch_ema`.
 - **AMP**: Auto-detected — bf16 on SM≥8.0 (Ampere+), fp16 on SM<8.0 (Turing/T4), disabled on CPU. GradScaler used only for fp16.
-- **TensorBoard**: `F5Trainer` logs step-level (`train/loss`, `train/lr`, `train/grad_norm`) and epoch-level (`epoch/train_loss`, `epoch/val_loss`) metrics. Audio samples synthesised every `audio_sample_interval` epochs (default 10) and logged as `audio/mn/{tag}` + `mel/mn/{tag}`. TensorBoard logs are uploaded to HuggingFace `tb_logs/` on `--push-to-hub`.
+- **TensorBoard**: `F5Trainer` logs step-level (`train/loss`, `train/lr`, `train/grad_norm`) and epoch-level (`epoch/train_loss`, `epoch/val_loss`) metrics. Audio samples synthesised every `audio_sample_interval` epochs (default 10) and logged as `audio/mn/{tag}` + `mel/mn/{tag}`. With `--push-to-hub`, checkpoints and TensorBoard logs are uploaded to HuggingFace `tb_logs/` at each checkpoint save and again at the end of training.
 - **DynamicBatchSampler**: Frame-budget batching — sorts samples by duration, greedily packs batches where `sum(mel_frames) ≤ frames_threshold`. No samples are discarded.
 - **Gradient checkpointing**: Per-DiTBlock, enabled via `gradient_checkpointing: true` in config. Essential for T4/RTX 5070 Ti.
 - **torch.compile**: Compiles only `model.cfm.backbone` (DiT) with `dynamic=True`. Disabled on Colab T4 (`compile: false`). The CFM wrapper has Python branching that prevents compilation.
@@ -42,8 +42,9 @@ OronTTS is a non-autoregressive TTS system for Mongolian (Khalkha Cyrillic) and 
 
 1. **Voice cloning** — pass `ref_audio_path` and `ref_text` to `F5TTS.synthesize()`; the reference mel + transcript are used as conditioning and to set duration via the token-count ratio.
 2. **Ref-free** — omit `ref_audio_path`. Conditioning is zero, duration is estimated from char count and `speed` (default 1.0; use `--speed` on the CLI). This is the OOD regime; expect lower fidelity than ref-based.
-3. **Inference params**: `cfg_strength` (classifier-free guidance, default 2.0), `sway_sampling_coef` (sway sampling, default -1.0), `n_steps` (ODE steps, default 32), `speed` (rate multiplier, default 1.0).
-4. **Vocoder**: `F5TTS._get_vocos(device)` lazy-loads `Vocos.from_pretrained("charactr/vocos-mel-24khz")` on first call and caches it outside the `nn.Module` parameter tree. It is never saved in checkpoints.
+3. **Long-text inference**: `F5TTS.synthesize()` splits long text at punctuation or word boundaries by default (`max_chars_per_chunk=120`, `pause_s=0.25`). Do not generate poems/chapters as one ref-free sequence; training clips are capped at 30 s.
+4. **Inference params**: `cfg_strength` (classifier-free guidance, default 2.0), `sway_sampling_coef` (sway sampling, default -1.0), `n_steps` (ODE steps, default 32), `speed` (rate multiplier, default 1.0), `seed`, `max_chars_per_chunk`.
+5. **Vocoder**: `F5TTS._get_vocos(device)` lazy-loads `Vocos.from_pretrained("charactr/vocos-mel-24khz")` on first call and caches it outside the `nn.Module` parameter tree. It is never saved in checkpoints.
 
 ## Tokenizer
 
@@ -166,9 +167,9 @@ Training resume restores raw model weights and rebuilds the EMA tracker from `em
    - Loads from HF → cleans text → denoises audio → saves WAV + metadata.json
    - Or use `scripts/clean_local_cv.py --input cv_mn.tar.gz` for local archives.
 2. **Cloud training:** `python scripts/train.py --config configs/runpod.yaml --dataset btsee/mbspeech_mn`
-   - Pulls dataset from HF → trains F5-TTS → saves checkpoints → logs metrics to console.
-   - Resume: add `--resume` flag. Fine-tune: add `--pretrain-ckpt F5TTS_Base.safetensors`.
-   - Push to HF: add `--push-to-hub --hf-repo btsee/oron-tts`.
+    - Pulls dataset from HF → trains F5-TTS → saves checkpoints → logs metrics to console.
+    - Resume: add `--resume` flag. Fine-tune: add `--pretrain-ckpt F5TTS_Base.safetensors`.
+    - Push to HF: add `--push-to-hub --hf-repo btsee/oron-tts --hub-upload-interval 1`.
 
 Colab persistence: pass absolute Drive paths with `--log-dir` and `--checkpoint-dir`; relative paths such as `output/logs` stay on ephemeral `/content/oron-tts`.
 

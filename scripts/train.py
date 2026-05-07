@@ -19,6 +19,15 @@ from src.models.f5tts import F5TTS
 from src.training.trainer import F5Trainer
 
 
+def _resolve_hf_token(token: str | None) -> str | None:
+    return (
+        token
+        or os.getenv("HF_TOKEN")
+        or os.getenv("HUGGING_FACE_HUB_TOKEN")
+        or os.getenv("HUGGINGFACE_HUB_TOKEN")
+    )
+
+
 def load_config(config_path: str) -> dict:
     with open(config_path) as f:
         if config_path.endswith(".json"):
@@ -208,17 +217,33 @@ def train_worker(rank: int, world_size: int, config: dict, args: argparse.Namesp
         world_size=world_size,
         log_dir=args.log_dir,
         checkpoint_dir=args.checkpoint_dir,
+        hub_repo_id=args.hf_repo if args.push_to_hub and rank == 0 else None,
+        hub_token=args.hf_token,
+        hub_private=args.hub_private,
+        hub_upload_interval=args.hub_upload_interval,
     )
 
     if args.resume:
         trainer.load_checkpoint(load_best=args.resume_best)
 
     num_epochs = args.num_epochs or config.get("num_epochs", 500)
-    trainer.train(num_epochs=num_epochs, save_interval=config.get("save_interval", 5))
-
-    if rank == 0 and args.push_to_hub:
-        url = trainer.push_to_hub(args.hf_repo, token=args.hf_token)
-        print(f"Model pushed to: {url}")
+    train_completed = False
+    try:
+        trainer.train(num_epochs=num_epochs, save_interval=config.get("save_interval", 5))
+        train_completed = True
+    finally:
+        if rank == 0 and args.push_to_hub:
+            try:
+                url = trainer.push_to_hub(
+                    args.hf_repo,
+                    token=args.hf_token,
+                    private=args.hub_private,
+                )
+                print(f"Model and TensorBoard logs pushed to: {url}")
+            except Exception as exc:
+                if train_completed:
+                    raise
+                print(f"[WARN] Final HuggingFace upload skipped after interrupted run: {exc}")
 
     if world_size > 1:
         cleanup_distributed()
@@ -257,9 +282,19 @@ def main() -> None:
     parser.add_argument("--push-to-hub", action="store_true")
     parser.add_argument("--hf-repo", type=str, default="btsee/oron-tts")
     parser.add_argument("--hf-token", type=str, default=None)
+    parser.add_argument("--hub-private", action="store_true", help="Create/use a private HF repo")
+    parser.add_argument(
+        "--hub-upload-interval",
+        type=int,
+        default=1,
+        help="Upload checkpoints and TensorBoard logs every N checkpoint saves",
+    )
     parser.add_argument("--num-gpus", type=int, default=1)
     parser.add_argument("--num-epochs", type=int, default=None)
     args = parser.parse_args()
+    args.hf_token = _resolve_hf_token(args.hf_token)
+    if args.hub_upload_interval < 1:
+        parser.error("--hub-upload-interval must be >= 1")
 
     config = load_config(args.config)
     if args.num_epochs:

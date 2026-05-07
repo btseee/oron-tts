@@ -8,6 +8,10 @@ import torch
 from huggingface_hub import HfApi, hf_hub_download
 
 
+def _has_files(path: Path) -> bool:
+    return any(child.is_file() for child in path.rglob("*"))
+
+
 class CheckpointManager:
     def __init__(
         self,
@@ -218,7 +222,7 @@ Trained on [btsee/mbspeech_mn](https://huggingface.co/datasets/btsee/mbspeech_mn
 
 ## License
 
-Apache 2.0
+MIT
 """
 
     def push_to_hub(
@@ -243,7 +247,7 @@ Apache 2.0
         # browsable on HuggingFace without a separate wandb account.
         if log_dir is not None:
             log_path = Path(log_dir)
-            if log_path.exists() and any(log_path.iterdir()):
+            if log_path.exists() and _has_files(log_path):
                 api.upload_folder(
                     folder_path=str(log_path),
                     repo_id=repo_id,

@@ -147,8 +147,30 @@ def step_text_cleaner() -> None:
         _fail("TextCleaner", exc)
 
 
+def step_text_chunking() -> None:
+    _section("Step 4 — Long-text synthesis chunking")
+    try:
+        from src.models.f5tts import split_text_for_synthesis
+
+        text = (
+            "Хэнтий, Хангай, Соёны өндөр сайхан нуруунууд "
+            "Хойд зүгийн чимэг болсон ойн хөвч уулнууд "
+            "Мэнэн, Шарга, Номины өргөн их говиуд "
+            "Өмнө зүгийн манлай болсон элсэн манхан далайнууд"
+        )
+        chunks = split_text_for_synthesis(text, max_chars=80)
+        assert len(chunks) > 1, "long text should split into multiple chunks"
+        assert all(chunk.strip() == chunk for chunk in chunks), "chunks should be trimmed"
+        assert "" not in chunks, "chunks should not contain empty strings"
+        assert " ".join(chunks).replace(" ,", ",") == text, "chunks should preserve text"
+        _pass(f"long text split into {len(chunks)} chunks")
+
+    except Exception as exc:
+        _fail("text chunking", exc)
+
+
 def step_audio_processor() -> None:
-    _section("Step 4 — AudioProcessor mel spectrogram")
+    _section("Step 5 — AudioProcessor mel spectrogram")
     try:
         from src.utils.audio import AudioProcessor
 
@@ -173,7 +195,7 @@ def step_audio_processor() -> None:
 
 
 def step_dataset() -> None:
-    _section("Step 5 — TTSDataset with synthetic audio")
+    _section("Step 6 — TTSDataset with synthetic audio")
     try:
         from src.data.dataset import TTSDataset
 
@@ -200,7 +222,7 @@ def step_dataset() -> None:
 
 
 def step_collator() -> None:
-    _section("Step 6 — TTSCollator padding")
+    _section("Step 7 — TTSCollator padding")
     try:
         from torch.utils.data import DataLoader
 
@@ -236,7 +258,7 @@ def step_collator() -> None:
 
 def step_model_forward(cfg: dict) -> F5TTS | None:
     """Returns the model so downstream steps can reuse it."""
-    _section("Step 7 + 8 — Model instantiation and forward pass")
+    _section("Step 8 + 9 — Model instantiation and forward pass")
     try:
         from src.models.f5tts import F5TTS
 
@@ -285,7 +307,7 @@ def step_model_forward(cfg: dict) -> F5TTS | None:
 
 
 def step_backward(model: F5TTS | None) -> F5TTS | None:
-    _section("Step 9 — Backward pass (gradient check)")
+    _section("Step 10 — Backward pass (gradient check)")
     if model is None:
         print("  [SKIP] no model from step 7/8")
         return None
@@ -316,7 +338,7 @@ def step_backward(model: F5TTS | None) -> F5TTS | None:
 
 
 def step_trainer(model: F5TTS | None) -> None:
-    _section("Step 10 — F5Trainer.train_epoch (synthetic data)")
+    _section("Step 11 — F5Trainer.train_epoch (synthetic data)")
     if model is None:
         print("  [SKIP] no model from earlier steps")
         return
@@ -380,7 +402,7 @@ def step_trainer(model: F5TTS | None) -> None:
 
 
 def step_hf_dataset() -> None:
-    _section("Step 11 — HF dataset: btsee/mbspeech_mn (10 samples)")
+    _section("Step 12 — HF dataset: btsee/mbspeech_mn (10 samples)")
     try:
         import io
         from fractions import Fraction
@@ -461,6 +483,7 @@ def main() -> None:
     cfg = step_config()
     step_tokenizer()
     step_text_cleaner()
+    step_text_chunking()
     step_audio_processor()
     step_dataset()
     step_collator()

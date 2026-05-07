@@ -55,6 +55,10 @@ class F5Trainer:
         world_size: int = 1,
         log_dir: str = "logs",
         checkpoint_dir: str = "checkpoints",
+        hub_repo_id: str | None = None,
+        hub_token: str | None = None,
+        hub_private: bool = False,
+        hub_upload_interval: int = 1,
     ) -> None:
         self.config = config
         self.device = device
@@ -115,6 +119,11 @@ class F5Trainer:
         self._pending_loss_sum = 0.0
         self._pending_loss_count = 0
         self.log_dir = log_dir
+        self.hub_repo_id = hub_repo_id
+        self.hub_token = hub_token
+        self.hub_private = hub_private
+        self.hub_upload_interval = max(1, hub_upload_interval)
+        self._checkpoint_upload_count = 0
 
         if self.is_main:
             self.checkpoint_manager: CheckpointManager | None = CheckpointManager(
@@ -387,14 +396,37 @@ class F5Trainer:
                     self.writer.flush()
 
                 if self.epoch % save_interval == 0:
-                    self.save_checkpoint(is_best=is_best)
+                    saved_path = self.save_checkpoint(is_best=is_best)
+                    if saved_path is not None:
+                        self._maybe_push_to_hub()
 
         self.finish()
 
     def finish(self) -> None:
         """Close TensorBoard writer and cleanup."""
         if self.writer:
+            self.writer.flush()
             self.writer.close()
+            self.writer = None
+
+    def _maybe_push_to_hub(self) -> None:
+        if not self.is_main or self.hub_repo_id is None:
+            return
+        self._checkpoint_upload_count += 1
+        if self._checkpoint_upload_count < self.hub_upload_interval:
+            return
+        self._checkpoint_upload_count = 0
+        try:
+            url = self.push_to_hub(
+                self.hub_repo_id,
+                token=self.hub_token,
+                private=self.hub_private,
+            )
+            if self.logger:
+                self.logger.info("Uploaded checkpoints and TensorBoard logs to %s", url)
+        except Exception as exc:
+            if self.logger:
+                self.logger.warning("HuggingFace upload failed: %s", exc, exc_info=True)
 
     def _validate_with_ema(self) -> float:
         """Run validation using EMA weights if available, else raw weights."""
@@ -527,7 +559,19 @@ class F5Trainer:
         )
         raw_model.load_state_dict(raw_state)
 
-    def push_to_hub(self, repo_id: str, token: str | None = None) -> str:
+    def push_to_hub(
+        self,
+        repo_id: str,
+        token: str | None = None,
+        private: bool = False,
+    ) -> str:
         if self.checkpoint_manager is None:
             raise ValueError("CheckpointManager not initialized")
-        return self.checkpoint_manager.push_to_hub(repo_id, token=token, log_dir=self.log_dir)
+        if self.writer:
+            self.writer.flush()
+        return self.checkpoint_manager.push_to_hub(
+            repo_id,
+            token=token,
+            private=private,
+            log_dir=self.log_dir,
+        )
