@@ -175,16 +175,17 @@ HF_TOKEN=hf_...       # HuggingFace token — read + write scope
 
 | Field              | Value                                                                  |
 |--------------------|------------------------------------------------------------------------|
-| GPU                | **L40S**                                                               |
+| GPU                | **A100 80GB** preferred; **L40S/L40 48GB** budget option               |
 | GPU count          | **1**                                                                  |
 | Cloud tier         | **Secure Cloud**                                                       |
-| Template           | **RunPod PyTorch** (`runpod/pytorch:1.0.3-cu1290-torch280-ubuntu2404`) |
-| Container disk     | **20 GB**                                                              |
-| Volume disk        | **50 GB**                                                              |
-| Volume mount       | `/workspace`                                                           |
+| Template           | **RunPod PyTorch** (`runpod/pytorch:1.0.3-cu1300-torch291-ubuntu2404`) |
+| Container disk     | **50 GB**                                                              |
+| Network volume     | **150 GB** mounted at `/workspace`                                     |
 | `HF_TOKEN` env var | your HuggingFace token (read + write)                                  |
 
-The Base config peaks at ~13 GB VRAM; the L40S 48 GB gives a 3.5× margin. Add the env vars in the **Environment Variables** section of the pod creation form.
+Use a **Network Volume**, not only the default pod volume, for from-scratch runs. RunPod network volumes are persistent after pod termination, mount at `/workspace` for pods, and are available on Secure Cloud. A Base training checkpoint is about **6.4 GiB** in this repo because it saves model weights, AdamW state, scheduler state, and EMA weights; `max_checkpoints: 5` plus `f5tts_best.pt` is about **38 GiB** before TensorBoard logs, HuggingFace caches, Vocos cache, source checkout, and upload scratch space. Use **100 GB minimum**, **150 GB recommended**, and **200 GB** if you plan to keep multiple experiments on the same volume.
+
+Add the env vars in the **Environment Variables** section of the pod creation form. The setup script also writes non-secret cache defaults to `.env` so HuggingFace and Torch caches stay under `/workspace/.cache`.
 
 ### Setup
 
@@ -200,6 +201,8 @@ bash scripts/setup/runpod_setup.sh
 ```
 
 The script creates `.venv` with `--system-site-packages` (inherits pre-installed PyTorch + CUDA), installs project deps, and runs a 10-step smoke test. Close the tab at any time — re-attach with `tmux attach -t setup`.
+
+The RunPod image tag above is the current Ubuntu 24.04 PyTorch image checked during this setup pass. If RunPod has published a newer official PyTorch template by the time you launch, prefer the newest Ubuntu 24.04 PyTorch template with Python 3.12 and keep the same storage settings.
 
 If you skipped the env vars form, create `.env` instead (auto-loaded by `train.py`):
 

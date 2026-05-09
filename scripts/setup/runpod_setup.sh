@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # RunPod environment setup for OronTTS
-# Recommended image: runpod/pytorch:1.0.3-cu1290-torch280-ubuntu2404
+# Recommended image: runpod/pytorch:1.0.3-cu1300-torch291-ubuntu2404
 #   (Ubuntu 24.04 → system Python IS 3.12 → venv inherits pre-installed PyTorch)
+# Recommended storage: 50 GB container disk + 150 GB network volume mounted at /workspace
 # Run once after the pod starts:
 #   bash scripts/setup/runpod_setup.sh
 set -euo pipefail
@@ -30,9 +31,26 @@ fi
 python3.12 -m venv ${VENV_ARGS} .venv
 source .venv/bin/activate
 
+# Keep HuggingFace/Torch caches on the persistent RunPod volume instead of the
+# ephemeral container filesystem. Do not overwrite user-supplied secrets in .env.
+CACHE_ROOT="${RUNPOD_CACHE_ROOT:-/workspace/.cache}"
+mkdir -p "${CACHE_ROOT}/huggingface" "${CACHE_ROOT}/torch"
+
+append_env_default() {
+    local key="$1"
+    local value="$2"
+    if [[ ! -f .env ]] || ! grep -q "^${key}=" .env; then
+        printf "%s=%s\n" "${key}" "${value}" >> .env
+    fi
+    export "${key}=${value}"
+}
+
+append_env_default HF_HOME "${CACHE_ROOT}/huggingface"
+append_env_default TORCH_HOME "${CACHE_ROOT}/torch"
+
 # ── Python dependencies ────────────────────────────────────────────────────────
 pip install --upgrade pip --quiet
-pip install -e ".[dev]"
+pip install --no-cache-dir -e ".[dev,inference]"
 
 # Verify torch + CUDA
 python -c "import torch; print(f'PyTorch {torch.__version__}, CUDA available: {torch.cuda.is_available()}')"
@@ -44,4 +62,4 @@ python scripts/test_pipeline.py
 echo ""
 echo "Setup complete. Start training with:"
 echo "  source .venv/bin/activate"
-echo "  python scripts/train.py --config configs/runpod.yaml --dataset btsee/mbspeech_mn --num-gpus \$(nvidia-smi -L | wc -l)"
+echo "  python scripts/train.py --config configs/runpod.yaml --dataset btsee/mbspeech_mn --push-to-hub --hf-repo btsee/oron-tts --hub-upload-interval 1"

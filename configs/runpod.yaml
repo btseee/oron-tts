@@ -1,5 +1,6 @@
 # OronTTS F5-TTS RunPod Configuration
-# Hardware target: NVIDIA A100/L40 (RunPod)
+# Hardware target: 1x A100 80GB preferred, or 1x L40/L40S 48GB budget pod.
+# Storage target: 50 GB container disk + 150 GB network volume mounted at /workspace.
 
 # == Audio ==================================================================
 sample_rate: 24000
