@@ -7,7 +7,7 @@ import soundfile as sf
 import torch
 
 from src.models.f5tts import F5TTS, split_text_for_synthesis
-from src.utils.checkpoint import CheckpointManager
+from src.utils.checkpoint import CheckpointManager, adapt_state_dict_to_model
 
 
 def load_model(checkpoint_path: str, device: str, use_ema: bool = True) -> F5TTS:
@@ -27,6 +27,7 @@ def load_model(checkpoint_path: str, device: str, use_ema: bool = True) -> F5TTS
         else:
             print("Loading raw training weights (--no-ema)")
 
+    state = adapt_state_dict_to_model(state, model)
     missing, unexpected = model.load_state_dict(state, strict=False)
     if missing:
         print(f"[WARN] Missing keys: {len(missing)} (e.g. {missing[:3]})")
@@ -71,7 +72,9 @@ def main() -> None:
         help="Split long text into chunks; set 0 to disable chunking",
     )
     parser.add_argument("--pause-ms", type=int, default=250, help="Silence between chunks")
-    parser.add_argument("--seed", type=int, default=None, help="Optional reproducible sampling seed")
+    parser.add_argument(
+        "--seed", type=int, default=None, help="Optional reproducible sampling seed"
+    )
     parser.add_argument("--no-ema", action="store_true", help="Use raw weights instead of EMA")
     parser.add_argument("--device", type=str, default=None)
     args = parser.parse_args()

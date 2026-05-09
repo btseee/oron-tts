@@ -23,6 +23,7 @@ dependencies = [
     # PyTorch - don't pin to allow RunPod's pre-installed version
     "torch>=2.1.0",
     "torchaudio>=2.1.0",
+    "torchcodec>=0.11.0",
     # Core dependencies
     "numpy>=1.24.0",
     "scipy>=1.11.0",

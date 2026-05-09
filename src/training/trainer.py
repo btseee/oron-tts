@@ -107,11 +107,7 @@ class F5Trainer:
 
         # AMP (automatic mixed precision)
         self.amp_dtype = _detect_amp_dtype(device)
-        self.scaler = (
-            GradScaler("cuda")
-            if self.amp_dtype == torch.float16
-            else None
-        )
+        self.scaler = GradScaler("cuda") if self.amp_dtype == torch.float16 else None
 
         self.global_step = 0
         self.epoch = 0
@@ -198,7 +194,9 @@ class F5Trainer:
         grad_norm = self._grad_norm()
         if not math.isfinite(grad_norm):
             if self.is_main and self.logger:
-                self.logger.warning("Skipping optimizer step due to non-finite grad_norm=%s", grad_norm)
+                self.logger.warning(
+                    "Skipping optimizer step due to non-finite grad_norm=%s", grad_norm
+                )
             self.optimizer.zero_grad(set_to_none=True)
             self._clear_pending_loss()
             if self.scaler is not None:
@@ -239,7 +237,9 @@ class F5Trainer:
 
         if not bool(torch.isfinite(loss.detach()).item()):
             if self.is_main and self.logger:
-                self.logger.warning("Skipping batch due to non-finite loss=%s", loss.detach().item())
+                self.logger.warning(
+                    "Skipping batch due to non-finite loss=%s", loss.detach().item()
+                )
             self.optimizer.zero_grad(set_to_none=True)
             self._clear_pending_loss()
             return None
@@ -396,7 +396,7 @@ class F5Trainer:
                     self.writer.flush()
 
                 if self.epoch % save_interval == 0:
-                    saved_path = self.save_checkpoint(is_best=is_best)
+                    saved_path = self.save_checkpoint(is_best=is_best, loss=avg_loss)
                     if saved_path is not None:
                         self._maybe_push_to_hub()
 
@@ -468,7 +468,9 @@ class F5Trainer:
                 wav = raw_model.synthesize(text, lang=lang, device=self.device, n_steps=16)
                 # wav: [T_samples] CPU float32
                 self.writer.add_audio(
-                    f"audio/{tag}", wav.unsqueeze(0).float(), epoch,
+                    f"audio/{tag}",
+                    wav.unsqueeze(0).float(),
+                    epoch,
                     sample_rate=raw_model.sample_rate,
                 )
                 mel = raw_model._audio_processor.mel_spectrogram(wav.unsqueeze(0))
@@ -502,12 +504,10 @@ class F5Trainer:
                 n += 1
         return total_loss / max(n, 1)
 
-    def save_checkpoint(self, is_best: bool = False) -> Path | None:
+    def save_checkpoint(self, is_best: bool = False, loss: float | None = None) -> Path | None:
         if self.checkpoint_manager is None:
             return None
-        raw_model: nn.Module = (
-            self.model.module if isinstance(self.model, DDP) else self.model
-        )
+        raw_model: nn.Module = self.model.module if isinstance(self.model, DDP) else self.model
         ema_state = None
         if self.ema:
             with self.ema.average_parameters():
@@ -519,6 +519,7 @@ class F5Trainer:
             optimizer=self.optimizer,
             scheduler=self.scheduler,
             ema_state=ema_state,
+            loss=loss,
             config=self.config,
             is_best=is_best,
             extra_state={"epoch": self.epoch, "best_val": self._best_val},

@@ -1,15 +1,41 @@
 """Checkpoint management for F5-TTS training and inference."""
 
 import json
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
 import torch
 from huggingface_hub import HfApi, hf_hub_download
 
+_ORIG_MOD_MARKER = "._orig_mod."
+
 
 def _has_files(path: Path) -> bool:
     return any(child.is_file() for child in path.rglob("*"))
+
+
+def _strip_orig_mod_key(key: str) -> str:
+    return key.replace(_ORIG_MOD_MARKER, ".")
+
+
+def _strip_orig_mod_state_dict(
+    state_dict: Mapping[str, torch.Tensor],
+) -> dict[str, torch.Tensor]:
+    return {_strip_orig_mod_key(key): value for key, value in state_dict.items()}
+
+
+def adapt_state_dict_to_model(
+    state_dict: Mapping[str, torch.Tensor],
+    model: torch.nn.Module,
+) -> dict[str, torch.Tensor]:
+    """Map eager/compiled state-dict keys onto the target model's key style."""
+    target_by_normalized_key = {_strip_orig_mod_key(key): key for key in model.state_dict()}
+    adapted: dict[str, torch.Tensor] = {}
+    for key, value in state_dict.items():
+        target_key = target_by_normalized_key.get(_strip_orig_mod_key(key), key)
+        adapted[target_key] = value
+    return adapted
 
 
 class CheckpointManager:
@@ -47,14 +73,14 @@ class CheckpointManager:
     ) -> Path:
         checkpoint: dict[str, Any] = {
             "step": step,
-            "model_state_dict": model.state_dict(),
+            "model_state_dict": _strip_orig_mod_state_dict(model.state_dict()),
             "optimizer_state_dict": optimizer.state_dict(),
             "loss": loss,
         }
         if scheduler is not None:
             checkpoint["scheduler_state_dict"] = scheduler.state_dict()
         if ema_state is not None:
-            checkpoint["ema_state_dict"] = ema_state
+            checkpoint["ema_state_dict"] = _strip_orig_mod_state_dict(ema_state)
         if extra_state is not None:
             checkpoint.update(extra_state)
 
@@ -87,7 +113,8 @@ class CheckpointManager:
             return {"step": 0, "loss": None, "ema_state_dict": None}
 
         checkpoint = torch.load(path, map_location=device, weights_only=False)
-        model.load_state_dict(checkpoint["model_state_dict"])
+        model_state = adapt_state_dict_to_model(checkpoint["model_state_dict"], model)
+        model.load_state_dict(model_state)
 
         if optimizer is not None and "optimizer_state_dict" in checkpoint:
             optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
@@ -130,8 +157,30 @@ class CheckpointManager:
             elif "ema_model_state_dict" in state_dict:
                 state_dict = state_dict["ema_model_state_dict"]
 
-        missing, unexpected = model.load_state_dict(state_dict, strict=strict)
-        return {"missing_keys": missing, "unexpected_keys": unexpected}
+        if strict:
+            state_dict = adapt_state_dict_to_model(state_dict, model)
+            missing, unexpected = model.load_state_dict(state_dict, strict=True)
+            return {"missing_keys": missing, "unexpected_keys": unexpected, "skipped_keys": []}
+
+        model_state = model.state_dict()
+        state_dict = adapt_state_dict_to_model(state_dict, model)
+        compatible_state: dict[str, torch.Tensor] = {}
+        skipped_keys: list[str] = []
+        for key, value in state_dict.items():
+            if key not in model_state:
+                compatible_state[key] = value
+                continue
+            if model_state[key].shape == value.shape:
+                compatible_state[key] = value
+            else:
+                skipped_keys.append(key)
+
+        missing, unexpected = model.load_state_dict(compatible_state, strict=False)
+        return {
+            "missing_keys": missing,
+            "unexpected_keys": unexpected,
+            "skipped_keys": skipped_keys,
+        }
 
     def _get_latest_checkpoint(self) -> Path | None:
         checkpoints = sorted(

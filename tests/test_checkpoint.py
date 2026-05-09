@@ -1,0 +1,70 @@
+from pathlib import Path
+
+import torch
+
+from src.models.f5tts import F5TTS
+from src.utils.checkpoint import CheckpointManager
+
+
+def _tiny_config() -> dict[str, object]:
+    return {
+        "sample_rate": 24000,
+        "n_fft": 1024,
+        "hop_length": 256,
+        "n_mels": 100,
+        "model": {
+            "vocab_size": 65,
+            "dim": 64,
+            "depth": 1,
+            "heads": 2,
+            "ff_mult": 2,
+            "text_dim": 32,
+            "conv_layers": 1,
+        },
+    }
+
+
+def _compiled_backbone_state_dict(model: F5TTS) -> dict[str, torch.Tensor]:
+    compiled_state: dict[str, torch.Tensor] = {}
+    for key, value in model.state_dict().items():
+        if key.startswith("cfm.backbone."):
+            key = key.replace("cfm.backbone.", "cfm.backbone._orig_mod.", 1)
+        compiled_state[key] = value.clone()
+    return compiled_state
+
+
+def test_load_accepts_compiled_backbone_checkpoint(tmp_path: Path) -> None:
+    source = F5TTS.from_config(_tiny_config())
+    target = F5TTS.from_config(_tiny_config())
+    checkpoint_path = tmp_path / "compiled.pt"
+    torch.save(
+        {
+            "step": 12,
+            "loss": 0.25,
+            "model_state_dict": _compiled_backbone_state_dict(source),
+        },
+        checkpoint_path,
+    )
+
+    info = CheckpointManager(tmp_path).load(target, path=checkpoint_path)
+
+    assert info["step"] == 12
+    assert info["loss"] == 0.25
+    for key, value in source.state_dict().items():
+        assert torch.equal(target.state_dict()[key], value)
+
+
+def test_load_pretrained_skips_incompatible_shapes(tmp_path: Path) -> None:
+    model = F5TTS.from_config(_tiny_config())
+    state = {key: value.clone() for key, value in model.state_dict().items()}
+    state["cfm.backbone.text_embed.text_embed.weight"] = torch.randn(10, 32)
+    checkpoint_path = tmp_path / "pretrained.pt"
+    torch.save({"model_state_dict": state}, checkpoint_path)
+
+    result = CheckpointManager(tmp_path).load_pretrained_f5tts(
+        model,
+        checkpoint_path,
+        strict=False,
+    )
+
+    assert result["skipped_keys"] == ["cfm.backbone.text_embed.text_embed.weight"]

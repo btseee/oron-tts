@@ -203,9 +203,13 @@ def train_worker(rank: int, world_size: int, config: dict, args: argparse.Namesp
         cm = CheckpointManager(args.checkpoint_dir)
         info = cm.load_pretrained_f5tts(model, args.pretrain_ckpt, device=device)
         if rank == 0:
+            skipped = info.get("skipped_keys", [])
             print(
-                f"Loaded pretrained weights. Missing: {len(info['missing_keys'])}, Unexpected: {len(info['unexpected_keys'])}"
+                f"Loaded pretrained weights. Missing: {len(info['missing_keys'])}, "
+                f"Unexpected: {len(info['unexpected_keys'])}, Shape-skipped: {len(skipped)}"
             )
+            if skipped:
+                print(f"[WARN] Shape-skipped pretrained keys (first 5): {skipped[:5]}")
 
     trainer = F5Trainer(
         config=config,
