@@ -28,6 +28,14 @@ def _resolve_hf_token(token: str | None) -> str | None:
     )
 
 
+def _metadata_attr_tokens(value: object) -> list[str]:
+    if isinstance(value, list):
+        return [str(token) for token in value]
+    if isinstance(value, str) and value.strip():
+        return [value.strip()]
+    return []
+
+
 def load_config(config_path: str) -> dict:
     with open(config_path) as f:
         if config_path.endswith(".json"):
@@ -68,13 +76,20 @@ def train_worker(rank: int, world_size: int, config: dict, args: argparse.Namesp
     if not args.from_local:
         if rank == 0:
             print(f"[Rank {rank}] Loading dataset from HuggingFace: {args.dataset}")
-        wrapper = HFDatasetWrapper(args.dataset, cache_dir=args.cache_dir, sample_rate=sample_rate)
-        hf_dataset = wrapper.load(split="train")
+        wrapper = HFDatasetWrapper(
+            args.dataset,
+            dataset_config=args.dataset_config,
+            cache_dir=args.cache_dir,
+            sample_rate=sample_rate,
+        )
+        hf_dataset = wrapper.load(split=args.split)
         train_dataset = TTSDataset.from_hf_dataset(
             hf_dataset,
             audio_column=args.audio_column,
             text_column=args.text_column,
             lang_column=args.lang_column,
+            gender_column=args.gender_column,
+            age_column=args.age_column,
             sample_rate=sample_rate,
             n_mels=n_mels,
             default_lang=default_lang,
@@ -86,12 +101,14 @@ def train_worker(rank: int, world_size: int, config: dict, args: argparse.Namesp
         audio_paths = [Path(m["audio_path"]) for m in metadata]
         texts = [m["text"] for m in metadata]
         langs = [m.get("lang", default_lang) for m in metadata]
+        attr_tokens_list = [_metadata_attr_tokens(m.get("attr_tokens")) for m in metadata]
         train_dataset = TTSDataset(
             audio_paths=audio_paths,
             texts=texts,
             langs=langs,
             sample_rate=sample_rate,
             n_mels=n_mels,
+            attr_tokens_list=attr_tokens_list,
         )
 
     if rank == 0:
@@ -262,9 +279,28 @@ def main() -> None:
         "--from-local", action="store_true", help="Use local metadata.json instead of HF"
     )
     parser.add_argument("--dataset", type=str, default="btsee/mbspeech_mn")
+    parser.add_argument(
+        "--dataset-config",
+        type=str,
+        default=None,
+        help="Optional Hugging Face dataset config/subset, e.g. mn_mn for google/fleurs",
+    )
+    parser.add_argument("--split", type=str, default="train")
     parser.add_argument("--audio-column", type=str, default="audio")
     parser.add_argument("--text-column", type=str, default=None)
     parser.add_argument("--lang-column", type=str, default=None)
+    parser.add_argument(
+        "--gender-column",
+        type=str,
+        default=None,
+        help="Optional metadata column mapped to [FEMALE]/[MALE] attr tokens",
+    )
+    parser.add_argument(
+        "--age-column",
+        type=str,
+        default=None,
+        help="Optional metadata column mapped to [YOUNG]/[MIDDLE]/[ELDERLY] attr tokens",
+    )
     parser.add_argument(
         "--lang",
         type=str,

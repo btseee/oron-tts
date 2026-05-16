@@ -10,10 +10,12 @@ class HFDatasetWrapper:
     def __init__(
         self,
         dataset_name: str,
+        dataset_config: str | None = None,
         cache_dir: str | Path | None = None,
         sample_rate: int = 24000,
     ) -> None:
         self.dataset_name = dataset_name
+        self.dataset_config = dataset_config
         self.cache_dir = Path(cache_dir) if cache_dir else None
         self.sample_rate = sample_rate
         self._dataset: Dataset | DatasetDict | None = None
@@ -27,6 +29,8 @@ class HFDatasetWrapper:
             "path": self.dataset_name,
             "streaming": streaming,
         }
+        if self.dataset_config:
+            kwargs["name"] = self.dataset_config
         if self.cache_dir:
             kwargs["cache_dir"] = str(self.cache_dir)
         if split:
@@ -71,10 +75,11 @@ class HFDatasetWrapper:
 class CommonVoiceWrapper(HFDatasetWrapper):
     def __init__(
         self,
+        dataset_config: str | None = None,
         cache_dir: str | Path | None = None,
         sample_rate: int = 24000,
     ) -> None:
-        super().__init__("btsee/common-voices-24-mn", cache_dir, sample_rate)
+        super().__init__("btsee/common-voices-24-mn", dataset_config, cache_dir, sample_rate)
 
     def load(self, split: str = "train", streaming: bool = False) -> Dataset | DatasetDict:
         return super().load(split=split, streaming=streaming)
@@ -89,10 +94,11 @@ class CommonVoiceWrapper(HFDatasetWrapper):
 class MBSpeechWrapper(HFDatasetWrapper):
     def __init__(
         self,
+        dataset_config: str | None = None,
         cache_dir: str | Path | None = None,
         sample_rate: int = 24000,
     ) -> None:
-        super().__init__("btsee/mbspeech_mn", cache_dir, sample_rate)
+        super().__init__("btsee/mbspeech_mn", dataset_config, cache_dir, sample_rate)
 
     def load(self, split: str = "train", streaming: bool = False) -> Dataset | DatasetDict:
         return super().load(split=split, streaming=streaming)

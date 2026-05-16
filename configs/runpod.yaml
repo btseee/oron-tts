@@ -1,6 +1,8 @@
 # OronTTS F5-TTS RunPod Configuration
-# Hardware target: 1x A100 80GB preferred, or 1x L40/L40S 48GB budget pod.
-# Storage target: 50 GB container disk + 150 GB network volume mounted at /workspace.
+# Hardware target: 1x NVIDIA RTX PRO 4500 32GB on RunPod Secure Cloud.
+# Pod shape: 32 GB VRAM, 62 GB RAM, 28 vCPU, 80 GB total disk.
+# Template: Runpod Pytorch 2.8.0 (runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404).
+# Storage target: 80 GB total disk minimum; increase before keeping multiple datasets/runs.
 
 # == Audio ==================================================================
 sample_rate: 24000
@@ -12,7 +14,7 @@ n_mels: 100
 # == Logging ===============================================================
 
 # == Training ===============================================================
-batch_size: 32
+batch_size: 8
 num_epochs: 500
 learning_rate: 1.0e-4
 betas: [0.9, 0.999]
@@ -21,14 +23,14 @@ ema_decay: 0.9999
 max_grad_norm: 1.0
 grad_accumulation_steps: 1
 batch_size_type: frame
-frames_threshold: 38400
-max_samples: 32
-num_workers: 8
-prefetch_factor: 4
+frames_threshold: 24000
+max_samples: 24
+num_workers: 10
+prefetch_factor: 2
 pin_memory: true
 log_interval: 50
 save_interval: 5
-max_checkpoints: 5
+max_checkpoints: 2
 audio_sample_interval: 10
 use_tqdm: false
 
@@ -36,7 +38,7 @@ use_tqdm: false
 cudnn_benchmark: true
 use_tf32: true
 compile: true
-gradient_checkpointing: false
+gradient_checkpointing: true
 
 # == Model (F5-TTS Base -- compatible with pretrained checkpoint) ===========
 model:

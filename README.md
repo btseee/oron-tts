@@ -175,15 +175,18 @@ HF_TOKEN=hf_...       # HuggingFace token — read + write scope
 
 | Field              | Value                                                                  |
 |--------------------|------------------------------------------------------------------------|
-| GPU                | **A100 80GB** preferred; **L40S/L40 48GB** budget option               |
+| GPU                | **RTX PRO 4500 32GB**                                                  |
 | GPU count          | **1**                                                                  |
+| RAM / CPU          | **62 GB RAM / 28 vCPU**                                                |
 | Cloud tier         | **Secure Cloud**                                                       |
-| Template           | **RunPod PyTorch** (`runpod/pytorch:1.0.3-cu1300-torch291-ubuntu2404`) |
-| Container disk     | **50 GB**                                                              |
-| Network volume     | **150 GB** mounted at `/workspace`                                     |
+| Template           | **Runpod Pytorch 2.8.0**                                               |
+| Image              | `runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404`                      |
+| Total disk         | **80 GB minimum**                                                      |
 | `HF_TOKEN` env var | your HuggingFace token (read + write)                                  |
 
-Use a **Network Volume**, not only the default pod volume, for from-scratch runs. RunPod network volumes are persistent after pod termination, mount at `/workspace` for pods, and are available on Secure Cloud. A Base training checkpoint is about **6.4 GiB** in this repo because it saves model weights, AdamW state, scheduler state, and EMA weights; `max_checkpoints: 5` plus `f5tts_best.pt` is about **38 GiB** before TensorBoard logs, HuggingFace caches, Vocos cache, source checkout, and upload scratch space. Use **100 GB minimum**, **150 GB recommended**, and **200 GB** if you plan to keep multiple experiments on the same volume.
+The RTX PRO 4500 profile keeps the Base model but lowers the frame budget for 32 GB VRAM: `frames_threshold: 24000`, `max_samples: 24`, `batch_size: 8`, `gradient_checkpointing: true`, and `max_checkpoints: 2`. If the pod screen says **Total disk: 40 GB**, do not use it for the full from-scratch run. The setup script now expects at least **70 GB free** under `/workspace`; set `ORON_ALLOW_SMALL_DISK=1` only for a smoke-test setup.
+
+An 80 GB disk is tight but usable for a single MBSpeech-only run because this config keeps two rotating checkpoints plus `f5tts_best.pt`. A Base training checkpoint is about **6.4 GiB** in this repo because it saves model weights, AdamW state, scheduler state, and EMA weights; this profile reserves about **19 GiB** for retained checkpoints before TensorBoard logs, HuggingFace caches, Vocos cache, source checkout, and upload scratch space. Increase storage before keeping multiple experiments or adding full Common Voice/FLEURS caches.
 
 Add the env vars in the **Environment Variables** section of the pod creation form. The setup script also writes non-secret cache defaults to `.env` so HuggingFace and Torch caches stay under `/workspace/.cache`.
 
@@ -202,7 +205,7 @@ bash scripts/setup/runpod_setup.sh
 
 The script creates `.venv` with `--system-site-packages` (inherits pre-installed PyTorch + CUDA), installs project deps, and runs a 10-step smoke test. Close the tab at any time — re-attach with `tmux attach -t setup`.
 
-The RunPod image tag above is the current Ubuntu 24.04 PyTorch image checked during this setup pass. If RunPod has published a newer official PyTorch template by the time you launch, prefer the newest Ubuntu 24.04 PyTorch template with Python 3.12 and keep the same storage settings.
+From the templates listed in the RunPod UI, choose **Runpod Pytorch 2.8.0**. The older PyTorch templates in that list use Python 3.10 or 3.11, and this project is pinned to Python 3.12.
 
 If you skipped the env vars form, create `.env` instead (auto-loaded by `train.py`):
 
@@ -224,15 +227,41 @@ python scripts/train.py \
     --hub-upload-interval 1
 ```
 
-Metrics are logged to console (loss, val_loss, samples/s, ETA) and TensorBoard. Checkpoints land on the 50 GB volume and survive pod restarts. When `--push-to-hub` is used, checkpoints and TensorBoard logs are uploaded under `tb_logs/` at every checkpoint save and again at the end of training. To resume after a pod restart, re-run training with `--resume`.
+Official Hugging Face datasets that require a config/subset are supported with `--dataset-config`. Examples:
+
+```bash
+# FLEURS Mongolian
+python scripts/train.py \
+    --config configs/runpod.yaml \
+    --dataset google/fleurs \
+    --dataset-config mn_mn \
+    --text-column transcription \
+    --lang mn
+
+# Common Voice Mongolian; version may change on Hugging Face
+python scripts/train.py \
+    --config configs/runpod.yaml \
+    --dataset mozilla-foundation/common_voice_17_0 \
+    --dataset-config mn \
+    --text-column sentence \
+    --gender-column gender \
+    --age-column age \
+    --lang mn
+```
+
+When `--gender-column` or `--age-column` is provided, known values are mapped into the tokenizer's existing `[FEMALE]`, `[MALE]`, `[YOUNG]`, `[MIDDLE]`, and `[ELDERLY]` tags. Unknown or missing metadata is ignored.
+
+Metrics are logged to console (loss, val_loss, samples/s, ETA) and TensorBoard. Checkpoints land under `output/checkpoints` on the pod disk unless you pass another `--checkpoint-dir`. When `--push-to-hub` is used, checkpoints and TensorBoard logs are uploaded under `tb_logs/` at every checkpoint save and again at the end of training. To resume after a pod restart, re-run training with `--resume`.
 
 ### Cost
 
-| Scenario                | Cost at ~$0.86/hr |
-|-------------------------|-------------------|
-| Smoke test (< 5 min)    | < $0.08           |
-| 1 epoch × 3 846 samples | ~$0.21            |
-| 500 epochs (full run)   | ~$107             |
+Use the RTX PRO 4500 hourly price shown in the RunPod UI. With MBSpeech only, the old L40S timing estimate was roughly 15 minutes per epoch, but this 32 GB profile enables gradient checkpointing and uses a smaller frame budget, so expect it to be slower. A 500-epoch from-scratch run is a multi-day experiment; multiply the observed first-epoch time by 500 before committing to the full run.
+
+| Scenario                | Estimate                                               |
+|-------------------------|--------------------------------------------------------|
+| Smoke test              | Usually under 5 minutes                                |
+| 1 epoch × 3 846 samples | Measure after epoch 1 on this exact pod                |
+| 500 epochs              | `first_epoch_minutes * 500 / 60 * hourly_price`        |
 
 Terminate the pod (not just stop it) after training to end container disk billing.
 
@@ -246,17 +275,17 @@ n_mels: 100
 n_fft: 1024
 hop_length: 256
 
-batch_size: 16
+batch_size: 8
 batch_size_type: frame      # "frame" = DynamicBatchSampler, "sample" = fixed
-frames_threshold: 3000      # 38400 for runpod.yaml, 48000 for colab.yaml
-max_samples: 8              # cap samples per frame-budget batch
+frames_threshold: 3000      # 24000 for runpod.yaml, 48000 for colab.yaml
+max_samples: 8              # 24 for runpod.yaml; cap samples per frame-budget batch
 warmup_steps: 1000
 num_epochs: 500
 ema_decay: 0.9999
 use_tqdm: true            # set false for RunPod container logs
 log_interval: 100
 save_interval: 5          # save a rotating checkpoint every N epochs
-max_checkpoints: 5        # keep this many rotating .pt files (+ f5tts_best.pt)
+max_checkpoints: 2        # runpod.yaml disk-safe default (+ f5tts_best.pt)
 audio_sample_interval: 10 # TensorBoard audio/mel diagnostics every N epochs
 gradient_checkpointing: true
 compile: true             # false in colab.yaml

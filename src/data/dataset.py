@@ -2,8 +2,9 @@
 
 import io
 import logging
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 import numpy as np
 import soundfile as sf
@@ -16,6 +17,47 @@ from src.utils.audio import AudioProcessor
 from src.utils.text_cleaner import TextCleaner
 
 _logger = logging.getLogger(__name__)
+
+_GENDER_ATTR_TOKENS: Final[dict[str, str]] = {
+    "female": "[FEMALE]",
+    "f": "[FEMALE]",
+    "woman": "[FEMALE]",
+    "women": "[FEMALE]",
+    "girl": "[FEMALE]",
+    "male": "[MALE]",
+    "m": "[MALE]",
+    "man": "[MALE]",
+    "men": "[MALE]",
+    "boy": "[MALE]",
+}
+
+_AGE_ATTR_TOKENS: Final[dict[str, str]] = {
+    "child": "[YOUNG]",
+    "teen": "[YOUNG]",
+    "teens": "[YOUNG]",
+    "twenties": "[YOUNG]",
+    "20s": "[YOUNG]",
+    "young": "[YOUNG]",
+    "adult": "[MIDDLE]",
+    "thirties": "[MIDDLE]",
+    "forties": "[MIDDLE]",
+    "fourties": "[MIDDLE]",
+    "fifties": "[MIDDLE]",
+    "30s": "[MIDDLE]",
+    "40s": "[MIDDLE]",
+    "50s": "[MIDDLE]",
+    "middle": "[MIDDLE]",
+    "sixties": "[ELDERLY]",
+    "seventies": "[ELDERLY]",
+    "eighties": "[ELDERLY]",
+    "nineties": "[ELDERLY]",
+    "60s": "[ELDERLY]",
+    "70s": "[ELDERLY]",
+    "80s": "[ELDERLY]",
+    "90s": "[ELDERLY]",
+    "elderly": "[ELDERLY]",
+    "senior": "[ELDERLY]",
+}
 
 
 def _stretch_text_to_len(token_ids: list[int], target_len: int) -> list[int]:
@@ -50,6 +92,36 @@ def _decode_audio_bytes(raw_bytes: bytes, target_sr: int) -> np.ndarray:
     return audio_array
 
 
+def _normalize_metadata_value(value: Any) -> str:
+    return str(value).strip().lower().replace("-", "_").replace(" ", "_")
+
+
+def _lookup_attr_token(value: Any, mapping: Mapping[str, str]) -> str | None:
+    if value is None:
+        return None
+    normalized = _normalize_metadata_value(value)
+    if not normalized or normalized in {"none", "null", "nan", "other", "unknown"}:
+        return None
+    return mapping.get(normalized)
+
+
+def _attr_tokens_from_metadata(
+    item: Mapping[str, Any],
+    gender_column: str | None = None,
+    age_column: str | None = None,
+) -> list[str]:
+    tokens: list[str] = []
+    if gender_column and gender_column in item:
+        gender_token = _lookup_attr_token(item[gender_column], _GENDER_ATTR_TOKENS)
+        if gender_token:
+            tokens.append(gender_token)
+    if age_column and age_column in item:
+        age_token = _lookup_attr_token(item[age_column], _AGE_ATTR_TOKENS)
+        if age_token:
+            tokens.append(age_token)
+    return tokens
+
+
 class TTSDataset(Dataset):
     """Dataset for F5-TTS training.
 
@@ -71,6 +143,7 @@ class TTSDataset(Dataset):
         max_duration_s: float = 30.0,
         audio_arrays: list[np.ndarray] | None = None,
         audio_bytes_list: list[bytes] | None = None,
+        attr_tokens_list: list[list[str]] | None = None,
     ) -> None:
         if audio_paths is not None:
             self.audio_paths: list[Path] | None = [Path(p) for p in audio_paths]
@@ -93,9 +166,12 @@ class TTSDataset(Dataset):
         if texts is None:
             raise ValueError("texts must be provided")
         assert self._len == len(texts), "Audio and text lengths must match"
+        if attr_tokens_list is not None and self._len != len(attr_tokens_list):
+            raise ValueError("attr_tokens_list length must match audio/text length")
 
         self.texts = texts
         self.langs = langs or ["mn"] * self._len
+        self.attr_tokens_list = attr_tokens_list or [[] for _ in range(self._len)]
         self.sample_rate = sample_rate
         self.n_mels = n_mels
         self.min_duration_s = min_duration_s
@@ -112,6 +188,7 @@ class TTSDataset(Dataset):
     def __getitem__(self, idx: int) -> dict[str, Any]:
         text = self.texts[idx]
         lang = self.langs[idx]
+        attr_tokens = self.attr_tokens_list[idx]
 
         if self.audio_bytes_list is not None:
             audio_np = _decode_audio_bytes(self.audio_bytes_list[idx], self.sample_rate)
@@ -135,7 +212,7 @@ class TTSDataset(Dataset):
         mel = self.audio_processor.mel_spectrogram(audio)  # [n_mels, T]
         T = mel.shape[-1]
 
-        raw_ids = self.text_cleaner.text_to_sequence(text, lang=lang)
+        raw_ids = self.text_cleaner.text_to_sequence(text, lang=lang, attr_tokens=attr_tokens)
         text_ids = _stretch_text_to_len(raw_ids, T)
 
         return {
@@ -153,6 +230,8 @@ class TTSDataset(Dataset):
         audio_column: str = "audio",
         text_column: str | None = None,
         lang_column: str | None = None,
+        gender_column: str | None = None,
+        age_column: str | None = None,
         sample_rate: int = 24000,
         n_mels: int = 100,
         default_lang: str = "mn",
@@ -162,6 +241,7 @@ class TTSDataset(Dataset):
         audio_bytes_list: list[bytes] = []
         texts: list[str] = []
         langs: list[str] = []
+        attr_tokens_list: list[list[str]] = []
         durations: list[float] = []
         skipped_short = 0
         skipped_long = 0
@@ -220,6 +300,9 @@ class TTSDataset(Dataset):
             if lang_column and lang_column in item:
                 lang = item[lang_column]
             langs.append(lang)
+            attr_tokens_list.append(
+                _attr_tokens_from_metadata(item, gender_column=gender_column, age_column=age_column)
+            )
 
         total_skipped = skipped_short + skipped_long + skipped_empty + skipped_no_audio
         if total_skipped > 0:
@@ -242,6 +325,7 @@ class TTSDataset(Dataset):
             n_mels=n_mels,
             min_duration_s=min_duration_s,
             max_duration_s=max_duration_s,
+            attr_tokens_list=attr_tokens_list,
         )
         dataset.durations = durations
         return dataset

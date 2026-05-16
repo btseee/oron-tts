@@ -1,13 +1,26 @@
 #!/usr/bin/env bash
 # RunPod environment setup for OronTTS
-# Recommended image: runpod/pytorch:1.0.3-cu1300-torch291-ubuntu2404
+# Recommended template: Runpod Pytorch 2.8.0
+# Recommended image: runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404
 #   (Ubuntu 24.04 → system Python IS 3.12 → venv inherits pre-installed PyTorch)
-# Recommended storage: 50 GB container disk + 150 GB network volume mounted at /workspace
+# Recommended storage: 80 GB total disk minimum; increase before multi-dataset runs
 # Run once after the pod starts:
 #   bash scripts/setup/runpod_setup.sh
 set -euo pipefail
 
 echo "[INFO] Setting up OronTTS training environment..."
+
+MIN_WORKSPACE_GB=70
+if [[ -d /workspace ]]; then
+    available_kb=$(df --output=avail -k /workspace | tail -n 1 | tr -d ' ')
+    available_gb=$((available_kb / 1024 / 1024))
+    if (( available_gb < MIN_WORKSPACE_GB )) && [[ "${ORON_ALLOW_SMALL_DISK:-0}" != "1" ]]; then
+        echo "[ERROR] /workspace has ${available_gb} GB free; RTX PRO 4500 Base training needs at least ${MIN_WORKSPACE_GB} GB free."
+        echo "        An 80 GB total-disk pod is tight but usable for one run with max_checkpoints=2."
+        echo "        Increase disk before Common Voice/FLEURS mixes, or set ORON_ALLOW_SMALL_DISK=1 for smoke tests only."
+        exit 1
+    fi
+fi
 
 # ── Python 3.12 ────────────────────────────────────────────────────────────────
 # RunPod base images (Ubuntu 22.04 & 24.04) ship Python 3.12 pre-installed
