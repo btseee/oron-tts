@@ -3,7 +3,7 @@ from pathlib import Path
 import torch
 
 from src.models.f5tts import F5TTS
-from src.utils.checkpoint import CheckpointManager
+from src.utils.checkpoint import CheckpointManager, stale_remote_checkpoint_paths
 
 
 def _tiny_config() -> dict[str, object]:
@@ -68,3 +68,36 @@ def test_load_pretrained_skips_incompatible_shapes(tmp_path: Path) -> None:
     )
 
     assert result["skipped_keys"] == ["cfm.backbone.text_embed.text_embed.weight"]
+
+
+def test_load_pretrained_prefers_ema_state_dict(tmp_path: Path) -> None:
+    source = F5TTS.from_config(_tiny_config())
+    target = F5TTS.from_config(_tiny_config())
+    raw_state = {key: value.clone() for key, value in source.state_dict().items()}
+    ema_state = {key: value.clone() for key, value in source.state_dict().items()}
+    float_key = next(key for key, value in ema_state.items() if value.is_floating_point())
+    ema_state[float_key] = torch.full_like(ema_state[float_key], 0.25)
+    raw_state[float_key] = torch.full_like(raw_state[float_key], -0.25)
+    checkpoint_path = tmp_path / "oron_best.pt"
+    torch.save({"model_state_dict": raw_state, "ema_state_dict": ema_state}, checkpoint_path)
+
+    CheckpointManager(tmp_path).load_pretrained_f5tts(target, checkpoint_path, strict=False)
+
+    assert torch.equal(target.state_dict()[float_key], ema_state[float_key])
+
+
+def test_stale_remote_checkpoint_paths_keeps_local_rotation() -> None:
+    remote_paths = [
+        "README.md",
+        "config.json",
+        "f5tts_best.pt",
+        "f5tts_step_00000010.pt",
+        "f5tts_step_00000020.pt",
+        "f5tts_step_00000030.pt",
+        "tb_logs/events.out.tfevents.test",
+    ]
+    local_paths = ["f5tts_step_00000020.pt", "f5tts_step_00000030.pt"]
+
+    stale = stale_remote_checkpoint_paths(remote_paths, local_paths, "f5tts")
+
+    assert stale == ["f5tts_step_00000010.pt"]

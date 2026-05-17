@@ -1,6 +1,7 @@
 """Checkpoint management for F5-TTS training and inference."""
 
 import json
+import re
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -13,6 +14,26 @@ _ORIG_MOD_MARKER = "._orig_mod."
 
 def _has_files(path: Path) -> bool:
     return any(child.is_file() for child in path.rglob("*"))
+
+
+def _is_step_checkpoint(path: str, model_name: str) -> bool:
+    pattern = rf"^{re.escape(model_name)}_step_\d{{8}}\.pt$"
+    return re.fullmatch(pattern, Path(path).name) is not None
+
+
+def stale_remote_checkpoint_paths(
+    remote_paths: list[str],
+    local_paths: list[str],
+    model_name: str,
+) -> list[str]:
+    local_step_names = {
+        Path(path).name for path in local_paths if _is_step_checkpoint(path, model_name)
+    }
+    return [
+        path
+        for path in remote_paths
+        if _is_step_checkpoint(path, model_name) and Path(path).name not in local_step_names
+    ]
 
 
 def _strip_orig_mod_key(key: str) -> str:
@@ -151,11 +172,12 @@ class CheckpointManager:
                 raise ImportError("Install safetensors: pip install safetensors") from exc
         else:
             state_dict = torch.load(ckpt_path, map_location=device, weights_only=True)
-            # Official F5-TTS checkpoints nest state under "model_state_dict"
-            if "model_state_dict" in state_dict:
-                state_dict = state_dict["model_state_dict"]
+            if "ema_state_dict" in state_dict:
+                state_dict = state_dict["ema_state_dict"]
             elif "ema_model_state_dict" in state_dict:
                 state_dict = state_dict["ema_model_state_dict"]
+            elif "model_state_dict" in state_dict:
+                state_dict = state_dict["model_state_dict"]
 
         if strict:
             state_dict = adapt_state_dict_to_model(state_dict, model)
@@ -292,6 +314,7 @@ MIT
             repo_id=repo_id,
             token=token,
         )
+        self._cleanup_remote_checkpoints(api, repo_id, token)
         # Upload TensorBoard logs alongside the model so training curves are
         # browsable on HuggingFace without a separate wandb account.
         if log_dir is not None:
@@ -304,6 +327,28 @@ MIT
                     token=token,
                 )
         return f"https://huggingface.co/{repo_id}"
+
+    def _cleanup_remote_checkpoints(
+        self,
+        api: HfApi,
+        repo_id: str,
+        token: str | None = None,
+    ) -> None:
+        local_paths = [
+            path.name for path in self.checkpoint_dir.glob(f"{self.model_name}_step_*.pt")
+        ]
+        info = api.model_info(repo_id=repo_id, token=token, files_metadata=False)
+        remote_paths = [sibling.rfilename for sibling in (info.siblings or [])]
+        stale_paths = stale_remote_checkpoint_paths(remote_paths, local_paths, self.model_name)
+        if not stale_paths:
+            return
+        api.delete_files(
+            repo_id=repo_id,
+            repo_type="model",
+            delete_patterns=stale_paths,
+            token=token,
+            commit_message=f"Remove {len(stale_paths)} stale {self.model_name} checkpoints",
+        )
 
     def pull_from_hub(
         self,

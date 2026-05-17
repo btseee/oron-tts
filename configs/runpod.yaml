@@ -23,13 +23,13 @@ ema_decay: 0.9999
 max_grad_norm: 1.0
 grad_accumulation_steps: 1
 batch_size_type: frame
-frames_threshold: 24000
-max_samples: 24
-num_workers: 10
+frames_threshold: 48000
+max_samples: 48
+num_workers: 14
 prefetch_factor: 2
 pin_memory: true
 log_interval: 50
-save_interval: 5
+save_interval: 10
 max_checkpoints: 2
 audio_sample_interval: 10
 use_tqdm: false

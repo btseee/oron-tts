@@ -184,9 +184,9 @@ HF_TOKEN=hf_...       # HuggingFace token — read + write scope
 | Total disk         | **80 GB minimum**                                                      |
 | `HF_TOKEN` env var | your HuggingFace token (read + write)                                  |
 
-The RTX PRO 4500 profile keeps the Base model but lowers the frame budget for 32 GB VRAM: `frames_threshold: 24000`, `max_samples: 24`, `batch_size: 8`, `gradient_checkpointing: true`, and `max_checkpoints: 2`. If the pod screen says **Total disk: 40 GB**, do not use it for the full from-scratch run. The setup script now expects at least **70 GB free** under `/workspace`; set `ORON_ALLOW_SMALL_DISK=1` only for a smoke-test setup.
+The RTX PRO 4500 profile keeps the Base model and uses a larger dynamic batch budget than the first safe run: `frames_threshold: 48000`, `max_samples: 48`, `batch_size: 8`, `num_workers: 14`, `gradient_checkpointing: true`, and `max_checkpoints: 2`. If the pod screen says **Total disk: 40 GB**, do not use it for the full from-scratch run. The setup script now expects at least **70 GB free** under `/workspace`; set `ORON_ALLOW_SMALL_DISK=1` only for a smoke-test setup. If the first epoch OOMs, reduce `frames_threshold` to `36000` and `max_samples` to `36`.
 
-An 80 GB disk is tight but usable for a single MBSpeech-only run because this config keeps two rotating checkpoints plus `f5tts_best.pt`. A Base training checkpoint is about **6.4 GiB** in this repo because it saves model weights, AdamW state, scheduler state, and EMA weights; this profile reserves about **19 GiB** for retained checkpoints before TensorBoard logs, HuggingFace caches, Vocos cache, source checkout, and upload scratch space. Increase storage before keeping multiple experiments or adding full Common Voice/FLEURS caches.
+An 80 GB disk is tight but usable for one MBSpeech run or one Common Voice continuation run because this config keeps two rotating checkpoints plus `f5tts_best.pt`. A Base training checkpoint is **6.38 GiB** in this repo because it saves model weights, AdamW state, scheduler state, and EMA weights; this profile reserves about **19.1 GiB** for retained checkpoints before TensorBoard logs, HuggingFace caches, Vocos cache, source checkout, and upload scratch space. The current `btsee/common-voices-24-mn` dataset is small for storage: all three splits are about **199 MB** compressed and **209 MB** as dataset payload. Increase storage before keeping multiple model copies, multiple experiments, or larger future dataset caches.
 
 Add the env vars in the **Environment Variables** section of the pod creation form. The setup script also writes non-secret cache defaults to `.env` so HuggingFace and Torch caches stay under `/workspace/.cache`.
 
@@ -227,6 +227,37 @@ python scripts/train.py \
     --hub-upload-interval 1
 ```
 
+### Continue on Common Voice
+
+For a different dataset, prefer fine-tuning from the existing model weights instead of `--resume`. `--resume` restores the old optimizer, scheduler, epoch, and near-finished learning rate from the previous MBSpeech run; use it only when continuing the same interrupted run. Download one checkpoint from the current model repo, then start a fresh optimizer/scheduler on the cleaned Common Voice data:
+
+```bash
+source .venv/bin/activate
+python - <<'PY'
+from src.utils.checkpoint import CheckpointManager
+
+CheckpointManager("output/checkpoints").pull_from_hub(
+    repo_id="btsee/oron-tts",
+    filename="f5tts_best.pt",
+)
+PY
+
+python scripts/train.py \
+    --config configs/runpod.yaml \
+    --dataset btsee/common-voices-24-mn \
+    --split 'train+dev+test' \
+    --text-column text \
+    --gender-column gender \
+    --age-column age \
+    --lang mn \
+    --pretrain-ckpt output/checkpoints/f5tts_best.pt \
+    --push-to-hub \
+    --hf-repo btsee/oron-tts \
+    --hub-upload-interval 1
+```
+
+Checked on 2026-05-17: `btsee/common-voices-24-mn` has one `default` config, splits `train`/`dev`/`test`, 5,015 total rows, about **7.53 hours** of 24 kHz audio, columns `audio`, `text`, `original_text`, `client_id`, `gender`, `age`, `accent`, `up_votes`, `down_votes`, `duration`, and `split`. All samples pass the current 1-30 second filter. With `frames_threshold: 48000` and `max_samples: 48`, all splits produce about **95 batches per epoch** after the internal 90/10 train/validation split.
+
 Official Hugging Face datasets that require a config/subset are supported with `--dataset-config`. Examples:
 
 ```bash
@@ -247,6 +278,16 @@ python scripts/train.py \
     --gender-column gender \
     --age-column age \
     --lang mn
+
+# Project-cleaned Common Voice 24 Mongolian
+python scripts/train.py \
+    --config configs/runpod.yaml \
+    --dataset btsee/common-voices-24-mn \
+    --split 'train+dev+test' \
+    --text-column text \
+    --gender-column gender \
+    --age-column age \
+    --lang mn
 ```
 
 When `--gender-column` or `--age-column` is provided, known values are mapped into the tokenizer's existing `[FEMALE]`, `[MALE]`, `[YOUNG]`, `[MIDDLE]`, and `[ELDERLY]` tags. Unknown or missing metadata is ignored.
@@ -257,11 +298,12 @@ Metrics are logged to console (loss, val_loss, samples/s, ETA) and TensorBoard. 
 
 Use the RTX PRO 4500 hourly price shown in the RunPod UI. With MBSpeech only, the old L40S timing estimate was roughly 15 minutes per epoch, but this 32 GB profile enables gradient checkpointing and uses a smaller frame budget, so expect it to be slower. A 500-epoch from-scratch run is a multi-day experiment; multiply the observed first-epoch time by 500 before committing to the full run.
 
-| Scenario                | Estimate                                               |
-|-------------------------|--------------------------------------------------------|
-| Smoke test              | Usually under 5 minutes                                |
-| 1 epoch × 3 846 samples | Measure after epoch 1 on this exact pod                |
-| 500 epochs              | `first_epoch_minutes * 500 / 60 * hourly_price`        |
+| Scenario                              | Estimate                                        |
+|---------------------------------------|-------------------------------------------------|
+| Smoke test                            | Usually under 5 minutes                         |
+| 1 epoch × 3 846 MBSpeech samples      | Measure after epoch 1 on this exact pod         |
+| 1 epoch × 5 015 Common Voice samples  | About 95 batches; measure after epoch 1         |
+| 500 epochs                            | `first_epoch_minutes * 500 / 60 * hourly_price` |
 
 Terminate the pod (not just stop it) after training to end container disk billing.
 
@@ -277,8 +319,8 @@ hop_length: 256
 
 batch_size: 8
 batch_size_type: frame      # "frame" = DynamicBatchSampler, "sample" = fixed
-frames_threshold: 3000      # 24000 for runpod.yaml, 48000 for colab.yaml
-max_samples: 8              # 24 for runpod.yaml; cap samples per frame-budget batch
+frames_threshold: 3000      # 48000 for runpod.yaml and colab.yaml
+max_samples: 8              # 48 for runpod.yaml; cap samples per frame-budget batch
 warmup_steps: 1000
 num_epochs: 500
 ema_decay: 0.9999
