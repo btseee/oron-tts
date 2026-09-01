@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "oron-tts"
-version = "0.1.0"
-description = "Mongolian TTS using F5-TTS flow matching with custom Cyrillic tokenizer"
+version = "0.2.0"
+description = "Mongolian (Khalkha Cyrillic) text-to-speech: an F5TTS_v1_Base finetune"
 readme = "README.md"
 license = {text = "MIT"}
-requires-python = ">=3.12,<3.13"
+requires-python = ">=3.12"
 authors = [
-    {name = "OronTTS Team"}
+    {name = "Battseren Badral"}
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -19,45 +19,40 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
-dependencies = [
-    # PyTorch - don't pin to allow RunPod's pre-installed version
-    "torch>=2.1.0",
-    "torchaudio>=2.1.0",
-    "torchcodec>=0.11.0",
-    # Core dependencies
-    "numpy>=1.24.0",
-    "scipy>=1.11.0",
-    "librosa>=0.10.0",
-    "soundfile>=0.12.0",
-    # HuggingFace
-    "datasets>=3.0.0",
-    "huggingface-hub>=0.19.0",
-    # Other dependencies
-    "safetensors>=0.4.0",    # loading official F5-TTS pretrained checkpoints
-    "pyyaml>=6.0",
-    "tqdm>=4.66.0",
-    "python-dotenv>=1.0.0",
-    "torch-ema>=0.3.0",
-]
+
+# Intentionally empty. `oron_tts.text` -- the normalizer, the number expander and
+# the vocabulary contract -- is pure stdlib, so oron-cleaner can depend on this
+# package for text handling without pulling torch into a data pipeline. Anything
+# needing tensors lives behind an extra.
+dependencies = []
 
 [project.optional-dependencies]
+audio = [
+    "torch>=2.1.0",
+    "torchaudio>=2.1.0",
+    "numpy>=1.24.0",
+    "soundfile>=0.12.0",
+    "librosa>=0.10.0",
+]
+# Training runs in upstream F5-TTS; this repo only supplies the vocabulary, the
+# prepared dataset and the config.
+train = [
+    "f5-tts>=1.1.0",
+    "safetensors>=0.4.0",
+    "datasets>=3.0.0",
+    "huggingface-hub>=0.19.0",
+]
+# bayartsogt/wav2vec2-large-xlsr-mongolian scores CER at 0.123 median vs
+# whisper-large-v3's 0.311 on the same clips -- see docs/phase0-findings.md.
+eval = [
+    "transformers>=4.40.0",
+    "jiwer>=3.0.0",
+]
 dev = [
     "ruff>=0.1.0",
     "isort>=5.12.0",
     "pytest>=7.4.0",
-    "tensorboard>=2.15.0",  # optional local fallback
 ]
-inference = [
-    "vocos>=0.1.0",          # pretrained mel-to-waveform vocoder (24kHz)
-]
-denoise = [
-    "deepfilternet>=0.5.0",  # requires Rust/Cargo: https://rustup.rs
-]
-
-[project.scripts]
-oron-prepare = "scripts.prepare:main"
-oron-train = "scripts.train:main"
-oron-infer = "scripts.infer:main"
 
 [tool.ruff]
 line-length = 100
@@ -68,13 +63,19 @@ select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM"]
 ignore = ["E501"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["src"]
+known-first-party = ["oron_tts"]
 
 [tool.isort]
 profile = "black"
 line_length = 100
-known_first_party = ["src"]
+known_first_party = ["oron_tts"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["src*", "scripts*", "configs*"]
+include = ["oron_tts*"]
+
+[tool.setuptools.package-data]
+oron_tts = ["../data/oron_mn_pinyin/vocab.txt"]

@@ -1,354 +1,143 @@
 # OronTTS
 
-Non-autoregressive TTS for Mongolian (Khalkha Cyrillic) and Kazakh (Cyrillic) using [F5-TTS](https://arxiv.org/abs/2410.06885) — Flow Matching + Diffusion Transformer.
+Text-to-speech for Mongolian (Khalkha Cyrillic), built as a finetune of
+[F5-TTS](https://arxiv.org/abs/2410.06885) `F5TTS_v1_Base`.
 
-## Features
+Training itself runs in upstream [F5-TTS](https://github.com/SWivid/F5-TTS).
+This repository owns the Mongolian-specific layer:
 
-- **F5-TTS**: OT-CFM + DiT backbone. No GAN, no duration predictor. Flow matching loss computed inline in CFM.
-- **Voice cloning**: pass a 3–10 s reference WAV at inference time (recommended for best quality).
-- **Ref-free synthesis**: skip the reference; duration is estimated from char count and `--speed`.
-- **Bilingual**: Mongolian + Kazakh Cyrillic, character-level tokenizer (vocab 65).
-- **Number normalisation**: Mongolian + Kazakh cardinal, ordinal, fraction, percent, currency.
-- **Audio denoising**: DeepFilterNet for preprocessing non-professional recordings.
+| | |
+|---|---|
+| `oron_tts/text/` | Text normalization, number expansion, the vocabulary contract. Pure stdlib. |
+| `oron_tts/audio.py` | Mel parameters matching `charactr/vocos-mel-24khz` exactly. |
+| `scripts/extend_vocab.py` | Builds the extended vocabulary and grows the text-embedding matrix. |
+| `data/oron_mn_pinyin/vocab.txt` | 2550 entries: the 2545 pretrained ones, plus `Ө ө Ү ү Ъ`. |
+| `docs/phase0-findings.md` | The measurements this design rests on. |
 
-## Installation
+## Status
 
-**Windows (local dev)**:
+Rebuilt from a previous from-scratch architecture that could not work. See
+[docs/phase0-findings.md](docs/phase0-findings.md) for the evidence; the old code
+is recoverable at the `v1-from-scratch` tag.
 
-```powershell
-py -3.12 -m venv .venv
-.venv\Scripts\pip install -e ".[dev,inference]"
-```
+- [x] Vocabulary extension and coverage tests
+- [x] Mongolian text normalization (Kazakh removed)
+- [x] Evaluation ASR selected
+- [ ] Strict corpus from [oron-cleaner](../oron-cleaner)
+- [ ] Finetune run
+- [ ] Evaluation harness and reference voices
+- [ ] Release
 
-**Linux / RunPod**:
+## Why a finetune, not a new model
+
+`F5TTS_v1_Base` is 336M parameters trained on ~95,000 hours. Its vocabulary
+already contains **61 of the 66 Mongolian Cyrillic letters** with trained
+embeddings, at lines 1628–1693 of `vocab.txt`. Adapting it to Mongolian costs
+**five new embedding rows**, not a new model.
+
+The previous approach — a hand-written reimplementation trained from scratch —
+reached its best validation loss at epoch 250 of 500 and then overfitted for the
+remaining half of the run, on ~7 hours of single-speaker audio. It also could not
+load upstream weights: key names, `ff_mult` and vocabulary size all differ, so
+`--pretrain-ckpt` silently loaded nothing while reporting success.
+
+## The failure mode this repo is built around
+
+`f5_tts.model.utils.list_str_to_idx` maps any character absent from `vocab.txt`
+to index 0 — and **index 0 is the space token, not `<unk>`**. A vocabulary gap is
+therefore completely silent: training simply sees spaces where letters should be.
+
+On the unextended base vocabulary that is **4.90% of all tokens**, because `ө`
+and `ү` are ordinary Mongolian vowels. `tests/test_vocab_coverage.py` exists to
+make that regression impossible to reintroduce unnoticed.
+
+The same principle governs text handling: nothing is deleted silently.
+Unrepresentable text raises, so a corpus builder records the reason and drops the
+row rather than shipping text that no longer matches its audio.
+
+## Install
 
 ```bash
 python3.12 -m venv .venv
-source .venv/bin/activate
-pip install -e ".[dev,inference]"
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
+pip install -e ".[dev]"            # text layer only, no torch
+pip install -e ".[dev,audio,eval]" # add tensors and the evaluation ASR
 ```
 
-## Project Structure
+`oron_tts.text` deliberately has **no dependencies**, so
+[oron-cleaner](../oron-cleaner) can import the normalizer without pulling torch
+into a data pipeline. That shared import is what guarantees the text published in
+the corpus, the text scored for CER, and the text fed to the model are the same
+string.
+
+## Text normalization
+
+```python
+from oron_tts.text import MongolianNormalizer
+
+norm = MongolianNormalizer()
+norm.normalize("2024 онд 25 хувь өссөн.")
+# 'хоёр мянга хорин дөрвөн онд хорин таван хувь өссөн.'
+
+norm.unsupported_chars("сайн 你 байна")   # ['你'] — reject the row, don't edit it
+```
+
+| Input | Output |
+|---|---|
+| `2024 онд` | хоёр мянга хорин дөрвөн онд |
+| `1-р сар` | нэгдүгээр сар |
+| `15-нд` | арван тавнд |
+| `10-20 хүн` | араваас хорь хүртэл хүн |
+| `14:30` | арван дөрвөн цаг гучин минут |
+| `-15°C` | хасах арван таван градус цельсий |
+| `3/4` | дөрөвдүгээрийн гурав |
+| `XV зуун` | арван тавдугаар зуун |
+| `MIX цомог` | MIX цомог *(unchanged — see below)* |
+| `Wi-Fi холболт` | Wi-Fi холболт *(Latin is in the vocab; keep it)* |
+
+Case is **preserved**: the base vocabulary carries both cases of Cyrillic with
+trained embeddings, so lowercasing would discard 31 trained rows to save 3.
+
+Roman numerals expand only before a context noun (`зуун`, `анги`, `бүлэг`, …).
+Unrestricted matching rewrote ordinary Latin words — `MIX` parses as `M`(1000) +
+`IX`(9). Since Latin characters are in the vocabulary and are preserved rather
+than deleted, leaving an ambiguous token alone is the safe outcome.
+
+## Building the vocabulary
 
 ```bash
-src/
-  data/       # TTSDataset, AudioDenoiser, HF wrappers
-  models/     # DiT, CFM, F5TTS, TextEmbedding (pretrained Vocos vocoder)
-  training/   # F5Trainer
-  utils/      # AudioProcessor, CyrillicTokenizer, TextCleaner, CheckpointManager, NumberNormalizer
-configs/
-  local.yaml    # Small (dim=512, depth=12) — RTX 5070 Ti dev
-  runpod.yaml   # Base  (dim=1024, depth=22) — cloud training
-  colab.yaml    # Small (dim=512, depth=12) — Colab T4 (compile: false, fp16)
-scripts/
-  prepare.py        # clean + denoise + upload to HF
-  train.py          # train + push model
-  infer.py          # synthesise speech
-  clean_local_cv.py # process local Common Voice tar.gz
-  test_pipeline.py  # end-to-end smoke test
-  setup/
-    runpod_setup.sh # RunPod one-shot setup
+python scripts/extend_vocab.py --out data/oron_mn_pinyin/vocab.txt
 ```
 
-## Usage
-
-### Dataset preparation
-
-From Hugging Face:
+Adding the checkpoint surgery as well:
 
 ```bash
-python scripts/prepare.py \
-    --output-dir data/processed \
-    --dataset all \
-    --upload \
-    --hf-repo btsee/oron-tts-dataset
+python scripts/extend_vocab.py \
+    --out data/oron_mn_pinyin/vocab.txt \
+    --checkpoint ckpts/F5TTS_v1_Base/model_1250000.safetensors \
+    --checkpoint-out ckpts/oron_mn/pretrained_model_1250000.safetensors
 ```
 
-From a local Common Voice tar.gz:
+Two deliberate departures from upstream's Gradio-only `expand_model_embeddings`:
+
+- New rows are seeded from the **empirical mean and standard deviation of the
+  pretrained Cyrillic rows**, not `torch.randn` (std 1.0, roughly 10–50× larger
+  than a real row).
+- A `.pt` base checkpoint is **refused**. Upstream re-saves `.pt` files with
+  `model_state_dict` left unexpanded, which then fails on load.
+
+New tokens are appended, never inserted, so every pretrained index is preserved.
+A regenerated "sorted unique characters" vocabulary would misalign all 2545.
+
+## Tests
 
 ```bash
-python scripts/clean_local_cv.py \
-    --input cv_mn.tar.gz \
-    --output-dir data/processed/cv_mn \
-    --max-samples 5000
+pytest
+ruff check oron_tts/ scripts/
 ```
 
-### Training
-
-**Local** (Small config):
-
-```bash
-python scripts/train.py \
-    --config configs/local.yaml \
-    --dataset btsee/mbspeech_mn
-```
-
-**RunPod** (Base config):
-
-```bash
-python scripts/train.py \
-    --config configs/runpod.yaml \
-    --dataset btsee/mbspeech_mn \
-    --push-to-hub \
-    --hf-repo btsee/oron-tts \
-    --hub-upload-interval 1
-```
-
-Fine-tune from a pretrained F5-TTS checkpoint:
-
-```bash
-python scripts/train.py \
-    --config configs/runpod.yaml \
-    --dataset btsee/mbspeech_mn \
-    --pretrain-ckpt F5TTS_Base.safetensors
-```
-
-Resume explicitly with `--resume`. Training does not auto-resume, which keeps accidental restarts from silently continuing an old run.
-
-**Colab** (persistent Drive logs and checkpoints):
-
-```bash
-python scripts/train.py \
-    --config configs/colab.yaml \
-    --dataset btsee/mbspeech_mn \
-    --log-dir /content/drive/MyDrive/oron-tts/logs \
-    --checkpoint-dir /content/drive/MyDrive/oron-tts/checkpoints \
-    --resume
-```
-
-Relative paths such as `output/logs` live on Colab's ephemeral `/content/oron-tts`, not on Google Drive. Use absolute Drive paths when TensorBoard logs must persist.
-
-### Inference
-
-```bash
-# Voice cloning (recommended)
-python scripts/infer.py \
-    --checkpoint output/checkpoints/f5tts_best.pt \
-    --text "Сайн байна уу" --lang mn \
-    --ref-audio ref.wav \
-    --ref-text "Энэ бол жишээ өгүүлбэр" \
-    --output out.wav
-
-# Ref-free (lower fidelity; tune --speed if pacing is off)
-python scripts/infer.py \
-    --checkpoint output/checkpoints/f5tts_best.pt \
-    --text "Сайн байна уу" --lang mn \
-    --speed 1.0 \
-    --cfg-strength 1.5 \
-    --max-chars-per-chunk 120 \
-    --output out.wav
-
-# Kazakh
-python scripts/infer.py \
-    --checkpoint output/checkpoints/f5tts_best.pt \
-    --text "Сәлеметсіз бе" --lang kz \
-    --output out_kz.wav
-```
-
-Long inputs are split automatically at punctuation or word boundaries. This keeps each generated segment close to the 1-30 s training range and prevents long ref-free passages from turning into speech-like but unintelligible audio. Use `--max-chars-per-chunk 0` only for short texts or debugging.
-
-## Mongolian Numbers
-
-|Input    | Output                  |
-|---------|-------------------------|
-| 10      | арван                   |
-| 25      | хорин тав               |
-| 100     | зуун                    |
-| 1-р     | нэгдүгээр               |
-| 2024    | хоёр мянга хорин дөрөв  |
-| 3/4     | дөрөвдүгээрийн гурав    |
-| 2024-ны | хоёр мянга хорин дөрвөн |
-
-## Environment
-
-Create `.env` at the repo root (never commit — already in `.gitignore`):
-
-```bash
-HF_TOKEN=hf_...       # HuggingFace token — read + write scope
-```
-
-`train.py` and `prepare.py` load it automatically via `python-dotenv`.
-
-## RunPod Training
-
-### Pod settings
-
-| Field              | Value                                                                  |
-|--------------------|------------------------------------------------------------------------|
-| GPU                | **RTX PRO 4500 32GB**                                                  |
-| GPU count          | **1**                                                                  |
-| RAM / CPU          | **62 GB RAM / 28 vCPU**                                                |
-| Cloud tier         | **Secure Cloud**                                                       |
-| Template           | **Runpod Pytorch 2.8.0**                                               |
-| Image              | `runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404`                      |
-| Total disk         | **80 GB minimum**                                                      |
-| `HF_TOKEN` env var | your HuggingFace token (read + write)                                  |
-
-The RTX PRO 4500 profile keeps the Base model and uses a larger dynamic batch budget than the first safe run: `frames_threshold: 48000`, `max_samples: 48`, `batch_size: 8`, `num_workers: 14`, `gradient_checkpointing: true`, and `max_checkpoints: 2`. If the pod screen says **Total disk: 40 GB**, do not use it for the full from-scratch run. The setup script now expects at least **70 GB free** under `/workspace`; set `ORON_ALLOW_SMALL_DISK=1` only for a smoke-test setup. If the first epoch OOMs, reduce `frames_threshold` to `36000` and `max_samples` to `36`.
-
-An 80 GB disk is tight but usable for one MBSpeech run or one Common Voice continuation run because this config keeps two rotating checkpoints plus `f5tts_best.pt`. A Base training checkpoint is **6.38 GiB** in this repo because it saves model weights, AdamW state, scheduler state, and EMA weights; this profile reserves about **19.1 GiB** for retained checkpoints before TensorBoard logs, HuggingFace caches, Vocos cache, source checkout, and upload scratch space. The current `btsee/common-voices-24-mn` dataset is small for storage: all three splits are about **199 MB** compressed and **209 MB** as dataset payload. Increase storage before keeping multiple model copies, multiple experiments, or larger future dataset caches.
-
-Add the env vars in the **Environment Variables** section of the pod creation form. The setup script also writes non-secret cache defaults to `.env` so HuggingFace and Torch caches stay under `/workspace/.cache`.
-
-### Setup
-
-Connect via **Web Terminal**, then:
-
-```bash
-tmux new-session -s setup
-
-cd /workspace
-git clone https://github.com/btseee/oron-tts.git
-cd oron-tts
-bash scripts/setup/runpod_setup.sh
-```
-
-The script creates `.venv` with `--system-site-packages` (inherits pre-installed PyTorch + CUDA), installs project deps, and runs a 10-step smoke test. Close the tab at any time — re-attach with `tmux attach -t setup`.
-
-From the templates listed in the RunPod UI, choose **Runpod Pytorch 2.8.0**. The older PyTorch templates in that list use Python 3.10 or 3.11, and this project is pinned to Python 3.12.
-
-If you skipped the env vars form, create `.env` instead (auto-loaded by `train.py`):
-
-```bash
-cat > /workspace/oron-tts/.env <<'EOF'
-HF_TOKEN=hf_...
-EOF
-```
-
-### Train
-
-```bash
-source .venv/bin/activate
-python scripts/train.py \
-    --config configs/runpod.yaml \
-    --dataset btsee/mbspeech_mn \
-    --push-to-hub \
-    --hf-repo btsee/oron-tts \
-    --hub-upload-interval 1
-```
-
-### Continue on Common Voice
-
-For a different dataset, prefer fine-tuning from the existing model weights instead of `--resume`. `--resume` restores the old optimizer, scheduler, epoch, and near-finished learning rate from the previous MBSpeech run; use it only when continuing the same interrupted run. Download one checkpoint from the current model repo, then start a fresh optimizer/scheduler on the cleaned Common Voice data:
-
-```bash
-source .venv/bin/activate
-python - <<'PY'
-from src.utils.checkpoint import CheckpointManager
-
-CheckpointManager("output/checkpoints").pull_from_hub(
-    repo_id="btsee/oron-tts",
-    filename="f5tts_best.pt",
-)
-PY
-
-python scripts/train.py \
-    --config configs/runpod.yaml \
-    --dataset btsee/common-voices-24-mn \
-    --split 'train+dev+test' \
-    --text-column text \
-    --gender-column gender \
-    --age-column age \
-    --lang mn \
-    --pretrain-ckpt output/checkpoints/f5tts_best.pt \
-    --push-to-hub \
-    --hf-repo btsee/oron-tts \
-    --hub-upload-interval 1
-```
-
-Checked on 2026-05-17: `btsee/common-voices-24-mn` has one `default` config, splits `train`/`dev`/`test`, 5,015 total rows, about **7.53 hours** of 24 kHz audio, columns `audio`, `text`, `original_text`, `client_id`, `gender`, `age`, `accent`, `up_votes`, `down_votes`, `duration`, and `split`. All samples pass the current 1-30 second filter. With `frames_threshold: 48000` and `max_samples: 48`, all splits produce about **95 batches per epoch** after the internal 90/10 train/validation split.
-
-Official Hugging Face datasets that require a config/subset are supported with `--dataset-config`. Examples:
-
-```bash
-# FLEURS Mongolian
-python scripts/train.py \
-    --config configs/runpod.yaml \
-    --dataset google/fleurs \
-    --dataset-config mn_mn \
-    --text-column transcription \
-    --lang mn
-
-# Common Voice Mongolian; version may change on Hugging Face
-python scripts/train.py \
-    --config configs/runpod.yaml \
-    --dataset mozilla-foundation/common_voice_17_0 \
-    --dataset-config mn \
-    --text-column sentence \
-    --gender-column gender \
-    --age-column age \
-    --lang mn
-
-# Project-cleaned Common Voice 24 Mongolian
-python scripts/train.py \
-    --config configs/runpod.yaml \
-    --dataset btsee/common-voices-24-mn \
-    --split 'train+dev+test' \
-    --text-column text \
-    --gender-column gender \
-    --age-column age \
-    --lang mn
-```
-
-When `--gender-column` or `--age-column` is provided, known values are mapped into the tokenizer's existing `[FEMALE]`, `[MALE]`, `[YOUNG]`, `[MIDDLE]`, and `[ELDERLY]` tags. Unknown or missing metadata is ignored.
-
-Metrics are logged to console (loss, val_loss, samples/s, ETA) and TensorBoard. Checkpoints land under `output/checkpoints` on the pod disk unless you pass another `--checkpoint-dir`. When `--push-to-hub` is used, checkpoints and TensorBoard logs are uploaded under `tb_logs/` at every checkpoint save and again at the end of training. To resume after a pod restart, re-run training with `--resume`.
-
-### Cost
-
-Use the RTX PRO 4500 hourly price shown in the RunPod UI. With MBSpeech only, the old L40S timing estimate was roughly 15 minutes per epoch, but this 32 GB profile enables gradient checkpointing and uses a smaller frame budget, so expect it to be slower. A 500-epoch from-scratch run is a multi-day experiment; multiply the observed first-epoch time by 500 before committing to the full run.
-
-| Scenario                              | Estimate                                        |
-|---------------------------------------|-------------------------------------------------|
-| Smoke test                            | Usually under 5 minutes                         |
-| 1 epoch × 3 846 MBSpeech samples      | Measure after epoch 1 on this exact pod         |
-| 1 epoch × 5 015 Common Voice samples  | About 95 batches; measure after epoch 1         |
-| 500 epochs                            | `first_epoch_minutes * 500 / 60 * hourly_price` |
-
-Terminate the pod (not just stop it) after training to end container disk billing.
-
-## Configuration
-
-All three configs use the same keys (all top-level, no `training:` nesting):
-
-```yaml
-sample_rate: 24000
-n_mels: 100
-n_fft: 1024
-hop_length: 256
-
-batch_size: 8
-batch_size_type: frame      # "frame" = DynamicBatchSampler, "sample" = fixed
-frames_threshold: 3000      # 48000 for runpod.yaml and colab.yaml
-max_samples: 8              # 48 for runpod.yaml; cap samples per frame-budget batch
-warmup_steps: 1000
-num_epochs: 500
-ema_decay: 0.9999
-use_tqdm: true            # set false for RunPod container logs
-log_interval: 100
-save_interval: 5          # save a rotating checkpoint every N epochs
-max_checkpoints: 2        # runpod.yaml disk-safe default (+ f5tts_best.pt)
-audio_sample_interval: 10 # TensorBoard audio/mel diagnostics every N epochs
-gradient_checkpointing: true
-compile: true             # false in colab.yaml
-
-model:
-  dim: 512               # 1024 for runpod.yaml
-  depth: 12              # 22 for runpod.yaml
-  heads: 8               # 16 for runpod.yaml
-  vocab_size: 65         # fixed — must match CyrillicTokenizer
-  audio_drop_prob: 0.3   # CFG audio dropout (paper default)
-  cond_drop_prob: 0.2    # CFG conditioning dropout (paper default)
-  frac_lengths_mask: [0.7, 1.0]  # infilling mask range (paper default)
-```
-
-## Development
-
-```bash
-ruff check src/ scripts/
-ruff format src/ scripts/
-isort src/ scripts/
-```
+`tests/test_vocab_coverage.py` includes `test_base_vocab_would_fail_this`, which
+asserts the coverage check is load-bearing rather than vacuous.
 
 ## License
 
@@ -356,11 +145,9 @@ MIT
 
 ## Citation
 
-If you use OronTTS in your research, please cite:
-
 ```bibtex
 @software{oron-tts2026,
-  title  = {OronTTS: Mongolian and Kazakh Text-to-Speech with F5-TTS},
+  title  = {OronTTS: Mongolian Text-to-Speech},
   author = {Badral, Battseren},
   year   = {2026},
   url    = {https://github.com/btsee/oron-tts}
