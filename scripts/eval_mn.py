@@ -43,13 +43,32 @@ MAX_REF_S = 10.0
 
 
 def load_test_sentences(corpus: Path, limit: int) -> list[str]:
-    """Held-out text. Uses the test split, which is speaker-disjoint."""
-    path = corpus / "metadata_test.csv"
-    if not path.exists():
+    """Sentences that occur in no training clip.
+
+    Deliberately not `metadata_test.csv`. That file is the speaker-disjoint
+    audio split, which is what a *reference prompt* needs; its text is another
+    matter entirely. Common Voice mn has 28,858 clips over 6,062 distinct
+    sentences, so 99.6% of test clips (1,705 of 1,712) had their text in train
+    as well -- CER over them measured recall of seen text.
+
+    `eval_sentences.txt` is the corpus's text holdout: sentences withheld from
+    training so this number means intelligibility.
+    """
+    path = corpus / "eval_sentences.txt"
+    if path.exists():
+        lines = [ln.strip() for ln in path.read_text(encoding="utf-8").splitlines()]
+        return [ln for ln in lines if ln][:limit]
+
+    legacy = corpus / "metadata_test.csv"
+    if not legacy.exists():
         raise SystemExit(f"{path} not found. Run oron-cleaner's finalize step.")
+    print(f"[WARN] {path.name} missing; falling back to {legacy.name}, whose text\n"
+          "       is almost certainly in training too. Re-run:\n"
+          "           python clean_pipeline.py --finalize-only --corpus-dir <dir>\n"
+          "       The CER below measures memorisation until you do.", file=sys.stderr)
     import csv
 
-    with open(path, encoding="utf-8-sig") as f:
+    with open(legacy, encoding="utf-8-sig") as f:
         rows = list(csv.reader(f, delimiter="|"))[1:]
     return [text for _audio, text in rows][:limit]
 
