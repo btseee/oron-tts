@@ -1,0 +1,57 @@
+name: test
+
+# These tests never ran anywhere but a laptop. `oron_tts.text` is the package
+# that decides what string gets published in the corpus, scored for CER, and
+# used for training -- a silent change there propagates to all three.
+
+on:
+  push:
+    branches: [main, "**"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.12 is what the RunPod PyTorch image ships and what training will
+        # actually run on. 3.13 is here to catch the next floor early.
+        python-version: ["3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          # oron_tts.text is pure stdlib by design, so the text tests -- the
+          # majority -- need nothing. The rest is what the eval and vocabulary
+          # tests touch; anything heavier is behind pytest.importorskip.
+          pip install -e .
+          pip install pytest ruff numpy librosa soundfile
+
+      - name: Lint
+        run: ruff check .
+
+      - name: Test
+        run: pytest -q
+
+  vocabulary:
+    # The vocabulary contract is the one thing in this repo that fails silently
+    # and expensively: `list_str_to_idx` maps an unknown character to index 0,
+    # which is the SPACE token, so an unextended or reordered vocab turns 4.90%
+    # of Mongolian characters into spaces with nothing logged.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e . && pip install pytest
+      - run: pytest tests/test_vocab_coverage.py -q

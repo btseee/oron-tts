@@ -5,6 +5,8 @@ behaviour is pinned. The model-backed parts are exercised separately; nothing
 here loads a recogniser.
 """
 
+import importlib.util
+
 import numpy as np
 import pytest
 
@@ -148,6 +150,14 @@ def test_checkpoint_sort_tolerates_unnumbered_names():
 
 # ── SIM-o ─────────────────────────────────────────────────────────────────────
 
+# The similarity maths is torch's, even with the encoder stubbed. Skipping keeps
+# the pure-text and CER tests -- the majority -- runnable without the model stack.
+requires_torch = pytest.mark.skipif(
+    importlib.util.find_spec("torch") is None, reason="torch not installed"
+)
+
+
+
 class _Echo:
     """Stand-in speaker encoder: embeds a waveform as its own coarse spectrum.
 
@@ -169,6 +179,7 @@ def _patch_encoder(monkeypatch):
     monkeypatch.setattr(metrics, "_speaker_encoder", lambda ckpt, device: _Echo())
 
 
+@requires_torch
 def test_sim_o_of_a_clip_with_itself_is_one(monkeypatch):
     import numpy as np
 
@@ -180,6 +191,7 @@ def test_sim_o_of_a_clip_with_itself_is_one(monkeypatch):
     assert sim_o(wav, wav, 24000) == pytest.approx(1.0, abs=1e-5)
 
 
+@requires_torch
 def test_sim_o_separates_two_different_signals(monkeypatch):
     import numpy as np
 
@@ -192,6 +204,7 @@ def test_sim_o_separates_two_different_signals(monkeypatch):
     assert sim_o(a, b, 24000) < sim_o(a, a, 24000)
 
 
+@requires_torch
 def test_sim_o_accepts_two_different_sample_rates(monkeypatch):
     """The generated audio is 24 kHz from Vocos; the prompt is whatever the
     corpus stored. Upstream resamples each independently."""
@@ -205,6 +218,7 @@ def test_sim_o_accepts_two_different_sample_rates(monkeypatch):
     assert isinstance(sim_o(gen, ref, 24000, 16000), float)
 
 
+@requires_torch
 def test_sim_o_mono_ises_a_stereo_prompt(monkeypatch):
     """soundfile returns (n, channels) for a stereo file."""
     import numpy as np
@@ -217,6 +231,7 @@ def test_sim_o_mono_ises_a_stereo_prompt(monkeypatch):
     assert sim_o(mono, stereo, 16000) == pytest.approx(1.0, abs=1e-5)
 
 
+@requires_torch
 def test_a_missing_checkpoint_is_an_error_not_a_substitute():
     """SIM-o is compared against the paper's tables, so it is only meaningful
     from the same WavLM-large model. Quietly using another would put a number

@@ -24,10 +24,14 @@ session 2.
 git clone https://github.com/btseee/oron-tts.git
 git clone https://github.com/btseee/oron-cleaner.git
 git clone https://github.com/SWivid/F5-TTS.git
-cd oron-cleaner && pip install -e . && pip install -e ../oron-tts
+cd oron-cleaner
+pip install -e ../oron-tts                # shared text normalisation, pure stdlib
+pip install -r requirements.lock          # 94 pinned packages, resolved for 3.12
+pip install -e . --no-deps
 
 printf 'API_KEY=...\nHF_TOKEN=...\n' > .env   # never commit this
-pytest                                        # 93 tests, no models needed
+pytest                                    # 136 tests, no models needed
+python scripts/check_lockfile.py          # lock still covers pyproject
 
 python clean_pipeline.py --datasets cv --calibrate --limit 500 --no-upload
 ```
