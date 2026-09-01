@@ -8,9 +8,11 @@ from oron_tts.eval.metrics import (
     HUMAN_CER_BASELINE,
     MongolianASR,
     Scores,
+    SimOUnavailable,
     bandwidth_hz,
     cer,
     normalize_for_scoring,
+    sim_o,
     utmos,
 )
 
@@ -18,8 +20,10 @@ __all__ = [
     "HUMAN_CER_BASELINE",
     "MongolianASR",
     "Scores",
+    "SimOUnavailable",
     "bandwidth_hz",
     "cer",
     "normalize_for_scoring",
+    "sim_o",
     "utmos",
 ]

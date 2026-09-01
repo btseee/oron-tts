@@ -121,9 +121,25 @@ python scripts/eval_mn.py --sweep ../F5-TTS/ckpts/oron_mn \
 at 200k updates and degrading to twice the WER by 600k; this project's previous
 run peaked at epoch 250 of 500. Training loss will not tell you which is best.
 
-CER is reported as a ratio to the **human baseline of 0.123** — the recogniser's
-own floor on correctly-transcribed human speech. Synthetic audio cannot beat it,
-so a raw number against zero is meaningless.
+Four numbers per gender, each answering a different question:
+
+| | question | how to read it |
+| --- | --- | --- |
+| CER | is it intelligible? | ratio to the **human baseline of 0.123** — the recogniser's own floor on correctly-transcribed human speech. Synthetic audio cannot beat it, so a raw number against zero is meaningless. Scored on `eval_sentences.txt`, which no training clip contains. |
+| SIM-o | is it the right voice? | cosine similarity to the prompt, WavLM-large ECAPA-TDNN. The paper reports 0.66 for F5-TTS on LibriSpeech-PC test-clean; the ground truth there is 0.69. |
+| UTMOS | does it sound natural? | a proxy trained on English/Japanese MOS, never validated for Mongolian — treat it as a regression detector, not a MOS |
+| bandwidth | is it dull? | follows the prompt; no Mongolian source is full-band |
+
+Each is averaged over `--seeds` (default `0 1 2`, the paper's three-seed
+protocol) and reported with a 95% CI. When two checkpoints' intervals overlap,
+the harness says so instead of naming a winner.
+
+**SIM-o needs a manual download.** `wavlm_large_finetune.pth`, linked from
+`F5-TTS/src/f5_tts/eval/README.md` under *Download Evaluation Model
+Checkpoints*. Point `--sim-checkpoint` or `ORON_WAVLM_CKPT` at it. Without it
+the run continues and says SIM-o is unavailable — it will not substitute another
+speaker model, because the number is only comparable to the paper's if it comes
+from the same one.
 
 Try `--no-ema` on early checkpoints. With decay ~0.9999 the EMA weights are
 still dominated by the pretrained model for the first several thousand updates.

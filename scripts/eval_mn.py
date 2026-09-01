@@ -17,6 +17,8 @@ Reported per checkpoint:
 
   CER      against the same recogniser that scored the corpus. Its floor on real
            human speech is ~0.12, so compare to `--baseline`, not to zero.
+  SIM-o    speaker similarity to the reference prompt, WavLM-large ECAPA-TDNN,
+           the same model the paper uses so the number is on its scale
   UTMOS    naturalness, language-agnostic
   bandwidth of the output -- follows the reference clip, and no Mongolian source
            is full-band, so this is how you catch a dull voice
@@ -150,12 +152,14 @@ def synthesise(f5, text: str, ref_audio: Path, ref_text: str, seed: int):
 
 def evaluate(checkpoint: Path, corpus: Path, args) -> dict:
     import numpy as np
+    import soundfile as sf
     from f5_tts.api import F5TTS  # noqa: I001 - optional heavy dependency
 
-    from oron_tts.eval import MongolianASR, bandwidth_hz, utmos
+    from oron_tts.eval import MongolianASR, bandwidth_hz, sim_o, utmos
 
     sentences = load_test_sentences(corpus, args.n_sentences)
     asr = MongolianASR(device=args.device)
+    sim_warned = False
 
     results: dict[str, dict] = {}
     for gender in args.genders:
@@ -169,7 +173,8 @@ def evaluate(checkpoint: Path, corpus: Path, args) -> dict:
             # weights; upstream warns use_ema=True is harmful there.
             use_ema=args.use_ema,
         )
-        cers, moses, bws = [], [], []
+        ref_wav, ref_sr = sf.read(ref_audio, dtype="float32")
+        cers, moses, bws, sims = [], [], [], []
         for text in sentences:
             # The paper averages over three random seeds (§5.1). One draw makes
             # adjacent checkpoints indistinguishable from sampler noise.
@@ -182,6 +187,19 @@ def evaluate(checkpoint: Path, corpus: Path, args) -> dict:
                 wav = np.asarray(wav, dtype="float32")
                 cers.append(asr.score(wav, text, sr))
                 bws.append(bandwidth_hz(wav, sr))
+                if not args.no_sim:
+                    # The whole proposition is that voice identity transfers
+                    # from the prompt. Without this nothing measures whether it
+                    # does; the checkpoint is a manual download, so a missing
+                    # one must not cost the CER measurement.
+                    try:
+                        sims.append(sim_o(wav, ref_wav, sr, ref_sr,
+                                          checkpoint=args.sim_checkpoint,
+                                          device=args.device))
+                    except Exception as exc:
+                        if not sim_warned:
+                            print(f"  SIM-o unavailable: {exc}")
+                            sim_warned = True
                 if not args.no_utmos:
                     # UTMOS needs torch.hub, which may be offline on a training
                     # box. Its absence should not cost the CER measurement.
@@ -198,6 +216,8 @@ def evaluate(checkpoint: Path, corpus: Path, args) -> dict:
             if len(cers) > 1 else float("inf"),
             "bandwidth_median": statistics.median(bws),
             "utmos_mean": statistics.fmean(moses) if moses else None,
+            "sim_o_mean": statistics.fmean(sims) if sims else None,
+            "sim_o_n": len(sims),
             # n for UTMOS is tracked separately: exceptions are suppressed above,
             # so it can be shorter than n and was previously displayed as if not.
             "utmos_n": len(moses),
@@ -233,6 +253,8 @@ def report(name: str, results: dict, baseline: float) -> None:
                 f"BW {r['bandwidth_median']:.0f} Hz  n={r['n']}")
         if r["utmos_mean"] is not None:
             line += f"  UTMOS {r['utmos_mean']:.2f} (n={r['utmos_n']})"
+        if r.get("sim_o_mean") is not None:
+            line += f"  SIM-o {r['sim_o_mean']:.3f} (n={r['sim_o_n']})"
         print(line)
         print(f"          ref: {r['reference']}")
 
@@ -259,6 +281,11 @@ def main() -> None:
     ap.add_argument("--no-ema", dest="use_ema", action="store_false",
                     help="Early finetunes: EMA is still dominated by pretrained weights")
     ap.add_argument("--no-utmos", action="store_true", help="Skip UTMOS (needs torch.hub)")
+    ap.add_argument("--no-sim", action="store_true",
+                    help="Skip SIM-o speaker similarity")
+    ap.add_argument("--sim-checkpoint", default=None,
+                    help="WavLM-large speaker-verification checkpoint "
+                         "(wavlm_large_finetune.pth); or set ORON_WAVLM_CKPT")
     ap.add_argument("--baseline", type=float, default=None,
                     help="Human-speech CER floor; defaults to the measured 0.123")
     ap.add_argument("--out", type=Path, default=Path("eval_results.json"))

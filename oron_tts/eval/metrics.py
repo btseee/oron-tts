@@ -23,10 +23,12 @@ Three things this module is careful about:
 
 from __future__ import annotations
 
+import os
 import re
 import unicodedata
 from dataclasses import dataclass
 from functools import lru_cache
+from pathlib import Path
 
 # Measured on 25 FLEURS test clips of real human speech with human transcripts.
 # whisper-large-v3 scores 0.311 on the same clips.
@@ -34,6 +36,11 @@ HUMAN_CER_BASELINE = 0.123
 
 ASR_MODEL = "bayartsogt/wav2vec2-large-xlsr-mongolian"
 SAMPLE_RATE = 16_000
+
+# The paper's SIM-o uses WavLM-large fine-tuned for speaker verification. It is
+# a manual download (upstream's eval README links it), so the path is
+# configurable and its absence is reported rather than silently substituted.
+DEFAULT_WAVLM_CKPT = "ckpts/wavlm_large_finetune.pth"
 
 
 def normalize_for_scoring(text: str) -> str:
@@ -138,6 +145,75 @@ class MongolianASR:
             normalize_for_scoring(reference),
             normalize_for_scoring(self.transcribe(audio, sr)),
         )
+
+
+class SimOUnavailable(RuntimeError):
+    """Raised when the speaker-verification checkpoint is not on disk.
+
+    Deliberately an error rather than a fallback to some other model. SIM-o is
+    a number a reader compares against the paper's tables (0.66 for F5-TTS on
+    LibriSpeech-PC test-clean), and it is only comparable if it comes from the
+    same WavLM-large verification model. A silent substitution would produce a
+    number on a different scale wearing the same name.
+    """
+
+
+@lru_cache(maxsize=1)
+def _speaker_encoder(checkpoint: str, device: str):
+    """Upstream's WavLM-large ECAPA-TDNN, as used for the paper's SIM-o."""
+    import torch
+    from f5_tts.eval.ecapa_tdnn import ECAPA_TDNN_SMALL
+
+    path = Path(checkpoint)
+    if not path.exists():
+        raise SimOUnavailable(
+            f"WavLM speaker-verification checkpoint not found at {path}.\n"
+            "Download wavlm_large_finetune.pth (see F5-TTS/src/f5_tts/eval/"
+            "README.md, 'Download Evaluation Model Checkpoints') and pass\n"
+            "    --sim-checkpoint <path>   or set ORON_WAVLM_CKPT."
+        )
+    model = ECAPA_TDNN_SMALL(feat_dim=1024, feat_type="wavlm_large", config_path=None)
+    state = torch.load(path, weights_only=True, map_location="cpu")
+    model.load_state_dict(state["model"], strict=False)
+    return model.to(device).eval()
+
+
+def sim_o(generated, reference, sr: int, ref_sr: int | None = None, *,
+          checkpoint: str | None = None, device: str = "cpu") -> float:
+    """Speaker similarity between generated audio and its reference prompt.
+
+    The system's whole proposition is that voice identity transfers from a ~10 s
+    reference clip. Nothing measured whether it does: `Scores.sim_o` was declared
+    and rendered but never computed, so a model that produced fluent Mongolian in
+    the wrong voice scored exactly as well as one that did not.
+
+    Cosine similarity in (-1, 1) between WavLM-large ECAPA-TDNN embeddings, at
+    16 kHz, matching `f5_tts.eval.utils_eval.run_sim` so the number is on the
+    same scale as the paper's.
+    """
+    import torch
+    import torch.nn.functional as F
+
+    ckpt = checkpoint or os.environ.get("ORON_WAVLM_CKPT", DEFAULT_WAVLM_CKPT)
+    model = _speaker_encoder(str(ckpt), device)
+
+    def embed(audio, rate: int):
+        wav = torch.as_tensor(audio, dtype=torch.float32)
+        if wav.ndim == 2:                      # soundfile gives (n, channels)
+            wav = wav.mean(dim=1)
+        wav = wav.reshape(1, -1)
+        # The two clips are resampled independently: the generated audio is
+        # 24 kHz from Vocos and the prompt is whatever the corpus stored.
+        if rate != SAMPLE_RATE:
+            import torchaudio
+
+            wav = torchaudio.transforms.Resample(rate, SAMPLE_RATE)(wav)
+        with torch.no_grad():
+            return model(wav.to(device))
+
+    a = embed(generated, sr)
+    b = embed(reference, ref_sr if ref_sr is not None else sr)
+    return float(F.cosine_similarity(a, b)[0].item())
 
 
 @lru_cache(maxsize=1)

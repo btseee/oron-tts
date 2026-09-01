@@ -144,3 +144,89 @@ def test_checkpoint_sort_tolerates_unnumbered_names():
 
     paths = [Path("model_2000.pt"), Path("model_last.pt")]
     assert sort_checkpoints(paths)[0].stem == "model_last"
+
+
+# ── SIM-o ─────────────────────────────────────────────────────────────────────
+
+class _Echo:
+    """Stand-in speaker encoder: embeds a waveform as its own coarse spectrum.
+
+    Enough structure that identical audio scores 1.0 and different audio does
+    not, without downloading WavLM-large.
+    """
+
+    def __call__(self, wav):
+        import torch
+
+        n = wav.shape[-1] // 8 * 8
+        return torch.abs(torch.fft.rfft(wav[..., :n]))[..., :64]
+
+
+def _patch_encoder(monkeypatch):
+    from oron_tts.eval import metrics
+
+    metrics._speaker_encoder.cache_clear()
+    monkeypatch.setattr(metrics, "_speaker_encoder", lambda ckpt, device: _Echo())
+
+
+def test_sim_o_of_a_clip_with_itself_is_one(monkeypatch):
+    import numpy as np
+
+    from oron_tts.eval import sim_o
+
+    _patch_encoder(monkeypatch)
+    rng = np.random.default_rng(0)
+    wav = rng.standard_normal(24000).astype("float32")
+    assert sim_o(wav, wav, 24000) == pytest.approx(1.0, abs=1e-5)
+
+
+def test_sim_o_separates_two_different_signals(monkeypatch):
+    import numpy as np
+
+    from oron_tts.eval import sim_o
+
+    _patch_encoder(monkeypatch)
+    t = np.arange(24000) / 24000
+    a = np.sin(2 * np.pi * 120 * t).astype("float32")
+    b = np.sin(2 * np.pi * 240 * t).astype("float32")
+    assert sim_o(a, b, 24000) < sim_o(a, a, 24000)
+
+
+def test_sim_o_accepts_two_different_sample_rates(monkeypatch):
+    """The generated audio is 24 kHz from Vocos; the prompt is whatever the
+    corpus stored. Upstream resamples each independently."""
+    import numpy as np
+
+    from oron_tts.eval import sim_o
+
+    _patch_encoder(monkeypatch)
+    gen = np.zeros(24000, dtype="float32")
+    ref = np.zeros(16000, dtype="float32")
+    assert isinstance(sim_o(gen, ref, 24000, 16000), float)
+
+
+def test_sim_o_mono_ises_a_stereo_prompt(monkeypatch):
+    """soundfile returns (n, channels) for a stereo file."""
+    import numpy as np
+
+    from oron_tts.eval import sim_o
+
+    _patch_encoder(monkeypatch)
+    mono = np.random.default_rng(1).standard_normal(16000).astype("float32")
+    stereo = np.stack([mono, mono], axis=1)
+    assert sim_o(mono, stereo, 16000) == pytest.approx(1.0, abs=1e-5)
+
+
+def test_a_missing_checkpoint_is_an_error_not_a_substitute():
+    """SIM-o is compared against the paper's tables, so it is only meaningful
+    from the same WavLM-large model. Quietly using another would put a number
+    on a different scale under the same name."""
+    import numpy as np
+
+    from oron_tts.eval import SimOUnavailable, metrics, sim_o
+
+    metrics._speaker_encoder.cache_clear()
+    with pytest.raises(SimOUnavailable) as exc:
+        sim_o(np.zeros(100, "float32"), np.zeros(100, "float32"), 16000,
+              checkpoint="does/not/exist.pth")
+    assert "wavlm_large_finetune.pth" in str(exc.value)
