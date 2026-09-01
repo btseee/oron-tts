@@ -249,13 +249,44 @@ female contributors are individually far more prolific.
 
 Comfortably above the 25 h go/no-go before quality filtering.
 
+## 10. Common Voice 26 adds nothing for Mongolian
+
+`Common Voice Scripted Speech 26.0 - Mongolian`
+(`cmqinq6zs00x8nr07elg0nyrr`, CC0-1.0, 2.87 GB, released 2026-06-17) against
+v24 (2025-12-05):
+
+| | v24 | v26 |
+|---|---:|---:|
+| validated clips | 33,331 | 33,258 |
+| **validated hours** | **46.9** | **46.9** |
+| validated speakers | 511 | 520 |
+| male | 10.7 h / 114 spk | 10.6 h / 114 spk |
+| female | 17.3 h / 43 spk | 17.3 h / 43 spk |
+| total hours | 140.6 | 130.3 |
+
+**Mongolian gained essentially no validated speech in six months.** The corpus
+has plateaued; total hours actually *fell*, because `invalidated` shrank from
+9.4 h to 4.5 h as clips were re-adjudicated. Use v26 because it is the current
+authoritative CC0 release, not because it adds data — and do not plan on Common
+Voice growing.
+
+After the `down_votes > 0` gate (4,400 clips, 13.2%), the usable input is
+**28,858 clips / 40.3 h**, of which male is **9.1 h across 109 speakers**.
+
+### Access notes
+
+The API key authenticates correctly; the original blocker was purely a stale
+dataset ID. Mozilla Data Collective publishes **each language of each release as
+its own dataset**, so the ID is release- and language-specific, and there is no
+list or search endpoint — a dead ID can only be replaced by hand from the
+dataset page URL. Downloads additionally require the account to have accepted
+that dataset's terms, and are capped at 30/day per organisation. The endpoint
+sits behind Cloudflare, which rejects `requests`/`urllib` default User-Agents
+with error 1010 before the request reaches the API.
+
 ## Open items
 
-- Common Voice **25** remains unreachable: the dataset ID hardcoded at
-  `oron-cleaner/pipeline/datasets/common_voice.py:16` returns *"Dataset with id …
-  not found"*, the Mozilla Data Collective API has no list or search endpoint, and
-  downloads require accepting the dataset terms in the web UI. The API key itself
-  authenticates correctly. Two operational notes: the endpoint sits behind
-  Cloudflare, which rejects `requests`/`urllib` default User-Agents with error
-  1010, and downloads are capped at 30/day per organisation. Work proceeds on
-  v24, which is a superset-in-kind; moving to v25 needs only the new dataset ID.
+- `pipeline/datasets/common_voice.py` cannot be imported without pulling
+  `torchcrepe`, `silero_vad`, `whisper` and `torchmetrics`, because it imports
+  `audio_filter` at module level. That is why oron-cleaner's tests cannot run
+  without the full ML stack, and it should be separated in Phase 2.
