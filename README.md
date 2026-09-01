@@ -7,7 +7,7 @@ Training itself runs in upstream [F5-TTS](https://github.com/SWivid/F5-TTS).
 This repository owns the Mongolian-specific layer:
 
 | | |
-|---|---|
+| --- | --- |
 | `oron_tts/text/` | Text normalization, number expansion, the vocabulary contract. Pure stdlib. |
 | `oron_tts/audio.py` | Mel parameters matching `charactr/vocos-mel-24khz` exactly. |
 | `oron_tts/eval/` | Objective metrics. Upstream's eval supports only zh/en. |
@@ -93,7 +93,7 @@ norm.unsupported_chars("сайн 你 байна")   # ['你'] — reject the row
 ```
 
 | Input | Output |
-|---|---|
+| --- | --- |
 | `2024 онд` | хоёр мянга хорин дөрвөн онд |
 | `1-р сар` | нэгдүгээр сар |
 | `15-нд` | арван тавнд |

@@ -10,7 +10,7 @@ Parsed from `btsee/oron-tts` `tb_logs/events.out.tfevents.1778934899...` (42 MB,
 448,701 events, 74,500 steps / 500 epochs on 3,846 MBSpeech clips).
 
 | epoch | train_loss | val_loss |
-|------:|-----------:|---------:|
+| ------: | -----------: | ---------: |
 | 1 | 8.7296 | 7.9836 |
 | 10 | 0.9870 | 0.7783 |
 | 50 | 0.7226 | 0.4832 |
@@ -46,7 +46,7 @@ Mechanism: Cyrillic is 2 bytes/char in UTF-8, so a Cyrillic segment matches
 neither the pure-ASCII branch (`byte_len == len`) nor the pure-CJK branch
 (`byte_len == 3*len`) and falls through to the verbatim `else` branch.
 
-```
+```shell
 in : Сайн байна уу? Өнөөдөр үүлшинэ, 25 хэм.
 out: ['С','а','й','н',' ','б','а','й','н','а',' ','у','у','?',' ',
       'Ө','н','ө','ө','д','ө','р',' ','ү','ү','л','ш','и','н','э',',',
@@ -63,7 +63,7 @@ Measured on the token stream (post-`convert_char_to_pinyin`, which is what
 actually gets indexed):
 
 | vocab | entries | distinct OOV | OOV rate |
-|---|---:|---|---:|
+| --- | ---: | --- | ---: |
 | F5-TTS base | 2545 | `Ө ө Ү ү` + `\xa0` | **4.90%** |
 | extended | 2550 | `\xa0` only | **0.01%** |
 
@@ -101,7 +101,7 @@ Case is **kept**, not folded. The base vocab has both cases of Cyrillic with
 pretrained embeddings; lowercasing would discard 31 trained rows to save 3
 appended ones.
 
-```
+```shell
 2545 entries -> 2550 entries      (text embedding 2546 -> 2551 rows)
 ```
 
@@ -114,7 +114,7 @@ MBSpeech carries no gender field. Measured median F0 (librosa pyin, voiced frame
 only) against self-declared Common Voice labels as calibration:
 
 | corpus | n | median F0 | range |
-|---|---:|---:|---|
+| --- | ---: | ---: | --- |
 | CV24 `male_masculine` | 8 | 115.1 Hz | 103–131 |
 | CV24 `female_feminine` | 6 | 239.3 Hz | 232–244 |
 | **MBSpeech** | 10 | **140.7 Hz** | 112–157 |
@@ -132,7 +132,7 @@ supply the full-band male reference clip. That must come from Common Voice.
 normalised (casefold, punctuation stripped, whitespace collapsed):
 
 | model | params | CER median | CER mean | p90 |
-|---|---:|---:|---:|---:|
+| --- | ---: | ---: | ---: | ---: |
 | `bayartsogt/wav2vec2-large-xlsr-mongolian` | 315M | **0.123** | 0.134 | 0.210 |
 | whisper-large-v3 *(dataset's own values, same clips)* | 1.5B | 0.311 | 0.311 | — |
 | `Mengkedalai/w2v-bert-2.0-mongolian-170h_crl` | 606M | 1.000 | 1.000 | 1.000 |
@@ -164,7 +164,7 @@ underestimates. FLEURS and MBSpeech act as controls — both are 16 kHz native, 
 a correct estimator must show them capping just under the 8 kHz Nyquist.
 
 | corpus | container | p10 | median | p90 | max | ≥8 kHz | ≥10 kHz |
-|---|---|---:|---:|---:|---:|---:|---:|
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | Common Voice 24 mn (n=120) | 48 kHz | 5,578 | 7,148 | 11,109 | 15,938 | 32.5% | 22.5% |
 | FLEURS-mn (n=20) | 24 kHz | — | 7,664 | — | **7,723** | 0% | 0% |
 | MBSpeech (n=20) | 16 kHz | — | 7,570 | — | **7,695** | 0% | 0% |
@@ -202,7 +202,7 @@ these are counted hours, not estimates.
 **96,308 clips / 140.6 hours total.**
 
 | split | clips | hours | speakers | male / female / unlabelled |
-|---|---:|---:|---:|---|
+| --- | ---: | ---: | ---: | --- |
 | **validated** | 33,331 | **46.9** | 511 | 7,520 / 12,574 / 13,237 |
 | other *(unvalidated)* | 58,460 | 82.2 | 272 | 4,897 / 24,601 / 28,962 |
 | invalidated *(voter-rejected)* | 3,164 | 9.4 | 371 | — |
@@ -219,7 +219,7 @@ strict tier. `invalidated` was actively rejected by voters and is excluded.
 Within `validated`:
 
 | | hours | speakers |
-|---|---:|---:|
+| --- | ---: | ---: |
 | male_masculine | **10.7** | 114 |
 | female_feminine | 17.3 | 43 |
 | unlabelled / declined | — | (13,237 clips, 39.7%) |
@@ -241,7 +241,7 @@ female contributors are individually far more prolific.
 ### Revised budget for the strict tier
 
 | source | raw hours |
-|---|---:|
+| --- | ---: |
 | Common Voice `validated` | 46.9 |
 | FLEURS-mn (already filtered) | 12.3 |
 | MBSpeech | 6.3 |
@@ -256,7 +256,7 @@ Comfortably above the 25 h go/no-go before quality filtering.
 v24 (2025-12-05):
 
 | | v24 | v26 |
-|---|---:|---:|
+| --- | ---: | ---: |
 | validated clips | 33,331 | 33,258 |
 | **validated hours** | **46.9** | **46.9** |
 | validated speakers | 511 | 520 |

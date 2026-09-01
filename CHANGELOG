@@ -4,6 +4,7 @@ Rebuilt as a finetune of upstream F5-TTS `F5TTS_v1_Base`. The previous
 from-scratch architecture is recoverable at the `v1-from-scratch` tag.
 
 ### Why
+
 - The published run overfitted: validation loss bottomed at epoch 250 of 500 and
   rose monotonically thereafter, on ~7 h of single-speaker audio.
 - `--pretrain-ckpt` never worked. Key names (`cfm.backbone.*` vs upstream
@@ -13,6 +14,7 @@ from-scratch architecture is recoverable at the `v1-from-scratch` tag.
   ConvNeXt text encoder's receptive field to under one character.
 
 ### Removed
+
 - `src/models/`, `src/training/`, `src/data/` — the reimplemented DiT, CFM,
   trainer, dataset and denoiser. Training now runs in upstream F5-TTS.
 - `CyrillicTokenizer` (hardcoded 65-char vocabulary), `TextCleaner`,
@@ -22,6 +24,7 @@ from-scratch architecture is recoverable at the `v1-from-scratch` tag.
   tables, currency and math translations, and the `--lang` switch.
 
 ### Added
+
 - `oron_tts/text/` — Mongolian normalization with no dependencies, so
   oron-cleaner can import it without pulling torch. This makes the published
   corpus text, the CER-scored text and the training text one string.
@@ -34,6 +37,7 @@ from-scratch architecture is recoverable at the `v1-from-scratch` tag.
   characters map to index 0, which is *space*, and that was 4.90% of tokens.
 
 ### Fixed
+
 - Roman numerals rewrote Latin words (`MIX` = M+IX = 1009); now require a context
   noun.
 - "Number before noun" missed `ө` U+04E9 and `ү` U+04AF, since `[а-я]` is
@@ -44,6 +48,7 @@ from-scratch architecture is recoverable at the `v1-from-scratch` tag.
   raises instead.
 
 ### Changed
+
 - Package renamed `src` → `oron_tts` so it can be imported as a dependency.
 - Case is preserved rather than lowercased.
 

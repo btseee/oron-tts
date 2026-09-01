@@ -65,7 +65,7 @@ work. Progress is logged every 500 clips.
 Check `output/oron_mn_strict/corpus_summary.txt` against the go/no-go criteria:
 
 | criterion | why |
-|---|---|
+| --- | --- |
 | ≥ 25 h total | below this a finetune has little to learn from |
 | ≥ 5 h male | the binding constraint — Common Voice has 10.6 h labelled male before filtering |
 | ≥ 3 male speakers | one speaker means one voice, not a male voice |
@@ -159,7 +159,7 @@ and a listener should not have to discover it.
 Each of these produces a plausible-looking model that is quietly wrong.
 
 | | |
-|---|---|
+| --- | --- |
 | Unextended vocab | `list_str_to_idx` maps unknown ids to **0, which is the space token** — 4.90% of Mongolian characters become spaces, with nothing logged |
 | Regenerated vocab | Sorting or deduplicating misaligns all 2545 pretrained embeddings |
 | `prepare_csv_wavs.py --pretrain` | Writes a vocab of only the characters in your data — 20 entries in a test run |
