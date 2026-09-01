@@ -60,6 +60,11 @@ dev = [
     "pytest>=7.4.0",
 ]
 
+[project.scripts]
+# The one user-facing command. Everything else under scripts/ is operator
+# tooling run from a checkout, not something to install onto a PATH.
+oron-tts-infer = "oron_tts.infer:main"
+
 [tool.ruff]
 line-length = 100
 target-version = "py312"

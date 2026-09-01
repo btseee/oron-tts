@@ -15,6 +15,8 @@ This repository owns the Mongolian-specific layer:
 | `scripts/build_f5_dataset.py` | Corpus to the `raw.arrow` / `duration.json` tree training reads. |
 | `scripts/compute_epochs.py` | Solves for `epochs`, which sets the LR decay length. |
 | `scripts/eval_mn.py` | Scores a checkpoint, or sweeps a directory of them. |
+| `scripts/select_voices.py` | Picks the reference clips that become the shipped voices. |
+| `oron_tts/infer.py` | `oron-tts-infer --voice male\|female`. |
 | `configs/f5tts_mn.yaml` | The finetune config. |
 | `data/oron_mn_pinyin/vocab.txt` | 2550 entries: the 2545 pretrained ones, plus `Ө ө Ү ү Ъ`. |
 | `docs/phase0-findings.md` | The measurements this design rests on. |
@@ -32,7 +34,7 @@ is recoverable at the `v1-from-scratch` tag.
 - [x] Evaluation harness
 - [ ] Strict corpus from [oron-cleaner](../oron-cleaner) — needs a GPU
 - [ ] Finetune run
-- [ ] Reference voice selection
+- [x] Reference voice selection and the inference CLI
 - [ ] Release
 
 ## Why a finetune, not a new model
@@ -155,6 +157,30 @@ accelerate launch src/f5_tts/train/train.py --config-name f5tts_mn.yaml
 # 5. pick the best checkpoint -- it will not be the last one
 python scripts/eval_mn.py --sweep ckpts/oron_mn --corpus <corpus>
 ```
+
+## Voices
+
+F5-TTS takes voice identity from a **reference clip**, not from a token, so "a
+male and a female voice" means exactly two curated reference clips shipping with
+the model. There is no gender conditioning in the architecture, and adding one
+would be a worse answer than choosing good prompts.
+
+```bash
+python scripts/select_voices.py --corpus <corpus> --top 5 --write voices/
+oron-tts-infer --voice male --text "Сайн байна уу" --checkpoint <ckpt>
+oron-tts-infer --ref-audio mine.wav --ref-text "..." --text "..." --checkpoint <ckpt>
+```
+
+Candidates are ranked by bandwidth first — output bandwidth follows the prompt,
+and the ≥10 kHz tail exists only in Common Voice — then DNSMOS, alignment score
+and SNR, restricted to 6–10 s and one clip per speaker. The ranking is objective;
+which voice is *pleasant* is not, so listen before shipping.
+
+`ref_text` ships with each clip and is not optional. Duration is estimated from
+the **UTF-8 byte-length ratio** of reference to generated text
+(`utils_infer.py:503-505`), and Cyrillic is 2 bytes per character — a Latin
+reference transcript against Mongolian output yields roughly twice the intended
+length.
 
 ## Evaluation
 
