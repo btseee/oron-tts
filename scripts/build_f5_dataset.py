@@ -137,7 +137,24 @@ def main() -> None:
     if args.workers:
         cmd += ["--workers", str(args.workers)]
     print("running:", " ".join(cmd))
-    subprocess.run(cmd, check=True)
+    proc = subprocess.run(cmd, capture_output=True, text=True,
+                          encoding="utf-8", errors="replace")
+    if proc.stdout:
+        print(proc.stdout.rstrip())
+    if proc.returncode != 0:
+        tail = (proc.stderr or "").strip().splitlines()[-6:]
+        detail = "\n  ".join(tail)
+        hint = ""
+        # prepare_csv_wavs.py imports the f5_tts package, whose __init__ pulls
+        # the whole training stack. A partial install fails here rather than at
+        # training time, with a traceback that does not name the cause.
+        if "ModuleNotFoundError" in (proc.stderr or ""):
+            missing = tail[-1].split("'")[-2] if "'" in tail[-1] else "a dependency"
+            hint = (f"\n\n{missing!r} is missing. prepare_csv_wavs.py imports the "
+                    "f5_tts package, whose __init__ loads the trainer, so a "
+                    "partial install fails here.\n"
+                    "Install the full package:  pip install -e ../F5-TTS")
+        raise SystemExit(f"prepare_csv_wavs.py failed:\n  {detail}{hint}")
 
     # prepare_csv_wavs.py copies the 2545-line base vocab. Replacing it is not
     # optional: without Ө ө Ү ү those characters become spaces, silently.

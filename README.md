@@ -20,6 +20,7 @@ This repository owns the Mongolian-specific layer:
 | `configs/f5tts_mn.yaml` | The finetune config. |
 | `data/oron_mn_pinyin/vocab.txt` | 2550 entries: the 2545 pretrained ones, plus `Ө ө Ү ү Ъ`. |
 | `docs/phase0-findings.md` | The measurements this design rests on. |
+| `docs/runbook.md` | The three GPU sessions from here to a release. |
 
 ## Status
 
