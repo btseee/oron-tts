@@ -231,3 +231,8 @@ logs/
 *.pth
 *.ckpt
 *.arrow
+# Model checkpoints (F5TTS_v1_Base is 1.35 GB)
+ckpts/
+data/*/raw.arrow
+data/*/duration.json
+data/*/metadata.csv

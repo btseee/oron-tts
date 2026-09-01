@@ -61,9 +61,15 @@ def expand_embeddings(ckpt_in: Path, ckpt_out: Path, n_new: int, vocab: list[str
     """Grow the text embedding by n_new rows, preserving every pretrained row.
 
     Upstream's expand_model_embeddings (finetune_gradio.py:974-1011) seeds new
-    rows with torch.randn -- std 1.0, while real rows are std ~0.02-0.1. We seed
-    from the empirical distribution of the existing Cyrillic rows instead, so the
-    new letters start in the same regime as their neighbours.
+    rows with torch.randn, std 1.0. Measured, the pretrained Cyrillic rows have
+    element std 0.627 and mean row-norm 14.18, so a randn row would be about
+    1.6x too long -- a real mismatch, though a smaller one than the "10-50x"
+    figure this comment previously claimed before the checkpoint was measured.
+
+    Seeding from the empirical per-dimension mean and std of the existing
+    Cyrillic rows lands the new letters at row-norm 14.28 against 14.18, so they
+    start in the same regime as their neighbours rather than being pulled toward
+    the model by the first few gradient steps.
     """
     import torch
     from safetensors.torch import load_file, save_file

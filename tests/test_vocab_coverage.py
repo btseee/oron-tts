@@ -23,6 +23,32 @@ FIXTURE = Path(__file__).parent / "fixtures" / "mn_text_sample.jsonl"
 MN_ALPHABET = "абвгдеёжзийклмноөпрстуүфхцчшщъыьэюя"
 
 
+def _load_f5_utils():
+    """Load upstream's model/utils.py directly, bypassing the f5_tts package.
+
+    `import f5_tts.model.utils` executes the package __init__, which pulls the
+    whole training stack (wandb, vocos, torchdiffeq, x_transformers). The
+    function under test needs only rjieba and pypinyin, so loading the real
+    source file keeps this a test of upstream's actual code without demanding a
+    training environment.
+    """
+    import importlib.util
+
+    src = REPO / ".." / "F5-TTS" / "src" / "f5_tts" / "model" / "utils.py"
+    if not src.exists():
+        pytest.skip(f"upstream F5-TTS not checked out at {src}")
+    pytest.importorskip("rjieba", reason="rjieba not installed")
+    pytest.importorskip("pypinyin", reason="pypinyin not installed")
+
+    spec = importlib.util.spec_from_file_location("_f5_utils", src)
+    module = importlib.util.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(module)
+    except Exception as exc:  # pragma: no cover - environment dependent
+        pytest.skip(f"could not load upstream utils.py: {exc}")
+    return module
+
+
 def read_vocab(path: Path) -> list[str]:
     """Read vocab.txt exactly the way get_tokenizer does."""
     with open(path, encoding="utf-8") as f:
@@ -109,9 +135,7 @@ def test_tokenizer_roundtrip_preserves_every_character():
     (len == byte_len) nor the pure-CJK branch (3*len == byte_len) and fall
     through to the verbatim else-branch. Skipped where f5_tts is not installed.
     """
-    utils = pytest.importorskip(
-        "f5_tts.model.utils", reason="f5-tts not installed (needs rjieba)"
-    )
+    utils = _load_f5_utils()
     pre = str.maketrans({";": ",", "“": '"', "”": '"', "‘": "'", "’": "'"})
 
     texts = fixture_texts()

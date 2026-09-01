@@ -121,8 +121,9 @@ python scripts/extend_vocab.py \
 Two deliberate departures from upstream's Gradio-only `expand_model_embeddings`:
 
 - New rows are seeded from the **empirical mean and standard deviation of the
-  pretrained Cyrillic rows**, not `torch.randn` (std 1.0, roughly 10–50× larger
-  than a real row).
+  pretrained Cyrillic rows**, not `torch.randn`. Measured on the real
+  checkpoint, pretrained Cyrillic rows have element std 0.627 and mean row-norm
+  14.18, so a `randn` row is ~1.6× too long; seeded rows land at 14.28.
 - A `.pt` base checkpoint is **refused**. Upstream re-saves `.pt` files with
   `model_state_dict` left unexpanded, which then fails on load.
 
