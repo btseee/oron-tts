@@ -193,9 +193,69 @@ Reference-voice candidates are still ample despite the compounding filters:
 ~96k CV clips × ~11% labelled male × 22.5% at ≥10 kHz ≈ 2,400 candidate male
 clips before quality ranking, and only one good one is needed per gender.
 
+## 9. Common Voice 24 Mongolian, measured from its own TSVs
+
+Read from `cv-corpus-24.0-2025-12-05/mn/` via the CC0 mirror
+`onlysainaa/common-voice-mn-24`. `clip_durations.tsv` gives exact durations, so
+these are counted hours, not estimates.
+
+**96,308 clips / 140.6 hours total.**
+
+| split | clips | hours | speakers | male / female / unlabelled |
+|---|---:|---:|---:|---|
+| **validated** | 33,331 | **46.9** | 511 | 7,520 / 12,574 / 13,237 |
+| other *(unvalidated)* | 58,460 | 82.2 | 272 | 4,897 / 24,601 / 28,962 |
+| invalidated *(voter-rejected)* | 3,164 | 9.4 | 371 | — |
+| train / dev / test | 6,018 | 9.1 | — | subsets of validated |
+
+**Use `validated` only: 46.9 h.** The plan's "~123 h" figure came from
+`validated ∪ other`, which is what `Blgn94/mongolian-stt-dataset` blends and
+which its own card flags as *"a deliberate volume-over-purity choice"* —
+`other` is not human-confirmed and contains misreads. That is incompatible with a
+strict tier. `invalidated` was actively rejected by voters and is excluded.
+
+### The male-voice risk is smaller than projected
+
+Within `validated`:
+
+| | hours | speakers |
+|---|---:|---:|
+| male_masculine | **10.7** | 114 |
+| female_feminine | 17.3 | 43 |
+| unlabelled / declined | — | (13,237 clips, 39.7%) |
+
+Earlier projection from a v20 sample was ~8 h of male speech; the actual figure
+is **10.7 h across 114 speakers**, and MBSpeech adds 6.3 h more. The ≥5 h male
+floor in the plan's go/no-go is met with margin, from many speakers rather than
+one. Note the inversion: there are 2.6× more male speakers but fewer male hours —
+female contributors are individually far more prolific.
+
+### Two gates the pipeline is not yet using
+
+- **Speaker concentration.** The top 10 of 511 speakers hold **45.7%** of
+  validated clips; the largest single contributor has 1,968. Without a
+  per-speaker cap the model will collapse toward a handful of voices.
+- **`down_votes`.** 4,377 validated clips (13.1%) carry at least one down-vote —
+  a free, high-precision quality signal that oron-cleaner reads and discards.
+
+### Revised budget for the strict tier
+
+| source | raw hours |
+|---|---:|
+| Common Voice `validated` | 46.9 |
+| FLEURS-mn (already filtered) | 12.3 |
+| MBSpeech | 6.3 |
+| **total** | **~65** |
+
+Comfortably above the 25 h go/no-go before quality filtering.
+
 ## Open items
 
-- **Blocked:** corpus measurement of Common Voice 25 — the Mozilla Data
-  Collective endpoint needs `API_KEY`, which is not present in the environment or
-  in either repo's `.env`. All CV figures used so far are measured from v20/v24
-  mirrors on HuggingFace.
+- Common Voice **25** remains unreachable: the dataset ID hardcoded at
+  `oron-cleaner/pipeline/datasets/common_voice.py:16` returns *"Dataset with id …
+  not found"*, the Mozilla Data Collective API has no list or search endpoint, and
+  downloads require accepting the dataset terms in the web UI. The API key itself
+  authenticates correctly. Two operational notes: the endpoint sits behind
+  Cloudflare, which rejects `requests`/`urllib` default User-Agents with error
+  1010, and downloads are capped at 30/day per organisation. Work proceeds on
+  v24, which is a superset-in-kind; moving to v25 needs only the new dataset ID.
