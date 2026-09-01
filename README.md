@@ -10,7 +10,12 @@ This repository owns the Mongolian-specific layer:
 |---|---|
 | `oron_tts/text/` | Text normalization, number expansion, the vocabulary contract. Pure stdlib. |
 | `oron_tts/audio.py` | Mel parameters matching `charactr/vocos-mel-24khz` exactly. |
+| `oron_tts/eval/` | Objective metrics. Upstream's eval supports only zh/en. |
 | `scripts/extend_vocab.py` | Builds the extended vocabulary and grows the text-embedding matrix. |
+| `scripts/build_f5_dataset.py` | Corpus to the `raw.arrow` / `duration.json` tree training reads. |
+| `scripts/compute_epochs.py` | Solves for `epochs`, which sets the LR decay length. |
+| `scripts/eval_mn.py` | Scores a checkpoint, or sweeps a directory of them. |
+| `configs/f5tts_mn.yaml` | The finetune config. |
 | `data/oron_mn_pinyin/vocab.txt` | 2550 entries: the 2545 pretrained ones, plus `Ө ө Ү ү Ъ`. |
 | `docs/phase0-findings.md` | The measurements this design rests on. |
 
@@ -20,12 +25,14 @@ Rebuilt from a previous from-scratch architecture that could not work. See
 [docs/phase0-findings.md](docs/phase0-findings.md) for the evidence; the old code
 is recoverable at the `v1-from-scratch` tag.
 
-- [x] Vocabulary extension and coverage tests
+- [x] Vocabulary extension, verified on the real checkpoint
 - [x] Mongolian text normalization (Kazakh removed)
-- [x] Evaluation ASR selected
-- [ ] Strict corpus from [oron-cleaner](../oron-cleaner)
+- [x] Evaluation ASR selected and its human baseline measured
+- [x] Training config and the corpus-to-dataset bridge
+- [x] Evaluation harness
+- [ ] Strict corpus from [oron-cleaner](../oron-cleaner) — needs a GPU
 - [ ] Finetune run
-- [ ] Evaluation harness and reference voices
+- [ ] Reference voice selection
 - [ ] Release
 
 ## Why a finetune, not a new model
@@ -129,6 +136,40 @@ Two deliberate departures from upstream's Gradio-only `expand_model_embeddings`:
 
 New tokens are appended, never inserted, so every pretrained index is preserved.
 A regenerated "sorted unique characters" vocabulary would misalign all 2545.
+
+## Training
+
+```bash
+# 1. corpus -> the tree F5-TTS reads
+python scripts/build_f5_dataset.py --corpus ../oron-cleaner/output/oron_mn_strict
+
+# 2. how many epochs for the LR schedule
+python scripts/compute_epochs.py --data ../F5-TTS/data/oron_mn_pinyin
+
+# 3. grow the embedding by five rows
+python scripts/extend_vocab.py --out data/oron_mn_pinyin/vocab.txt     --checkpoint ckpts/F5TTS_v1_Base/model_1250000.safetensors     --checkpoint-out ckpts/oron_mn/pretrained_model_1250000.safetensors
+
+# 4. train (from the F5-TTS repo, with configs/f5tts_mn.yaml copied in)
+accelerate launch src/f5_tts/train/train.py --config-name f5tts_mn.yaml
+
+# 5. pick the best checkpoint -- it will not be the last one
+python scripts/eval_mn.py --sweep ckpts/oron_mn --corpus <corpus>
+```
+
+## Evaluation
+
+CER, not WER: Mongolian is agglutinative, so one wrong suffix makes a whole word
+wrong and WER saturates.
+
+The recogniser has a floor. `bayartsogt/wav2vec2-large-xlsr-mongolian` scores
+**CER 0.123 median on real human speech with human transcripts** — synthetic
+audio cannot beat that, so a raw CER means nothing against zero. `eval_mn.py`
+reports the ratio to that baseline.
+
+Checkpoint selection is the point. The paper's own small-data evidence (Tab. 9)
+has a 24 h model peaking at 200k updates and degrading to twice the WER by 600k,
+and this project's previous run overfitted from epoch 250 of 500. Sweep, and
+listen before shipping.
 
 ## Tests
 
