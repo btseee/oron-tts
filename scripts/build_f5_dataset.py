@@ -67,6 +67,36 @@ def apply_filter(records: list[dict], expression: str | None) -> list[dict]:
     return kept
 
 
+def select_splits(records: list[dict], splits: str) -> list[dict]:
+    """Keep only the requested manifest splits, or fail saying why it cannot.
+
+    This guard used to read `if wanted and any("split" in r for r in records)`,
+    which was always False because the corpus writer never persisted `split` --
+    so the filter silently did nothing and training consumed the whole corpus,
+    test split included. A missing split is a corpus that was never finalised,
+    not a default of "train".
+    """
+    wanted = {s.strip() for s in splits.split(",") if s.strip()}
+    if not wanted:
+        return records
+    missing = [r for r in records if "split" not in r]
+    if missing:
+        raise SystemExit(
+            f"{len(missing)} of {len(records)} manifest rows have no 'split' key.\n"
+            "Run the finalize step first:\n"
+            "    python clean_pipeline.py --finalize-only --corpus-dir <dir>\n"
+            "Without it every split would be silently merged into training."
+        )
+    available = {r["split"] for r in records}
+    unknown = wanted - available
+    if unknown:
+        raise SystemExit(
+            f"Requested split(s) {sorted(unknown)} not in the manifest. "
+            f"Available: {sorted(available)}."
+        )
+    return [r for r in records if r["split"] in wanted]
+
+
 def write_metadata_csv(corpus: Path, records: list[dict], out: Path) -> int:
     """Write the `audio_file|text` CSV, with the absolute paths F5-TTS requires."""
     corpus = corpus.resolve()
@@ -103,10 +133,9 @@ def main() -> None:
     records = load_manifest(args.corpus)
     print(f"manifest: {len(records)} clips")
 
-    wanted = {s.strip() for s in args.splits.split(",") if s.strip()}
-    if wanted and any("split" in r for r in records):
-        records = [r for r in records if r.get("split", "train") in wanted]
-        print(f"  splits {sorted(wanted)}: {len(records)}")
+    records = select_splits(records, args.splits)
+    if args.splits.strip():
+        print(f"  splits {args.splits}: {len(records)}")
 
     before = len(records)
     records = [r for r in records

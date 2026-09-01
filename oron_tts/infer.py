@@ -125,8 +125,15 @@ def synthesize(
     cfg_strength: float = CFG_STRENGTH,
     device: str | None = None,
     use_ema: bool = True,
+    seed: int | None = None,
 ):
-    """Synthesize one utterance. Returns (waveform, sample_rate)."""
+    """Synthesize one utterance. Returns (waveform, sample_rate, seed).
+
+    `seed` pins the ODE's initial noise. Left as None, `F5TTS.infer` draws
+    `random.randint(0, sys.maxsize)`, so the same text and voice give a
+    different rendering every call. The seed actually used is returned so a
+    result worth keeping can be reproduced.
+    """
     from f5_tts.api import F5TTS
 
     audio, transcript = resolve_voice(voice, ref_audio, ref_text, voices_dir)
@@ -152,8 +159,10 @@ def synthesize(
         sway_sampling_coef=SWAY_SAMPLING_COEF,
         speed=speed,
         remove_silence=False,
+        seed=seed,
     )
-    return wav, sr
+    # infer() stores whatever it drew when seed was None.
+    return wav, sr, model.seed
 
 
 def main() -> None:
@@ -173,6 +182,9 @@ def main() -> None:
     ap.add_argument("--speed", type=float, default=1.0)
     ap.add_argument("--nfe-step", type=int, default=NFE_STEP)
     ap.add_argument("--cfg-strength", type=float, default=CFG_STRENGTH)
+    ap.add_argument("--seed", type=int, default=None,
+                    help="Pin the sampler noise. Omitted, one is drawn at random "
+                         "and printed so the run can be reproduced.")
     ap.add_argument("--device", default=None)
     ap.add_argument("--no-ema", dest="use_ema", action="store_false", default=True,
                     help="Early finetunes: EMA is still dominated by pretrained weights")
@@ -189,7 +201,7 @@ def main() -> None:
 
     import soundfile as sf
 
-    wav, sr = synthesize(
+    wav, sr, seed = synthesize(
         args.text,
         args.checkpoint,
         voice=args.voice,
@@ -202,9 +214,10 @@ def main() -> None:
         cfg_strength=args.cfg_strength,
         device=args.device,
         use_ema=args.use_ema,
+        seed=args.seed,
     )
     sf.write(args.output, wav, sr)
-    print(f"Wrote {args.output} ({len(wav) / sr:.2f}s at {sr} Hz)")
+    print(f"Wrote {args.output} ({len(wav) / sr:.2f}s at {sr} Hz, seed {seed})")
 
 
 if __name__ == "__main__":

@@ -36,6 +36,10 @@ DEFAULT_VOCAB = REPO / "data" / "oron_mn_pinyin" / "vocab.txt"
 NFE_STEP = 32
 CFG_STRENGTH = 2.0
 SWAY_SAMPLING_COEF = -1.0
+# Upstream clips reference audio over 12 s; under ~6 s there is too little
+# speaker evidence for a stable prompt.
+MIN_REF_S = 6.0
+MAX_REF_S = 10.0
 
 
 def load_test_sentences(corpus: Path, limit: int) -> list[str]:
@@ -50,26 +54,41 @@ def load_test_sentences(corpus: Path, limit: int) -> list[str]:
     return [text for _audio, text in rows][:limit]
 
 
-def pick_reference(corpus: Path, gender: str) -> tuple[Path, str]:
-    """Best available reference clip for a gender.
+def pick_reference(corpus: Path, gender: str, split: str = "test") -> tuple[Path, str]:
+    """Best reference clip for a gender, drawn from a held-out split.
 
     Ranked by bandwidth first: output bandwidth follows the prompt, and the
     ≥10 kHz tail exists only in Common Voice.
+
+    The `split` restriction is the zero-shot condition. Previously this scanned
+    the entire manifest, so the prompt was a *training* clip with ~90%
+    probability -- which is exactly what speaker_disjoint_split exists to
+    prevent. A reference the model trained on measures memorisation, not
+    voice cloning.
     """
     manifest = corpus / "manifest.jsonl"
     if not manifest.exists():
         raise SystemExit(f"{manifest} not found.")
     best = None
+    saw_split = False
+    saw_gender = False
     with open(manifest, encoding="utf-8") as f:
         for line in f:
             if not line.strip():
                 continue
             r = json.loads(line)
-            if r.get("gender_resolved") != gender:
+            if "split" not in r or "gender_resolved" not in r:
+                raise SystemExit(
+                    "manifest.jsonl lacks 'split'/'gender_resolved'. Run:\n"
+                    "    python clean_pipeline.py --finalize-only --corpus-dir <dir>"
+                )
+            saw_split = saw_split or r["split"] == split
+            saw_gender = saw_gender or r["gender_resolved"] == gender
+            if r["split"] != split or r["gender_resolved"] != gender:
                 continue
             # Upstream clips reference audio over 12 s and wants a little
             # trailing silence; 6-10 s is the comfortable band.
-            if not (6.0 <= float(r.get("duration_s") or 0) <= 10.0):
+            if not (MIN_REF_S <= float(r.get("duration_s") or 0) <= MAX_REF_S):
                 continue
             score = (float(r.get("bandwidth_hz") or 0) / 1000.0
                      + float(r.get("dnsmos_ovr") or 0)
@@ -77,14 +96,28 @@ def pick_reference(corpus: Path, gender: str) -> tuple[Path, str]:
             if best is None or score > best[0]:
                 best = (score, corpus / r["audio_path"], r["text"])
     if best is None:
-        raise SystemExit(f"No usable {gender} reference clip in {corpus}.")
+        why = []
+        if not saw_split:
+            why.append(f"no rows in split {split!r}")
+        if not saw_gender:
+            why.append(f"no rows with gender_resolved={gender!r}")
+        if not why:
+            why.append(f"none between {MIN_REF_S:g}-{MAX_REF_S:g}s")
+        raise SystemExit(f"No usable {gender} reference in {corpus}: {'; '.join(why)}.")
     _score, path, text = best
     return path, text
 
 
-def synthesise(f5, text: str, ref_audio: Path, ref_text: str):
-    """One utterance. Settings fixed so checkpoints stay comparable."""
+def synthesise(f5, text: str, ref_audio: Path, ref_text: str, seed: int):
+    """One utterance, with the sampler's noise pinned.
+
+    F5TTS.infer draws `seed = random.randint(...)` when none is given, so an
+    unseeded harness compares checkpoints under different noise draws. The paper
+    averages over three seeds (§5.1) -- in the same sentence as the CFG/sway/NFE
+    constants this function already copies.
+    """
     wav, sr, _ = f5.infer(
+        seed=seed,
         ref_file=str(ref_audio),
         ref_text=ref_text,
         gen_text=text,
@@ -107,7 +140,7 @@ def evaluate(checkpoint: Path, corpus: Path, args) -> dict:
 
     results: dict[str, dict] = {}
     for gender in args.genders:
-        ref_audio, ref_text = pick_reference(corpus, gender)
+        ref_audio, ref_text = pick_reference(corpus, gender, split=args.ref_split)
         f5 = F5TTS(
             model="F5TTS_v1_Base",
             ckpt_file=str(checkpoint),
@@ -119,28 +152,41 @@ def evaluate(checkpoint: Path, corpus: Path, args) -> dict:
         )
         cers, moses, bws = [], [], []
         for text in sentences:
-            try:
-                wav, sr = synthesise(f5, text, ref_audio, ref_text)
-            except Exception as exc:
-                print(f"  [{gender}] synthesis failed: {exc}")
-                continue
-            wav = np.asarray(wav, dtype="float32")
-            cers.append(asr.score(wav, text, sr))
-            bws.append(bandwidth_hz(wav, sr))
-            if not args.no_utmos:
-                # UTMOS needs torch.hub, which may be offline on a training box.
-                # Its absence should not cost the CER measurement.
-                with contextlib.suppress(Exception):
-                    moses.append(utmos(wav, sr))
+            # The paper averages over three random seeds (§5.1). One draw makes
+            # adjacent checkpoints indistinguishable from sampler noise.
+            for seed in args.seeds:
+                try:
+                    wav, sr = synthesise(f5, text, ref_audio, ref_text, seed)
+                except Exception as exc:
+                    print(f"  [{gender}] synthesis failed (seed {seed}): {exc}")
+                    continue
+                wav = np.asarray(wav, dtype="float32")
+                cers.append(asr.score(wav, text, sr))
+                bws.append(bandwidth_hz(wav, sr))
+                if not args.no_utmos:
+                    # UTMOS needs torch.hub, which may be offline on a training
+                    # box. Its absence should not cost the CER measurement.
+                    with contextlib.suppress(Exception):
+                        moses.append(utmos(wav, sr))
         if not cers:
             continue
         results[gender] = {
             "cer_median": statistics.median(cers),
             "cer_mean": statistics.fmean(cers),
+            # Reported so a reader can tell whether two checkpoints differ at all.
+            "cer_sd": statistics.stdev(cers) if len(cers) > 1 else 0.0,
+            "cer_ci95": (1.96 * statistics.stdev(cers) / len(cers) ** 0.5)
+            if len(cers) > 1 else float("inf"),
             "bandwidth_median": statistics.median(bws),
             "utmos_mean": statistics.fmean(moses) if moses else None,
+            # n for UTMOS is tracked separately: exceptions are suppressed above,
+            # so it can be shorter than n and was previously displayed as if not.
+            "utmos_n": len(moses),
             "n": len(cers),
+            "seeds": list(args.seeds),
             "reference": str(ref_audio.name),
+            # Per-utterance scores, so a CI can be recomputed from the artifact.
+            "cer_values": cers,
         }
     return results
 
@@ -163,11 +209,11 @@ def sort_checkpoints(paths: list[Path]) -> list[Path]:
 def report(name: str, results: dict, baseline: float) -> None:
     print(f"\n=== {name}")
     for gender, r in results.items():
-        line = (f"  {gender:<7} CER {r['cer_median']:.3f} median "
+        line = (f"  {gender:<7} CER {r['cer_median']:.3f} +/-{r['cer_ci95']:.3f} "
                 f"({r['cer_median'] / baseline:.2f}x the human floor)  "
                 f"BW {r['bandwidth_median']:.0f} Hz  n={r['n']}")
         if r["utmos_mean"] is not None:
-            line += f"  UTMOS {r['utmos_mean']:.2f}"
+            line += f"  UTMOS {r['utmos_mean']:.2f} (n={r['utmos_n']})"
         print(line)
         print(f"          ref: {r['reference']}")
 
@@ -180,7 +226,15 @@ def main() -> None:
     ap.add_argument("--corpus", type=Path, required=True, help="oron-cleaner corpus directory")
     ap.add_argument("--vocab", type=Path, default=DEFAULT_VOCAB)
     ap.add_argument("--genders", default="male,female")
-    ap.add_argument("--n-sentences", type=int, default=20)
+    ap.add_argument("--n-sentences", type=int, default=200,
+                    help="The paper reports 1000 in-set samples; 20 cannot resolve "
+                         "differences smaller than ~0.05 CER.")
+    ap.add_argument("--seeds", type=int, nargs="+", default=[0, 1, 2],
+                    help="Sampler seeds to average over. The paper reports the "
+                         "average of three random seed generations (5.1).")
+    ap.add_argument("--ref-split", default="test",
+                    help="Split the reference prompt is drawn from. Anything but a "
+                         "held-out split voids the zero-shot condition.")
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--use-ema", action="store_true", default=True)
     ap.add_argument("--no-ema", dest="use_ema", action="store_false",
