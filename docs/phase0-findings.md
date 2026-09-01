@@ -155,6 +155,44 @@ both the cleaner's CER signal and the Phase 4 TTS evaluation. It stays a
 *relative* signal in the cleaner, per the plan — forced alignment is the primary
 transcript gate.
 
+## 8. No Mongolian source is full-band — the model ceiling is ~8 kHz
+
+Measured as the highest frequency whose mean band power is within 40 dB of the
+spectral peak, i.e. an actual lowpass shelf. Cumulative-energy rolloff was tried
+first and rejected: speech energy is dominated by sub-1 kHz formants, so it
+underestimates. FLEURS and MBSpeech act as controls — both are 16 kHz native, so
+a correct estimator must show them capping just under the 8 kHz Nyquist.
+
+| corpus | container | p10 | median | p90 | max | ≥8 kHz | ≥10 kHz |
+|---|---|---:|---:|---:|---:|---:|---:|
+| Common Voice 24 mn (n=120) | 48 kHz | 5,578 | 7,148 | 11,109 | 15,938 | 32.5% | 22.5% |
+| FLEURS-mn (n=20) | 24 kHz | — | 7,664 | — | **7,723** | 0% | 0% |
+| MBSpeech (n=20) | 16 kHz | — | 7,570 | — | **7,695** | 0% | 0% |
+
+Both controls cap at ~7.7 kHz exactly as predicted, so the estimator is sound.
+
+**Common Voice's 48 kHz container is misleading.** It is crowd-sourced phone and
+laptop audio at low mp3 bitrate; the encoder has already discarded the top of the
+band. Its *median* cutoff (7.1 kHz) is slightly **worse** than the 16 kHz-native
+corpora, and only 1.7% of clips reach 15 kHz.
+
+Three consequences:
+
+- **Corrects the plan.** "Common Voice is the only large full-band source" is
+  wrong. The accurate statement is narrower: CV holds the only content above
+  8 kHz at all (32.5% of clips), while FLEURS and MBSpeech are hard-capped.
+- **The bandwidth gate must be ≥7 kHz, not higher.** That keeps 59% of Common
+  Voice and essentially all of FLEURS/MBSpeech. A gate at 10 kHz would discard
+  77% of the corpus for a quality tier that barely exists.
+- **A genuinely full-band reference voice is not obtainable.** Output bandwidth
+  follows the reference clip, so the realistic target is **wideband (~8 kHz)**,
+  not full-band. This should be stated in the model card rather than discovered
+  by a listener.
+
+Reference-voice candidates are still ample despite the compounding filters:
+~96k CV clips × ~11% labelled male × 22.5% at ≥10 kHz ≈ 2,400 candidate male
+clips before quality ranking, and only one good one is needed per gender.
+
 ## Open items
 
 - **Blocked:** corpus measurement of Common Voice 25 — the Mozilla Data
