@@ -261,3 +261,28 @@ def test_normalizer_takes_no_lang_argument(norm):
 
     params = inspect.signature(norm.normalize).parameters
     assert "lang" not in params
+
+
+# ── homoglyphs ────────────────────────────────────────────────────────────────
+
+def test_the_ukrainian_i_is_folded_to_the_mongolian_one(norm):
+    """M19. U+0456 is the one non-Mongolian Cyrillic letter in vocab.txt, so it
+    passes the vocabulary gate silently -- and the model gets a second,
+    near-untrained embedding for a letter it already has and a speaker
+    pronounces identically."""
+    assert norm.normalize("сайн \u0456 байна", strict=False) == "сайн и байна"
+    assert norm.normalize("\u0406 \u0407", strict=False) == "И И"
+
+
+def test_the_homoglyph_would_otherwise_pass_the_vocabulary_gate(norm):
+    """Which is why folding it in normalisation is the fix, not rejecting it."""
+    from oron_tts.text import charset
+
+    assert "\u0456" in charset()          # representable, so check() says yes
+    assert norm.is_representable("сайн \u0456 байна")
+
+
+def test_latin_look_alikes_are_not_folded(norm):
+    """Latin is in the vocabulary and preserved on purpose; folding "c" to "с"
+    would corrupt genuine Latin text."""
+    assert norm.normalize("BBC News", strict=False) == "BBC News"

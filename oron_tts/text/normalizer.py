@@ -45,6 +45,19 @@ CHAR_MAP: Final[dict[str, str]] = {
     "﻿": "",    # BOM / zero-width no-break space
     "−": "-",   # minus sign
     "ʼ": "'",   # modifier apostrophe
+
+    # Cyrillic homoglyphs. і is the one non-Mongolian Cyrillic letter in
+    # vocab.txt, and it is visually identical to и and pronounced the same,
+    # so it passes the vocabulary gate silently and the model learns a second,
+    # near-untrained embedding for a letter it already has. Folded here rather
+    # than rejected: a typo should cost a character, not a clip.
+    #
+    # Latin look-alikes are deliberately NOT folded. Latin is in the vocabulary
+    # and preserved on purpose, so mapping "c" to "с" would corrupt genuine
+    # Latin text.
+    "і": "и",
+    "Ї": "И",
+    "І": "И",
 }
 
 # A single letter followed by a period is not an abbreviation, it is a word

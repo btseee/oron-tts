@@ -41,9 +41,28 @@ is recoverable at the `v1-from-scratch` tag.
 ## Why a finetune, not a new model
 
 `F5TTS_v1_Base` is 336M parameters trained on ~95,000 hours. Its vocabulary
-already contains **61 of the 66 Mongolian Cyrillic letters** with trained
-embeddings, at lines 1628–1693 of `vocab.txt`. Adapting it to Mongolian costs
-**five new embedding rows**, not a new model.
+already contains **61 of the 66 Mongolian Cyrillic letters**, at lines
+1628–1693 of `vocab.txt`, so extending it costs **five new embedding rows**
+rather than a new vocabulary.
+
+An earlier draft of this README said those 61 rows come with *trained*
+embeddings, and that overstates it. The paper says why they exist (§5.1):
+
+> all other language characters exist in the Emilia dataset **as there are many
+> code-switched sentences**
+
+Emilia is Chinese/English podcast audio; the Cyrillic rows are incidental to it.
+Measured on the real checkpoint, the Cyrillic rows (mean ‖row‖ 14.177,
+std 0.627) are indistinguishable from Hangul (14.174 / 0.627) and from the table
+mean (14.108 / 0.624), while the demonstrably high-frequency ASCII-lowercase
+rows sit apart at 13.576 / 0.600. That is consistent with rows carrying little
+training signal — though norm statistics alone cannot prove it, since an
+initialisation and a trained scale can coincide.
+
+So adaptation costs five new rows **plus retraining 61 barely-trained ones**.
+The approach still holds: the value being reused is the *acoustic* prior in the
+DiT and the vocoder, which ~95,000 hours bought and which no amount of Mongolian
+text changes. The vocabulary is a convenience, not the argument.
 
 The previous approach — a hand-written reimplementation trained from scratch —
 reached its best validation loss at epoch 250 of 500 and then overfitted for the
@@ -100,13 +119,23 @@ norm.unsupported_chars("сайн 你 байна")   # ['你'] — reject the row
 | `10-20 хүн` | араваас хорь хүртэл хүн |
 | `14:30` | арван дөрвөн цаг гучин минут |
 | `-15°C` | хасах арван таван градус цельсий |
-| `3/4` | дөрөвдүгээрийн гурав |
+| `3/4` | *refused* — see [normaliser-review.md](docs/normaliser-review.md) |
 | `XV зуун` | арван тавдугаар зуун |
 | `MIX цомог` | MIX цомог *(unchanged — see below)* |
 | `Wi-Fi холболт` | Wi-Fi холболт *(Latin is in the vocab; keep it)* |
 
-Case is **preserved**: the base vocabulary carries both cases of Cyrillic with
-trained embeddings, so lowercasing would discard 31 trained rows to save 3.
+Case is **preserved**: the base vocabulary carries both cases of Cyrillic, so
+lowercasing would collapse 31 rows into 3.
+
+That reasoning is embedding-row accounting, and it does not address what those
+rows were *trained to mean*. Upstream states: *"Uppercased letters (best with
+form like K.F.C.) will be uttered letter by letter"*
+(`F5-TTS/src/f5_tts/infer/README.md`). Every Mongolian sentence begins with a
+capital, so the finetune has to weaken that prior on essentially every
+utterance. Whether ~30 h is enough is an empirical question this repo has not
+answered — **listen for letter-spelling at the 200-update smoke test**
+(see the runbook). If it appears, lowercasing the corpus is the fix, and it is a
+one-line change in `MongolianNormalizer`.
 
 Roman numerals expand only before a context noun (`зуун`, `анги`, `бүлэг`, …).
 Unrestricted matching rewrote ordinary Latin words — `MIX` parses as `M`(1000) +

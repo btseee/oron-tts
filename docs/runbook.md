@@ -109,9 +109,22 @@ The `pretrained_` prefix is load-bearing: `Trainer.load_checkpoint` uses it to
 cold-start at update 0 and to exclude the file from checkpoint rotation.
 
 **Smoke test first.** Stop after ~200 updates and listen to
-`ckpts/.../samples/`. The audio should sound Mongolian — not silence, not
-English phonotactics. `log_samples: True` is on for exactly this reason: the
+`ckpts/.../samples/`. `log_samples: True` is on for exactly this reason: the
 previous project trained 500 epochs and logged no audio at all.
+
+Three things to listen for, in order:
+
+1. **Mongolian phonotactics** — not silence, not English.
+2. **Letter-spelling.** Upstream: *"Uppercased letters (best with form like
+   K.F.C.) will be uttered letter by letter"*. Every Mongolian sentence starts
+   with a capital, and this corpus preserves case, so the finetune has to weaken
+   that pretrained prior on essentially every utterance. If the first word comes
+   out spelled rather than spoken, lowercase the corpus text — one line in
+   `MongolianNormalizer` — and restart. Catching this at 200 updates costs an
+   hour; catching it at the end costs the run.
+3. **Digits read as digits.** The normaliser expands them; if you hear
+   "тав" where the text said "5", good. If you hear nothing there, the
+   corpus was built with an unextended vocabulary.
 
 ### Selecting the checkpoint
 
