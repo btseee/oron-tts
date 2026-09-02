@@ -5,6 +5,7 @@ anything here pulls torch and transformers.
 """
 
 from oron_tts.eval.metrics import (
+    ASR_MODEL,
     HUMAN_CER_BASELINE,
     MongolianASR,
     Scores,
@@ -17,6 +18,7 @@ from oron_tts.eval.metrics import (
 )
 
 __all__ = [
+    "ASR_MODEL",
     "HUMAN_CER_BASELINE",
     "MongolianASR",
     "Scores",

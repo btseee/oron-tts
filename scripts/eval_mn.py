@@ -17,6 +17,9 @@ Reported per checkpoint:
 
   CER      against the same recogniser that scored the corpus. Its floor on real
            human speech is ~0.12, so compare to `--baseline`, not to zero.
+           That recogniser is fine-tuned on Common Voice Mongolian -- the corpus
+           this model trains on -- so it is contaminated in the model's favour.
+           `--asr-model` takes an independent one for a second opinion.
   SIM-o    speaker similarity to the reference prompt, WavLM-large ECAPA-TDNN,
            the same model the paper uses so the number is on its scale
   UTMOS    naturalness, language-agnostic
@@ -220,7 +223,7 @@ def evaluate(checkpoint: Path, corpus: Path, args) -> dict:
     from oron_tts.eval import MongolianASR, bandwidth_hz, sim_o, utmos
 
     sentences = load_test_sentences(corpus, args.n_sentences, args.mode)
-    asr = MongolianASR(device=args.device)
+    asr = MongolianASR(device=args.device, model_name=args.asr_model)
     sim_warned = False
 
     results: dict[str, dict] = {}
@@ -349,6 +352,11 @@ def main() -> None:
                     help="Split the reference prompt is drawn from. Defaults to "
                          "the one --mode implies. Anything but a held-out split "
                          "voids the zero-shot condition.")
+    ap.add_argument("--asr-model", default=None,
+                    help="Recogniser for CER. The default is fine-tuned on Common "
+                         "Voice Mongolian -- the same corpus this model trains on "
+                         "-- so it is contaminated. Pass an independent one "
+                         "(e.g. facebook/mms-1b-all) for a second opinion.")
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--use-ema", action="store_true", default=True)
     ap.add_argument("--no-ema", dest="use_ema", action="store_false",
@@ -370,8 +378,9 @@ def main() -> None:
     ap.add_argument("--out", type=Path, default=Path("eval_results.json"))
     args = ap.parse_args()
 
-    from oron_tts.eval import HUMAN_CER_BASELINE
+    from oron_tts.eval import ASR_MODEL, HUMAN_CER_BASELINE
 
+    args.asr_model = args.asr_model or ASR_MODEL
     baseline = args.baseline if args.baseline is not None else HUMAN_CER_BASELINE
     args.genders = [g.strip() for g in args.genders.split(",") if g.strip()]
 

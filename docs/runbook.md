@@ -161,7 +161,7 @@ Four numbers per gender, each answering a different question:
 
 | | question | how to read it |
 | --- | --- | --- |
-| CER | is it intelligible? | ratio to the **human baseline of 0.123** — the recogniser's own floor on correctly-transcribed human speech. Synthetic audio cannot beat it, so a raw number against zero is meaningless. Scored on `eval_sentences.txt`, which no training clip contains. |
+| CER | is it intelligible? | **contaminated** — see below. Ratio to the **human baseline of 0.123** — the recogniser's own floor on correctly-transcribed human speech. Synthetic audio cannot beat it, so a raw number against zero is meaningless. Scored on `eval_sentences.txt`, which no training clip contains. |
 | SIM-o | is it the right voice? | cosine similarity to the prompt, WavLM-large ECAPA-TDNN. The paper reports 0.66 for F5-TTS on LibriSpeech-PC test-clean; the ground truth there is 0.69. |
 | UTMOS | does it sound natural? | a proxy trained on English/Japanese MOS, never validated for Mongolian — treat it as a regression detector, not a MOS |
 | bandwidth | is it dull? | follows the prompt; no Mongolian source is full-band |
@@ -169,6 +169,31 @@ Four numbers per gender, each answering a different question:
 Each is averaged over `--seeds` (default `0 1 2`, the paper's three-seed
 protocol) and reported with a 95% CI. When two checkpoints' intervals overlap,
 the harness says so instead of naming a winner.
+
+**The CER scorer is contaminated, and cannot simply be swapped.**
+`bayartsogt/wav2vec2-large-xlsr-mongolian` is, per its own model card,
+fine-tuned on Common Voice Mongolian — the corpus this model trains on. It is
+both oron-cleaner's gate and this harness's scorer, so it has seen the training
+speakers and sentences and has not seen FLEURS' or MBSpeech's. Two consequences:
+
+- the **gate** is lenient on Common Voice and strict on the others, biasing
+  corpus composition by source rather than by quality. `corpus_summary.txt`
+  now prints CER by source so the gap is visible — a markedly lower median for
+  `cv` on audio of comparable quality *is* the contamination;
+- the **evaluation** inherits it, in the model's favour.
+
+It is kept as the default because it is the best Mongolian recogniser available
+(CER 0.123 median against whisper-large-v3's 0.311 on the same clips), and
+replacing it would move the baseline every number here is quoted against. Take a
+second opinion instead:
+
+```bash
+python scripts/eval_mn.py --checkpoint <best> --corpus <dir>     --asr-model facebook/mms-1b-all --baseline <its own human floor>
+```
+
+Measure that model's own floor on the same held-out human audio first, or the
+ratio means nothing. **State the contamination in the model card** — a CER
+quoted without it reads as ~15% better than it is.
 
 **SIM-o needs a manual download.** `wavlm_large_finetune.pth`, linked from
 `F5-TTS/src/f5_tts/eval/README.md` under *Download Evaluation Model
