@@ -34,7 +34,7 @@ jobs:
           # majority -- need nothing. The rest is what the eval and vocabulary
           # tests touch; anything heavier is behind pytest.importorskip.
           pip install -e .
-          pip install pytest ruff numpy librosa soundfile
+          pip install pytest ruff numpy librosa soundfile pyyaml
 
       - name: Lint
         run: ruff check .
@@ -53,5 +53,5 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install -e . && pip install pytest
-      - run: pytest tests/test_vocab_coverage.py -q
+      - run: pip install -e . && pip install pytest pyyaml
+      - run: pytest tests/test_vocab_coverage.py tests/test_preflight.py -q

@@ -94,7 +94,18 @@ python scripts/compute_epochs.py --data ../F5-TTS/data/oron_mn_pinyin
 
 Put the reported `epochs` into `configs/f5tts_mn.yaml`. It is **not** a stopping
 condition — it sets the LR decay length, and being wrong is silent in both
-directions.
+directions. The value in the repo is a placeholder computed for a corpus that
+does not exist yet, and it will be wrong for the real one.
+
+```bash
+python scripts/preflight.py --data ../F5-TTS/data/oron_mn_pinyin
+```
+
+Refuses to let the run start on a stale `epochs`, an unextended or reordered
+vocabulary, a tokenizer that sends `load_dataset` and `get_tokenizer` to
+different directories, `grad_accumulation_steps > 1`, or `log_samples` off.
+Every one of those completes the run and produces a worse model with nothing in
+the logs.
 
 ```bash
 python scripts/extend_vocab.py --out data/oron_mn_pinyin/vocab.txt \
