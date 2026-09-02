@@ -91,7 +91,17 @@ than a typo: `FRACTION_GENITIVE` has the n-stem form (`дөрөвний`) and
    `1/2` — and `3:1` is `нэгний гурав`. There is no sports-score reading, so
    nothing needs to tell them apart. `FRACTION_GENITIVE` gained `1: нэгний`.
 
-3. **The `хорь` ablative — still open.** Section 13 gives `2020-2024` as `... хорьноос ...`,
+3. **The `хорь` ablative — still open, and three sources could not settle it.**
+
+   The evidence points both ways. Noun ablatives do surface the fleeting-n --
+   `ямаа` → `ямаанаас`, `амьтан` → `амьтнаас` -- which is the pattern behind
+   the spec's `хорьноос`. But this file's own table has `гурав` → `гурваас`,
+   not `*гурванаас`, so numerals plainly do not follow the noun rule, and
+   `хориос` fits that instead. Neither `mongoltoli.mn` nor `toli.gov.mn` lists
+   a declined form for `хорь`, and Wiktionary has no case table for it.
+
+   The table's `хориос` was chosen and stands. The question below is what a
+   speaker needs to answer. Section 13 gives `2020-2024` as `... хорьноос ...`,
    while the verified `ABLATIVE` table has `хориос`. The table was chosen, so
    the spec line is treated as a slip — but the fleeting-n rule leans the other
    way, and if the spec is right the whole table needs the same review.
