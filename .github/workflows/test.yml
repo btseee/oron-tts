@@ -39,6 +39,12 @@ jobs:
       - name: Lint
         run: ruff check .
 
+      # Cheaper than discovering it as a collection error: a test module
+      # that reaches torch at import time breaks CI outright, and
+      # oron_tts.text is stdlib-only by design, so nothing here installs one.
+      - name: No test module needs the model stack to collect
+        run: python scripts/check_ci_imports.py
+
       - name: Test
         run: pytest -q
 
