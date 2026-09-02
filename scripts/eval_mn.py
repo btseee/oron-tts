@@ -215,6 +215,84 @@ def measure_rtf(f5, sentences, ref_audio: Path, ref_text: str,
     return out
 
 
+def ground_truth_topline(corpus: Path, args) -> dict:
+    """Score the held-out *human* audio with the same instruments.
+
+    The paper reports a ground-truth row in every table (WER 2.23, SIM-o 0.69,
+    UTMOS 4.09 on LibriSpeech-PC test-clean) and it is the row that makes the
+    others readable: it is the ceiling the metrics themselves impose, not one
+    the model could exceed.
+
+    Without it the numbers here float. CER 0.19 is either close to the ceiling
+    or twice it, and nothing in the output says which. This corpus reserves the
+    test audio and, until now, never scored it.
+    """
+    import json as _json
+
+    import numpy as np
+    import soundfile as sf
+
+    from oron_tts.eval import MongolianASR, bandwidth_hz, sim_o, utmos
+
+    rows: list[dict] = []
+    with open(corpus / "manifest.jsonl", encoding="utf-8") as f:
+        for line in f:
+            if line.strip():
+                r = _json.loads(line)
+                if r.get("split") == args.ref_split:
+                    rows.append(r)
+    if not rows:
+        raise SystemExit(f"No rows in split {args.ref_split!r} to score.")
+
+    asr = MongolianASR(device=args.device, model_name=args.asr_model)
+    out: dict[str, dict] = {}
+    for gender in args.genders:
+        clips = [r for r in rows if r.get("gender_resolved") == gender][: args.n_sentences]
+        if not clips:
+            continue
+        cers, moses, bws, sims = [], [], [], []
+        # SIM-o against a *different* clip of the same speaker: that is the
+        # ceiling for speaker similarity, since even real audio of one person
+        # does not score 1.0 against itself across utterances.
+        by_speaker: dict[str, list[dict]] = {}
+        for r in clips:
+            by_speaker.setdefault(str(r.get("client_id") or ""), []).append(r)
+
+        for r in clips:
+            wav, sr = sf.read(corpus / r["audio_path"], dtype="float32")
+            wav = np.asarray(wav, dtype="float32")
+            cers.append(asr.score(wav, r["text"], sr))
+            bws.append(bandwidth_hz(wav, sr))
+            if not args.no_utmos:
+                with contextlib.suppress(Exception):
+                    moses.append(utmos(wav, sr))
+            if not args.no_sim:
+                peers = [o for o in by_speaker[str(r.get("client_id") or "")]
+                         if o["clip_id"] != r["clip_id"]]
+                if peers:
+                    with contextlib.suppress(Exception):
+                        other, osr = sf.read(corpus / peers[0]["audio_path"], dtype="float32")
+                        sims.append(sim_o(wav, np.asarray(other, dtype="float32"), sr, osr,
+                                          checkpoint=args.sim_checkpoint, device=args.device))
+        out[gender] = {
+            "cer_median": statistics.median(cers),
+            "cer_mean": statistics.fmean(cers),
+            "cer_sd": statistics.stdev(cers) if len(cers) > 1 else 0.0,
+            "cer_ci95": (1.96 * statistics.stdev(cers) / len(cers) ** 0.5)
+            if len(cers) > 1 else float("inf"),
+            "bandwidth_median": statistics.median(bws),
+            "utmos_mean": statistics.fmean(moses) if moses else None,
+            "utmos_n": len(moses),
+            "sim_o_mean": statistics.fmean(sims) if sims else None,
+            "sim_o_n": len(sims),
+            "n": len(cers),
+            "seeds": [],
+            "reference": "(real audio)",
+            "cer_values": cers,
+        }
+    return out
+
+
 def evaluate(checkpoint: Path, corpus: Path, args) -> dict:
     import numpy as np
     import soundfile as sf
@@ -364,6 +442,10 @@ def main() -> None:
     ap.add_argument("--no-utmos", action="store_true", help="Skip UTMOS (needs torch.hub)")
     ap.add_argument("--no-sim", action="store_true",
                     help="Skip SIM-o speaker similarity")
+    ap.add_argument("--ground-truth", action="store_true",
+                    help="Also score the held-out human audio. The paper reports "
+                         "this row in every table; without it a CER has no ceiling "
+                         "to be read against.")
     ap.add_argument("--rtf", action="store_true",
                     help="Also measure real-time factor, latency and peak memory")
     ap.add_argument("--rtf-nfe", type=int, nargs="+", default=[8, 16, 32],
@@ -411,6 +493,15 @@ def main() -> None:
         raise SystemExit("Pass --checkpoint or --sweep.")
 
     all_results = {}
+    if args.ground_truth:
+        print("\nScoring the held-out human audio …", file=sys.stderr)
+        try:
+            gt = ground_truth_topline(args.corpus, args)
+            all_results["GROUND TRUTH"] = gt
+            report("GROUND TRUTH (real audio -- the ceiling, not a checkpoint)",
+                   gt, baseline)
+        except Exception as exc:
+            print(f"  failed: {exc}", file=sys.stderr)
     for ckpt in checkpoints:
         print(f"\nEvaluating {ckpt.name} …", file=sys.stderr)
         try:
@@ -424,7 +515,8 @@ def main() -> None:
     args.out.write_text(json.dumps(all_results, indent=2), encoding="utf-8")
     print(f"\nWrote {args.out}")
 
-    if len(all_results) > 1:
+    ranked_results = {k: v for k, v in all_results.items() if k != "GROUND TRUTH"}
+    if len(ranked_results) > 1:
         def mean_cer(r):
             vals = [v["cer_median"] for k, v in r.items() if k != "rtf"]
             return statistics.fmean(vals) if vals else float("inf")

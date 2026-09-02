@@ -139,7 +139,7 @@ python scripts/eval_mn.py --sweep ../F5-TTS/ckpts/oron_mn \
 
 # 2. Report. Test speakers, odd half. Only the winner, only once.
 python scripts/eval_mn.py --checkpoint ../F5-TTS/ckpts/oron_mn/model_<best>.pt \
-    --corpus ../oron-cleaner/output/oron_mn_strict --rtf
+    --corpus ../oron-cleaner/output/oron_mn_strict --rtf --ground-truth
 ```
 
 `--mode` defaults to `select` for a sweep and `report` for a single checkpoint,
@@ -223,7 +223,15 @@ oron-tts-infer --voice female --text "Сайн байна уу" --checkpoint <be
 ```
 
 **Listen before shipping.** The ranking is objective; whether a voice is pleasant
-is not.
+is not. `--ground-truth` scores the held-out human audio with the same
+instruments, which is the ceiling every other number should be read against —
+the paper reports that row in every table, and without it a CER of 0.19 is
+either close to the ceiling or twice it with nothing to say which.
+
+For a naturalness claim rather than an intelligibility one, follow
+[listening-test.md](listening-test.md): the paper's CMOS/SMOS protocol, 20
+native Khalkha listeners, 30 randomised rounds, against ground truth and an
+external baseline.
 
 Publish to `btsee/oron-tts` as a new revision. This is a breaking change — the
 existing `f5tts_best.pt` loads only via code deleted at the `v1-from-scratch`
