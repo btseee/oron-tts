@@ -125,7 +125,8 @@
   "id": 13,
   "cat": "date-range",
   "in": "2020-2024",
-  "out": "хоёр мянга хорьноос хоёр мянга хорин дөрөв хүртэл"
+  "out": "хоёр мянга хориос хоёр мянга хорин дөрөв хүртэл",
+  "superseded": "ABLATIVE table wins over the spec's хорьноос (user decision)"
  },
  {
   "id": 14,
@@ -403,13 +404,15 @@
   "id": 47,
   "cat": "quotes",
   "in": "«Сайн байна уу»",
-  "out": "сайн байна уу"
+  "out": "Сайн байна уу",
+  "superseded": "case is preserved by design; the spec line lowercases"
  },
  {
   "id": 48,
   "cat": "dialogue",
   "in": "— Сайн байна уу?",
-  "out": "сайн байна уу"
+  "out": "Сайн байна уу?",
+  "superseded": "question mark carries phrasing and is kept"
  },
  {
   "id": 49,
@@ -499,7 +502,8 @@
   "id": 68,
   "cat": "finance",
   "in": "₮1.5 сая",
-  "out": "нэг сая таван зуун мянган төгрөг"
+  "out": "сая таван зуун мянган төгрөг",
+  "superseded": "нэг before a scale word is dropped everywhere (user decision)"
  },
  {
   "id": 69,

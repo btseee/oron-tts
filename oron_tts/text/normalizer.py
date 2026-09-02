@@ -96,6 +96,27 @@ UNIT_ABBREVS: Final[dict[str, str]] = {
     "л": "литр",
 }
 
+# Marks that carry no sound. This is the one place the module's "preserve what
+# the vocabulary can represent" rule is overridden, and deliberately: the
+# specification reads every one of these constructions as the bare words inside
+# (sections 47-49), noting only that the *prosody* should differ -- and F5-TTS
+# has no prosody token, so keeping the character asks the model to learn to say
+# nothing for it, from a corpus where it is rare.
+#
+# The full stop, comma, question and exclamation marks are deliberately NOT
+# here: they carry phrasing, and upstream's own examples keep them. Nor is the
+# en dash, which is a range separator far more often than a bracket.
+SILENT_MARKS: Final[str] = "«»\"()[]{}—"
+
+# Marks that are spoken as a word when they open a token.
+SPOKEN_PREFIXES: Final[dict[str, str]] = {
+    "#": "хаштаг",
+    "@": "эт",
+}
+
+# A bracketed number is a citation: "[12]" is "ишлэл арван хоёр".
+CITATION_WORD: Final[str] = "ишлэл"
+
 
 class MongolianNormalizer:
     """Normalize Mongolian text into exactly what the model will be fed."""
@@ -129,6 +150,12 @@ class MongolianNormalizer:
             (re.compile(re.escape(e)), f" {word} ")
             for e, word in self._lexicons["emoji"].items()
         ]
+        self._silent_marks = str.maketrans(dict.fromkeys(SILENT_MARKS, " "))
+        self._prefix_res = [
+            (re.compile(rf"(?<![\w]){re.escape(mark)}(?=\w)"), word)
+            for mark, word in SPOKEN_PREFIXES.items()
+        ]
+        self._citation_re = re.compile(r"\[\s*(\d{1,4})\s*\]")
         self._foreign_res = [
             (re.compile(rf"\b{re.escape(w)}\b"), spoken)
             for w, spoken in sorted(self._lexicons["foreign_words"].items(),
@@ -151,6 +178,13 @@ class MongolianNormalizer:
         for pattern, repl in self._emoji_res:
             text = pattern.sub(repl, text)
 
+        # A bracketed number is a citation, so it has to be named before the
+        # brackets are stripped: "[12]" is "ишлэл арван хоёр", not "арван хоёр".
+        text = self._citation_re.sub(rf"{CITATION_WORD} \1", text)
+        # "#Монгол" -> "хаштаг Монгол", "@bat" -> "эт bat".
+        for pattern, word in self._prefix_res:
+            text = pattern.sub(f"{word} ", text)
+
         for pattern, full in self._abbrev_res:
             text = pattern.sub(full, text)
         for pattern, repl in self._unit_res:
@@ -160,6 +194,10 @@ class MongolianNormalizer:
             text = pattern.sub(repl, text)
 
         text = self._numbers.normalize_text(text)
+
+        # After the numbers, not before: the em dash is also a range separator,
+        # and "2020—2024" needs it intact to be read as a range.
+        text = text.translate(self._silent_marks)
 
         text = self._whitespace_re.sub(" ", text).strip()
         text = self._multi_punct_re.sub(r"\1", text)

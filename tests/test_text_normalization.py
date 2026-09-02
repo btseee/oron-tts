@@ -71,7 +71,7 @@ def test_ordinal_vowel_harmony(num, n, expected):
         ("50%", "тавин хувь"),
         ("14:30", "арван дөрвөн цаг гучин минут"),
         ("1/2", "хоёрны нэг"),
-        ("-15°C", "хасах арван таван градус цельсий"),
+        ("-15°C", "хасах арван таван хэм цельс"),
         ("100₮", "зуун төгрөг"),
     ],
 )
@@ -172,8 +172,17 @@ def test_number_before_mongolian_word_takes_attributive(norm):
 
 def test_range_uses_attached_ablative(norm):
     # "арав аас" with a space is not how it is spoken; ь is irregular.
-    assert norm.normalize("10-20 хүн", strict=False) == "араваас хорь хүртэл хүн"
     assert norm.normalize("20-аас доош", strict=False) == "хориос доош"
+    # No noun follows, so "хүртэл" closes the range.
+    assert norm.normalize("10-20", strict=False) == "араваас хорь хүртэл"
+
+
+def test_a_range_before_a_noun_drops_hurtel(norm):
+    """Spec section 62: "5-10 км" is "таваас арван километр". The upper bound is
+    attributive because it counts the noun, and the range needs no closing word
+    when the noun supplies the boundary."""
+    assert norm.normalize("5-10 км", strict=False) == "таваас арван километр"
+    assert norm.normalize("10-20 хүн", strict=False) == "араваас хорин хүн"
 
 
 # ── the two bugs this rewrite fixes ───────────────────────────────────────────
@@ -204,7 +213,11 @@ def test_identifier_hyphen_does_not_survive_as_a_token(norm):
     "raw,expected",
     [
         ("сайн\xa0байна", "сайн байна"),      # NBSP is not a vocab space
-        ("“сайн”", '"сайн"'),        # curly quotes absent from vocab
+        # Curly quotes are absent from the vocab, so they map to the straight
+        # one -- which is then stripped with the other silent marks, leaving the
+        # word. Both steps matter: without the mapping the character would
+        # survive to the vocabulary check and fail there.
+        ("“сайн”", "сайн"),
         ("сайн­байна", "сайнбайна"),      # soft hyphen is invisible
         ("﻿сайн", "сайн"),                # BOM
     ],
@@ -213,10 +226,27 @@ def test_char_map(norm, raw, expected):
     assert norm.normalize(raw, strict=False) == expected
 
 
-@pytest.mark.parametrize("ch", ["—", "–", "…", "«", "»"])
+@pytest.mark.parametrize("ch", ["–", "…", "№", "%"])
 def test_vocab_covered_punctuation_is_preserved(norm, ch):
     """Preserve what the vocab can represent; map only what it cannot."""
     assert ch in norm.normalize(f"сайн {ch} байна", strict=False)
+
+
+@pytest.mark.parametrize("ch", ["«", "»", "—", "(", ")", "[", "]"])
+def test_silent_marks_are_stripped(norm, ch):
+    """The one override of the preserve rule, and it is the spec's.
+
+    Sections 47-49 read quotes, dialogue dashes and brackets as the bare words
+    inside, noting only that the prosody differs -- and F5-TTS has no prosody
+    token, so keeping the character asks the model to learn to say nothing for
+    it from a corpus where it is rare.
+    """
+    assert ch not in norm.normalize(f"сайн {ch} байна", strict=False)
+
+
+def test_the_em_dash_survives_long_enough_to_separate_a_range(norm):
+    """Stripping runs after the number pass for exactly this reason."""
+    assert norm.normalize("10—20", strict=False) == "араваас хорь хүртэл"
 
 
 def test_case_is_preserved(norm):

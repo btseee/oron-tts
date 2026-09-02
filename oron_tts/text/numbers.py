@@ -70,7 +70,7 @@ ORDINAL_SUFFIX: Final[dict[str, str]] = {
 CURRENCY_SYMBOLS: Final[dict[str, str]] = {
     "₮": "төгрөг",
     "₸": "теңге",
-    "$": "доллар",
+    "$": "америк доллар",
     "€": "евро",
     "£": "фунт",
     "¥": "иен",
@@ -79,7 +79,7 @@ CURRENCY_SYMBOLS: Final[dict[str, str]] = {
 
 CURRENCY_CODES: Final[dict[str, str]] = {
     "MNT": "төгрөг",
-    "USD": "доллар",
+    "USD": "америк доллар",
     "EUR": "евро",
     "GBP": "фунт",
     "JPY": "иен",
@@ -196,6 +196,12 @@ for _stem, _ablative in ABLATIVE.items():
     _forms.pop("", None)
 del _stem, _ablative, _forms, _written
 
+# Forms the normalization specification supplies outright, beyond the ablative.
+# Sections 8 and 9: "5-аар" is "таваар" (distributive, "five each") and "5-уул"
+# is "тавуул" (collective, "the five of them"). Both are derived forms rather
+# than cases, which is why they are here and not in a case table.
+SUFFIXED_FORMS["тав"].update({"аар": "таваар", "уул": "тавуул"})
+
 # Every Mongolian Cyrillic letter, both cases. Note that a naive "[а-яА-ЯёЁ]"
 # range is U+0410-U+044F and therefore EXCLUDES ө U+04E9 and ү U+04AF, two of
 # the most common Mongolian vowels -- so it must be spelled out.
@@ -254,7 +260,8 @@ class NumberNormalizer:
         self._hour_word = "цаг"
         self._minute_word = "минут"
         self._second_word = "секунд"
-        self._degree_word = "градус"
+        # Spec section 22: "-20 C" is "хасах хорин хэм цельс".
+        self._degree_word = "хэм"
 
     # ── Internal conversion ───────────────────────────────────────────────
 
@@ -590,7 +597,7 @@ class NumberNormalizer:
                 parts.append(self._minus_word)
             parts.append(f"{self.convert_attributive(num)} {self._degree_word}")
             if unit and unit.upper() == "C":
-                parts.append("цельсий")
+                parts.append("цельс")
             elif unit and unit.upper() == "F":
                 parts.append("фаренгейт")
             return " ".join(parts)
@@ -599,6 +606,26 @@ class NumberNormalizer:
 
         _sym_pattern = "|".join(re.escape(s) for s in CURRENCY_SYMBOLS)
         _code_pattern = "|".join(CURRENCY_CODES)
+
+        # "1.5 сая төгрөг" is one quantity, not "нэг төгрөг таван сая": the
+        # scale word multiplies the number in front of it, so it has to be
+        # resolved before either the decimal or the currency pass sees it.
+        _scale_words = {name: value for value, (name, _) in LARGE.items()}
+
+        def _scaled(m: re.Match[str]) -> str:
+            symbol, amount, scale = m.group(1), m.group(2), m.group(3)
+            value = int(round(float(amount) * _scale_words[scale]))
+            if symbol:
+                return (f"{self.convert_attributive(value)} "
+                        f"{self._currency_name(symbol)}")
+            return self.convert(value)
+
+        text = re.sub(
+            rf"({_sym_pattern})?\s*(\d+(?:\.\d+)?)\s*({'|'.join(_scale_words)})"
+            rf"(?!{_MN_CLASS})",
+            _scaled,
+            text,
+        )
 
         def _currency_after(m: re.Match[str]) -> str:
             return f"{self.convert_attributive(int(m.group(1)))} {self._currency_name(m.group(2))}"
@@ -665,14 +692,37 @@ class NumberNormalizer:
 
         text = re.sub(r"(?<!\d)\d{8}(?!\d)", _local_phone, text)
 
+        # A leading zero means the digits are an identifier, not a quantity:
+        # "007" is "тэг тэг долоо", not "долоо". Read digit by digit.
+        text = re.sub(
+            r"(?<![\d\w])0\d+(?![\d\w])",
+            lambda m: self._digit_by_digit(m.group(0)),
+            text,
+        )
+
+        # A minus sign attached to a number, as opposed to a range separator or
+        # an identifier hyphen: "-15" is "хасах арван тав". Without this the
+        # hyphen survived into the text as a spoken token.
+        text = re.sub(
+            r"(?<![\d\w\-])-(?=\d)", f"{self._minus_word} ", text
+        )
+
         def _range(m: re.Match[str]) -> str:
-            lo, hi = self.convert(int(m.group(1))), self.convert(int(m.group(2)))
+            lo_n, hi_n, following = int(m.group(1)), int(m.group(2)), m.group(3)
+            lo = self.convert(lo_n)
             head, _, last = lo.rpartition(" ")
             abl = ABLATIVE.get(last)
             lo_abl = f"{head} {abl}".strip() if abl else lo
-            return f"{lo_abl} {hi} хүртэл"
+            # "5-10 км" is "таваас арван километр": the upper bound is
+            # attributive before the unit it counts, and there is no "хүртэл".
+            # Without the unit, "хүртэл" closes the range.
+            if following:
+                return f"{lo_abl} {self.convert_attributive(hi_n)}{following}"
+            return f"{lo_abl} {self.convert(hi_n)} хүртэл"
 
-        text = re.sub(r"(\d+)\s*[-–—]\s*(\d+)", _range, text)
+        text = re.sub(
+            rf"(\d+)\s*[-–—]\s*(\d+)(\s+{_MN_CLASS}+)?", _range, text
+        )
 
         # "Байр 12" -> "арван хоёрдугаар байр": the number becomes an ordinal
         # and moves in front of the noun.
@@ -685,6 +735,10 @@ class NumberNormalizer:
 
         def _ordinal(m: re.Match[str]) -> str:
             return self.convert_ordinal(int(m.group(1)))
+
+        # A list marker: a number and a full stop, alone. "1." is "нэгдүгээр".
+        # Anchored to the start so it cannot eat a sentence-final number.
+        text = re.sub(r"\A\s*(\d{1,3})\.(?=\s|\Z)", _ordinal, text)
 
         text = re.sub(r"(\d+)-р\b", _ordinal, text)
         text = re.sub(r"(\d+)-д(?:угаар|үгээр|ахь)", _ordinal, text)
@@ -712,6 +766,18 @@ class NumberNormalizer:
             return m.group(0) if val is None else self.convert_ordinal(val)
 
         text = _ROMAN_RE.sub(_roman, text)
+
+        # A whole arithmetic expression at once, so both operands stay
+        # standalone: "5x8" is "тав үржих нь найм", not "таван үржих нь найм".
+        # Converted digit by digit afterwards, the left operand would pick up
+        # the attributive form from the operator word following it.
+        _ops = "|".join(re.escape(s) for s in MATH_SYMBOLS)
+
+        def _arithmetic(m: re.Match[str]) -> str:
+            return (f"{self.convert(int(m.group(1)))} "
+                    f"{MATH_SYMBOLS[m.group(2)]} {self.convert(int(m.group(3)))}")
+
+        text = re.sub(rf"(\d+)\s*({_ops})\s*(\d+)", _arithmetic, text)
 
         for sym, word in MATH_SYMBOLS.items():
             if sym in text:
