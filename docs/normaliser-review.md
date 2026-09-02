@@ -192,6 +192,81 @@ Two more answers are needed outside the table:
 2. **`нэг сая` vs `сая`.** `convert(1000000)` returns `сая`. Should a leading
    `нэг` be supplied for 1 000 000, 1 000 000 000, and for 100 and 1000?
 
+## Candidate forms, counted in real Mongolian
+
+1.5M word tokens from 4,000 Mongolian Wikipedia articles. This does **not**
+answer the table — it narrows the question from “what is the dative of
+тав?” to “is it `тавд` (19) or `таванд` (2)?”.
+
+Regenerate with `python scripts/attest_forms.py`, which carries the caveats in
+full. Three of them matter when reading the numbers below:
+
+* **Homographs inflate.** `зуун` is both “hundred” and “century”, so `зуунд`
+  at 592 is mostly “in the 19th century”.
+* **Frequency is not the right reading.** `гуравт` may be “in third place”
+  rather than the dative of three.
+* **The alternation is unexplained.** The dative surfaces as `-т` after some
+  stems and `-д` after others — `гуравт` but `тавд` — with no pattern this
+  evidence justifies. That is the clearest sign these are not all one
+  construction, and exactly why a table is needed rather than a rule.
+
+```
+  stem    attested (count)                              note
+  нэг     нэгт=45  нэгэнд=38  нэгд=36                   no clear winner
+  хоёр    хоёрт=76                                      one form dominates
+  гурав   гуравт=34                                     one form dominates
+  дөрөв   дөрөвт=46  дөрвөнд=1                          one form dominates
+  тав     тавд=19  тавт=4  таванд=2                     one form dominates
+  зургаа  зургаад=5                                     one form dominates
+  долоо   долоод=5                                      one form dominates
+  найм    наймд=11  найманд=2                           one form dominates
+  ес      есөнд=1                                       no clear winner
+  арав    аравт=19  арванд=3  аравд=1                   one form dominates
+  хорь    хоринд=4  хорьд=1                             no clear winner
+  зуу     зуунд=592  зуут=7  зууд=1                     inflated: зуун also means century
+  мянга   мянгад=58  мянгат=34  мянганд=12              inflated: also the approximative of 1000 in decade names
+```
+
+```
+  stem    attested (count)                              note
+  нэг     нэгний=22  нэгийн=9                           no clear winner
+  хоёр    хоёрын=143  хоёрны=2                          one form dominates
+  гурав   гурвын=38  гуравын=2  гурваны=1               one form dominates
+  дөрөв   дөрөвний=25                                   one form dominates
+  тав     тавын=4                                       no clear winner
+  зургаа  зургааны=4  зургаагийн=3                      no clear winner
+  долоо   долоогийн=10                                  one form dominates
+  арав    -                                             corpus is silent
+  хорь    хорийн=7  хорины=4                            no clear winner
+  зуу     зууны=1714  зуун=367                          inflated: зуун also means century
+  мянга   мянганы=64  мянгын=1                          inflated: also millennium
+```
+
+```
+  stem    attested (count)                              note
+  нэг     нэгийг=92                                     one form dominates
+  хоёр    хоёрыг=68                                     one form dominates
+  гурав   гурвыг=13                                     one form dominates
+  тав     тавыг=1                                       no clear winner
+  хорь    хориныг=2  хорийг=1                           no clear winner
+  зуу     зууныг=32                                     one form dominates
+```
+
+### What the corpus did settle
+
+**Neither `хориос` nor `хорьноос` occurs at all** in 1.5M tokens, so
+question 3 is a disagreement over a form nobody writes. The entry stays
+`хориос` and the stakes are lower than they looked.
+
+**The `арав` ablative leans against the table.** `арваас` occurs 4 times and
+`арванаас` twice, against one for the table’s `араваас`. Thin, but it is the
+only direct evidence on the F0d inconsistency, and it favours dropping the
+unstable vowel — which is what `гурваас` and `дөрвөөс` already do.
+
+**Seven ablative entries are unattested** — `гучаас`, `далаас`, `ерээс`,
+`жараас`, `наймаас`, `наяас`, `наядаас`. Unattested is not wrong;
+those numerals simply do not appear in the ablative in encyclopaedic prose.
+Worth a glance when the table is reviewed.
 ## Re-measuring as you go
 
 ```bash
