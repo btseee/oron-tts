@@ -53,6 +53,47 @@ normalise, 628 are refused, 0 fail any other way. Every one of the 628 previousl
 produced a non-word. An earlier figure of 5.4% came from a 56-sentence fixture
 and was too small to trust.
 
+## What the normalization spec settled
+
+The specification supplied forms this document was blocked on, and they are in
+`numbers.py` verbatim:
+
+| | |
+|---|---|
+| `1/2` | `хоёрны нэг` — not `хагас`, which is what the code used to emit |
+| `3/4` | `дөрөвний гурав` |
+| `5-аар` | `таваар` (distributive) |
+| `5-уул` | `тавуул` (collective) |
+| `5.1.2` | `тавын нэгийн хоёр` — genitives for 1, 3, 4, 5, 10 |
+
+Note there are **two** genitive tables, confirmed as context-dependent rather
+than a typo: `FRACTION_GENITIVE` has the n-stem form (`дөрөвний`) and
+`REFERENCE_GENITIVE` the reduced one (`дөрвийн`).
+
+## Three questions the spec opened
+
+1. **The decimal place word.** `_decimal_words` uses a rule induced from three
+   examples — the place word appears when the fraction is a single significant
+   digit:
+
+   | | |
+   |---|---|
+   | `3.14` | `гурван бүхэл арван дөрөв` — no place word |
+   | `0.05` | `тэг бүхэл таван зууны` |
+   | `12.5%` | `арван хоёр бүхэл таван аравны хувь` |
+
+   Section 37 then contradicts it: the mantissa of `1.2×10⁵` is `нэг бүхэл
+   хоёр`, with no `аравны`. What is the actual rule?
+
+2. **`1:2` versus `3:1`.** The spec reads the first as a ratio (`нэг харьцаа
+   хоёр`) and the second as a sports score (`гурав нэгээр`). Nothing in either
+   string separates them. Is there a default, or does it need context?
+
+3. **The `хорь` ablative.** Section 13 gives `2020-2024` as `... хорьноос ...`,
+   while the verified `ABLATIVE` table has `хориос`. The table was chosen, so
+   the spec line is treated as a slip — but the fleeting-n rule leans the other
+   way, and if the spec is right the whole table needs the same review.
+
 ## What is already verified, so you can skip it
 
 The **ordinals are correct** and need no review. An earlier draft of this
