@@ -25,6 +25,7 @@ This repository owns the Mongolian-specific layer:
 | `docs/listening-test.md` | The paper's CMOS/SMOS protocol, for a naturalness claim. |
 | `docs/related-work.md` | What this can and cannot claim against published Mongolian TTS. |
 | `docs/ablations.md` | The questions a reviewer asks first, with protocols. |
+| `docs/model-card.md` | The release card, with the blanks the reporting run fills. |
 
 ## Status
 

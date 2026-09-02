@@ -129,3 +129,27 @@ def test_importorskip_is_recognised_as_a_guard(tmp_path):
 def test_the_repository_itself_passes():
     """The check the workflow runs."""
     assert cci.main() == 0
+
+
+# ── the release card ──────────────────────────────────────────────────────────
+
+def test_the_model_card_states_every_fact_the_other_docs_defer_to_it():
+    """Four documents say a fact "belongs in the model card". This checks the
+    card actually carries them, rather than each doc assuming another will."""
+    card = (ROOT / "docs" / "model-card.md").read_text(encoding="utf-8")
+    for claim, marker in [
+        ("the ~8 kHz ceiling", "8 kHz"),
+        ("the CER scorer's contamination", "contaminated"),
+        ("the absence of a listening test", "No listening test"),
+        ("the absence of watermarking", "no watermarking"),
+        ("the consent basis", "consented"),
+        ("the numeral refusals", "refuses"),
+    ]:
+        assert marker.lower() in card.lower(), f"model card omits {claim}"
+
+
+def test_the_model_card_leaves_the_unmeasured_numbers_blank():
+    """Publishing it with invented numbers would be worse than not publishing.
+    The blanks are the point."""
+    card = (ROOT / "docs" / "model-card.md").read_text(encoding="utf-8")
+    assert card.count("`<>`") >= 10, "the reporting run's blanks have gone missing"
