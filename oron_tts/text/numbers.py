@@ -88,9 +88,12 @@ CURRENCY_CODES: Final[dict[str, str]] = {
     "KRW": "вон",
 }
 
+# Spoken forms from the specification, section 36: "2+2" is "хоёр дээр хоёр"
+# and "5x8" is "тав үржих нь найм". Note the operands are standalone rather than
+# attributive -- "тав", not "таван".
 MATH_SYMBOLS: Final[dict[str, str]] = {
-    "+": "нэмэх",
-    "×": "үржүүлэх",
+    "+": "дээр",
+    "×": "үржих нь",
     "÷": "хуваах",
     "=": "тэнцүү",
     "≠": "тэнцүү биш",
@@ -205,6 +208,15 @@ _ROMAN_VALUES: Final[list[tuple[str, int]]] = [
     ("X", 10), ("IX", 9), ("V", 5), ("IV", 4), ("I", 1),
 ]
 
+# Nouns that take the number as an *ordinal in front of them*, however the
+# source writes it: "Байр 12" is "арван хоёрдугаар байр", "Бүлэг 12" is "арван
+# хоёрдугаар бүлэг". Reading the digits in place gave "байр арван хоёр", which
+# is the wrong construction and the wrong word order.
+ORDINAL_NOUNS: Final[tuple[str, ...]] = (
+    "байр", "бүлэг", "анги", "хороо", "хэсэг", "дүүрэг", "баг", "тойрог",
+    "сургууль", "хороолол",
+)
+
 # Roman numerals are only expanded before one of these nouns.
 #
 # An unrestricted match rewrites ordinary Latin words: "MIX" parses as M(1000)
@@ -229,7 +241,7 @@ class NumberNormalizer:
     """Expand digits, symbols and numeric idioms into Mongolian words."""
 
     def __init__(self, reference_words: set[str] | None = None) -> None:
-        self._cache: dict[tuple[int, bool, bool], str] = {}
+        self._cache: dict[tuple[int, bool], str] = {}
         # Words that make a following "N:M" a verse reference rather than a
         # clock time. Supplied by the normaliser from data/lexicon.
         self._reference_words = reference_words or set()
@@ -282,30 +294,27 @@ class NumberNormalizer:
         )
         return f"{h_str} {self._convert_under_100(remainder, attr)}"
 
-    def _convert_large(self, n: int, scale: int, attr: bool = False,
-                       bare: bool = False) -> tuple[str, int]:
+    def _convert_large(self, n: int, scale: int, attr: bool = False) -> tuple[str, int]:
         scale_count, remainder = divmod(n, scale)
         base, attr_form = LARGE[scale]
         is_terminal = remainder == 0
         form = attr_form if (attr and is_terminal) else base
         if scale_count == 1:
-            # "1005" is "нэг мянга тав", not "мянга тав": a bare scale word is a
-            # noun, and one of them still needs counting. The exception is a
-            # year, where "1990" is "мянга есөн зуун ерэн" -- handled by the
-            # caller, which passes bare=True for a year context.
-            return (form if bare else f"{ONES[1][0]} {form}"), remainder
+            # One of a scale word is never counted aloud: 1990 is "мянга есөн
+            # зуун ер", not "нэг мянга ...". Two of them is, which is why this
+            # is a special case for 1 rather than a rule about scale words --
+            # 2990 keeps its "хоёр".
+            return form, remainder
         return f"{self._convert_number(scale_count, attr=True)} {form}", remainder
 
-    def _convert_number(self, n: int, attr: bool = False, bare: bool = False) -> str:
+    def _convert_number(self, n: int, attr: bool = False) -> str:
         if n < 1000:
             return self._convert_under_1000(n, attr)
         parts: list[str] = []
         remaining = n
         for scale in sorted(LARGE.keys(), reverse=True):
             if remaining >= scale:
-                word, remaining = self._convert_large(
-                    remaining, scale, attr=attr, bare=bare and not parts
-                )
+                word, remaining = self._convert_large(remaining, scale, attr=attr)
                 parts.append(word)
         if remaining > 0:
             parts.append(self._convert_under_1000(remaining, attr))
@@ -313,37 +322,32 @@ class NumberNormalizer:
 
     # ── Public API ────────────────────────────────────────────────────────
 
-    def convert(self, n: int, bare: bool = False) -> str:
-        """Cardinal in standalone form (тав, хорь, зуу).
-
-        `bare` drops the "нэг" a leading scale word otherwise takes, which is
-        what a year does: 1990 is "мянга есөн зуун ерэн", while the same digits
-        as a quantity are "нэг мянга есөн зуун ерэн".
-        """
-        key = (n, False, bare)
+    def convert(self, n: int) -> str:
+        """Cardinal in standalone form (тав, хорь, зуу)."""
+        key = (n, False)
         if key in self._cache:
             return self._cache[key]
         if n == 0:
             return self._zero_word
         if n < 0:
             return f"{self._minus_word} {self.convert(-n)}"
-        result = self._convert_number(n, attr=False, bare=bare)
+        result = self._convert_number(n, attr=False)
         self._cache[key] = result
         return result
 
-    def convert_attributive(self, n: int, bare: bool = False) -> str:
+    def convert_attributive(self, n: int) -> str:
         """Cardinal in attributive form, used before nouns.
 
         таван (мянга), тавин (хувь), зуун (төгрөг).
         """
-        key = (n, True, bare)
+        key = (n, True)
         if key in self._cache:
             return self._cache[key]
         if n == 0:
             return self._zero_word
         if n < 0:
             return f"{self._minus_word} {self.convert_attributive(-n)}"
-        result = self._convert_number(n, attr=True, bare=bare)
+        result = self._convert_number(n, attr=True)
         self._cache[key] = result
         return result
 
@@ -353,6 +357,18 @@ class NumberNormalizer:
         return f"{cardinal}{self._get_ordinal_suffix(cardinal)}"
 
     # ── Helpers ───────────────────────────────────────────────────────────
+
+    def _phone_words(self, digits: str) -> str:
+        """A phone number, read the way one is dictated.
+
+        Eight digits is the Mongolian mobile length and is read as four pairs --
+        "99112233" is "ерэн ес арван нэг хорин хоёр гучин гурав". Any other
+        length is read digit by digit, which is what the specification gives for
+        an unstructured run and what an international number needs.
+        """
+        if len(digits) == 8:
+            return " ".join(self.convert(int(digits[i:i + 2])) for i in range(0, 8, 2))
+        return self._digit_by_digit(digits)
 
     def _decimal_words(self, whole: str, frac: str) -> str:
         """"3.14" -> "гурван бүхэл арван дөрөв".
@@ -497,7 +513,7 @@ class NumberNormalizer:
         def _date_ymd(m: re.Match[str]) -> str:
             y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
             return (
-                f"{self.convert_attributive(y, bare=True)} {self._year_suffix} "
+                f"{self.convert_attributive(y)} {self._year_suffix} "
                 f"{self.convert_ordinal(mo)} {self._month_suffix} "
                 f"{self.convert(d)}"
             )
@@ -505,7 +521,7 @@ class NumberNormalizer:
         def _date_dmy(m: re.Match[str]) -> str:
             d, mo, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
             return (
-                f"{self.convert_attributive(y, bare=True)} {self._year_suffix} "
+                f"{self.convert_attributive(y)} {self._year_suffix} "
                 f"{self.convert_ordinal(mo)} {self._month_suffix} "
                 f"{self.convert(d)}"
             )
@@ -596,15 +612,6 @@ class NumberNormalizer:
 
         text = re.sub(rf"({_sym_pattern})\s*(\d+)", _currency_before, text)
 
-        # A year keeps the bare scale word: "1990 он" is "мянга есөн зуун ерэн
-        # он", where the same digits as a quantity are "нэг мянга ...". Done
-        # here, before the generic digit pass, because only the following noun
-        # distinguishes the two.
-        def _year(m: re.Match[str]) -> str:
-            return f"{self.convert_attributive(int(m.group(1)), bare=True)} {m.group(2)}"
-
-        text = re.sub(r"\b(\d{4})\s+(он|оны|онд|оноос|оноор)\b", _year, text)
-
         # Percent must see the decimal before the decimal pass splits it:
         # "12.5%" was matching "5%" and leaving "арван хоёр.таван хувь".
         def _percent(m: re.Match[str]) -> str:
@@ -644,11 +651,19 @@ class NumberNormalizer:
 
         text = re.sub(r"(\d{1,2})/(\d{1,2})", _fraction, text)
 
-        def _phone(m: re.Match[str]) -> str:
+        def _international(m: re.Match[str]) -> str:
             digits = re.sub(r"\D", "", m.group(0)[1:])
-            return f"{MATH_SYMBOLS['+']} " + self._digit_by_digit(digits)
+            return "нэмэх " + self._phone_words(digits)
 
-        text = re.sub(r"\+\d[\d\s\-]{6,15}\d", _phone, text)
+        text = re.sub(r"\+\d[\d\s\-]{6,15}\d", _international, text)
+
+        # A bare 8-digit run is a Mongolian phone number, and reading it as a
+        # quantity gave "ерэн есөн сая зуун арван хоёр мянга ...". Eight digits
+        # is the national mobile length, so the shape is the signal.
+        def _local_phone(m: re.Match[str]) -> str:
+            return self._phone_words(m.group(0))
+
+        text = re.sub(r"(?<!\d)\d{8}(?!\d)", _local_phone, text)
 
         def _range(m: re.Match[str]) -> str:
             lo, hi = self.convert(int(m.group(1))), self.convert(int(m.group(2)))
@@ -658,6 +673,15 @@ class NumberNormalizer:
             return f"{lo_abl} {hi} хүртэл"
 
         text = re.sub(r"(\d+)\s*[-–—]\s*(\d+)", _range, text)
+
+        # "Байр 12" -> "арван хоёрдугаар байр": the number becomes an ordinal
+        # and moves in front of the noun.
+        def _ordinal_noun(m: re.Match[str]) -> str:
+            return f"{self.convert_ordinal(int(m.group(2)))} {m.group(1).lower()}"
+
+        _nouns = "|".join(ORDINAL_NOUNS)
+        text = re.sub(rf"(?<!{_MN_CLASS})({_nouns})\s+(\d{{1,4}})", _ordinal_noun, text,
+                      flags=re.IGNORECASE)
 
         def _ordinal(m: re.Match[str]) -> str:
             return self.convert_ordinal(int(m.group(1)))

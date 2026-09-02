@@ -28,10 +28,9 @@ def num() -> NumberNormalizer:
     [
         (0, "тэг"), (1, "нэг"), (5, "тав"), (10, "арав"), (15, "арван тав"),
         (20, "хорь"), (25, "хорин тав"), (100, "зуу"), (101, "зуун нэг"),
-        # "нэг мянга", not "мянга": a bare scale word is a noun and one of them
-        # still needs counting. The spec gives "1005" as "нэг мянга тав". A year
-        # is the exception and drops it -- see test_a_year_drops_the_leading_neg.
-        (1000, "нэг мянга"), (2024, "хоёр мянга хорин дөрөв"),
+        # "мянга", not "нэг мянга": one of a scale word is never counted
+        # aloud. Two of them is -- see test_two_of_a_scale_word_is_counted.
+        (1000, "мянга"), (2024, "хоёр мянга хорин дөрөв"),
         (-5, "хасах тав"),
     ],
 )
@@ -299,19 +298,28 @@ def test_latin_look_alikes_are_not_folded(norm):
 
 # ── from the normalization specification ──────────────────────────────────────
 
-def test_a_bare_scale_word_takes_neg(num):
-    """The spec: "1005" is "нэг мянга тав", "1256789" starts "нэг сая"."""
-    assert num.convert(1005) == "нэг мянга тав"
-    assert num.convert(1_000_000) == "нэг сая"
+def test_one_of_a_scale_word_is_not_counted_aloud(num):
+    """1990 is "мянга есөн зуун ер", not "нэг мянга ...".
+
+    An earlier reading of the spec made this year-specific. It is not: the
+    leading "нэг" is dropped everywhere, and only the count of *two* or more
+    scale words is spoken.
+    """
+    assert num.convert(1000) == "мянга"
+    assert num.convert(1005) == "мянга тав"
+    assert num.convert(1990) == "мянга есөн зуун ер"
+    assert num.convert(1_000_000) == "сая"
 
 
-def test_a_year_drops_the_leading_neg(norm):
-    """"1990 он" is "мянга есөн зуун ерэн он" -- the same digits as a quantity
-    are "нэг мянга ...". Only the following noun separates them."""
+def test_two_of_a_scale_word_is_counted(num):
+    """Which is why this is a special case for 1, not a rule about scale words."""
+    assert num.convert(2990) == "хоёр мянга есөн зуун ер"
+    assert num.convert(2_000_000).startswith("хоёр сая")
+
+
+def test_a_year_reads_the_same_as_the_bare_number(norm):
     assert norm.normalize("1990 он", strict=False) == "мянга есөн зуун ерэн он"
-    # Standalone, so 90 is "ер" rather than the attributive "ерэн" -- but the
-    # "нэг" is back.
-    assert norm.normalize("1990", strict=False) == "нэг мянга есөн зуун ер"
+    assert norm.normalize("2990 он", strict=False) == "хоёр мянга есөн зуун ерэн он"
 
 
 def test_a_verse_reference_is_not_a_clock_time(norm):
@@ -381,3 +389,23 @@ def test_a_foreign_word_not_in_the_lexicon_stays_latin(norm):
 
 def test_a_known_emoji_is_spoken(norm):
     assert norm.normalize("❤️", strict=False).strip() == "улаан зүрх"
+
+
+def test_an_eight_digit_run_is_a_phone_number(norm):
+    """Read as a quantity it became "ерэн есөн сая зуун арван хоёр мянга ...".
+    Eight digits is the Mongolian mobile length, so the shape is the signal."""
+    assert norm.normalize("99112233", strict=False) == (
+        "ерэн ес арван нэг хорин хоёр гучин гурав"
+    )
+
+
+def test_a_building_or_chapter_number_becomes_an_ordinal_in_front(norm):
+    """"Байр 12" is "арван хоёрдугаар байр" -- the number becomes an ordinal and
+    moves ahead of the noun."""
+    assert norm.normalize("Байр 12", strict=False) == "арван хоёрдугаар байр"
+    assert norm.normalize("Бүлэг 12", strict=False) == "арван хоёрдугаар бүлэг"
+
+
+def test_a_noun_that_merely_ends_in_one_is_left_alone(norm):
+    """The lookbehind: "Улаанбайр 12" is not a building number."""
+    assert "хоёрдугаар" not in norm.normalize("Улаанбайр 12", strict=False)
