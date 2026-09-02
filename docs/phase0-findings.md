@@ -94,8 +94,19 @@ is not.
 
 ## 5. Vocabulary extension is 5 tokens
 
-Base vocab already contains 61 of the 66 Mongolian Cyrillic letters with
-pretrained embeddings (lines 1628–1693). Missing: `ө ү Ө Ү Ъ`.
+Base vocab already contains 65 of the 70 Mongolian Cyrillic letters
+(lines 1628–1693). Missing: `ө ү Ө Ү Ъ`.
+
+Their *embeddings* are another matter, and an earlier version of this line said
+"with pretrained embeddings" without checking. The paper says why those rows
+exist (§5.1): "all other language characters exist in the Emilia dataset as
+there are many code-switched sentences" — Emilia being Chinese/English podcast
+audio. Measured on the checkpoint, Cyrillic rows (mean ‖row‖ 14.177, std 0.627)
+are indistinguishable from Hangul (14.174 / 0.627) and the table mean
+(14.108 / 0.624), while high-frequency ASCII lowercase sits apart at
+13.576 / 0.600. Consistent with little training signal, though norm statistics
+alone cannot prove it. The reused value is the acoustic prior in the DiT, not
+the vocabulary.
 
 Case is **kept**, not folded. The base vocab has both cases of Cyrillic with
 pretrained embeddings; lowercasing would discard 31 trained rows to save 3

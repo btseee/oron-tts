@@ -41,7 +41,7 @@ is recoverable at the `v1-from-scratch` tag.
 ## Why a finetune, not a new model
 
 `F5TTS_v1_Base` is 336M parameters trained on ~95,000 hours. Its vocabulary
-already contains **61 of the 66 Mongolian Cyrillic letters**, at lines
+already contains **65 of the 70 Mongolian Cyrillic letters**, at lines
 1628–1693 of `vocab.txt`, so extending it costs **five new embedding rows**
 rather than a new vocabulary.
 
@@ -59,7 +59,7 @@ rows sit apart at 13.576 / 0.600. That is consistent with rows carrying little
 training signal — though norm statistics alone cannot prove it, since an
 initialisation and a trained scale can coincide.
 
-So adaptation costs five new rows **plus retraining 61 barely-trained ones**.
+So adaptation costs five new rows **plus retraining 65 barely-trained ones**.
 The approach still holds: the value being reused is the *acoustic* prior in the
 DiT and the vocoder, which ~95,000 hours bought and which no amount of Mongolian
 text changes. The vocabulary is a convenience, not the argument.

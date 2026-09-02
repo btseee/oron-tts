@@ -1,7 +1,7 @@
 """Extend the F5-TTS base vocabulary with the Mongolian-only Cyrillic letters.
 
-F5TTS_v1_Base already ships pretrained embeddings for 61 of the 66 Mongolian
-Cyrillic letters (vocab.txt lines 1628-1693). Only these are missing:
+F5TTS_v1_Base's vocabulary already covers 65 of the 70 Mongolian Cyrillic
+letters (vocab.txt lines 1628-1693). Only these are missing:
 
     Ө U+04E8   ө U+04E9   Ү U+04AE   ү U+04AF   Ъ U+042A
 

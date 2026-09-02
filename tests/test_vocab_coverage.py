@@ -143,3 +143,41 @@ def test_tokenizer_roundtrip_preserves_every_character():
         expected = [c for c in text.translate(pre) if not c.isspace()]
         actual = [t for t in tokens if not t.isspace()]
         assert actual == expected, f"tokenization altered: {text[:60]!r}"
+
+
+# ── the counts the README quotes ──────────────────────────────────────────────
+
+def test_the_mongolian_alphabet_is_seventy_letters():
+    """Both cases of all 35. The README said 66 for a while; it is 70, and the
+    number matters because it is the denominator of the coverage claim."""
+    from oron_tts.text.numbers import MN_LETTERS
+
+    assert len(MN_LETTERS) == 70
+    assert len(set(MN_LETTERS)) == 70
+
+
+def test_the_extended_vocabulary_covers_every_mongolian_letter():
+    """Any gap is silent: unknown ids map to 0, which is the SPACE token."""
+    from oron_tts.text import charset
+    from oron_tts.text.numbers import MN_LETTERS
+
+    missing = [c for c in MN_LETTERS if c not in charset()]
+    assert not missing, f"absent from vocab.txt: {missing}"
+
+
+def test_the_base_vocabulary_was_missing_exactly_five():
+    """The claim the whole approach rests on: adaptation is five rows, not a new
+    vocabulary. Counted against the base slice of the shipped file."""
+    from pathlib import Path
+
+    from oron_tts.text.numbers import MN_LETTERS
+
+    vocab = Path(__file__).resolve().parents[1] / "data" / "oron_mn_pinyin" / "vocab.txt"
+    lines = vocab.read_text(encoding="utf-8").split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
+    base = set(lines[:2545])
+    absent = [c for c in MN_LETTERS if c not in base]
+    assert len(absent) == 5
+    assert set(absent) == set("\u04e9\u04af\u04e8\u04ae\u042a")
+    assert sum(1 for c in MN_LETTERS if c in base) == 65
