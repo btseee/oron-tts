@@ -128,11 +128,30 @@ Three things to listen for, in order:
 
 ### Selecting the checkpoint
 
+Two passes, and the order matters.
+
 ```bash
 cd ../oron-tts
+
+# 1. Choose. Validation speakers, even half of the held-out sentences.
 python scripts/eval_mn.py --sweep ../F5-TTS/ckpts/oron_mn \
     --corpus ../oron-cleaner/output/oron_mn_strict
+
+# 2. Report. Test speakers, odd half. Only the winner, only once.
+python scripts/eval_mn.py --checkpoint ../F5-TTS/ckpts/oron_mn/model_<best>.pt \
+    --corpus ../oron-cleaner/output/oron_mn_strict --rtf
 ```
+
+`--mode` defaults to `select` for a sweep and `report` for a single checkpoint,
+and each mode gets its own speakers *and* its own half of `eval_sentences.txt`.
+Sweeping a dozen checkpoints and then publishing the winner's score on the same
+sentences is selection on the test set — the winner is partly whichever
+checkpoint got lucky there, and its number is optimistic by however much luck
+was involved.
+
+This is also the only thing that reads the validation split. The F5-TTS trainer
+has no validation loop — zero references to `val_dataloader`, `validation` or
+`val_loss` — so `metadata_validation.csv` was written and never opened.
 
 **Do not ship the last checkpoint.** The paper's Tab. 9 has a 24 h model peaking
 at 200k updates and degrading to twice the WER by 600k; this project's previous
@@ -160,6 +179,12 @@ from the same one.
 
 Try `--no-ema` on early checkpoints. With decay ~0.9999 the EMA weights are
 still dominated by the pretrained model for the first several thousand updates.
+
+`--rtf` times the winner at NFE 8/16/32 and reports real-time factor, median and
+p90 latency, and peak memory. The paper reports RTF 0.15 at NFE 16 on datacentre
+hardware; a 336M DiT solving an ODE is not obviously real time anywhere else.
+Read it beside the CER at the same NFE — the setting that buys the speed is the
+one that costs the quality.
 
 ---
 

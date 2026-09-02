@@ -22,6 +22,8 @@ Reported per checkpoint:
   UTMOS    naturalness, language-agnostic
   bandwidth of the output -- follows the reference clip, and no Mongolian source
            is full-band, so this is how you catch a dull voice
+  RTF      with --rtf: wall-clock seconds per second of audio, plus latency and
+           peak memory, at each of --rtf-nfe
 """
 
 import argparse
@@ -44,7 +46,7 @@ MIN_REF_S = 6.0
 MAX_REF_S = 10.0
 
 
-def load_test_sentences(corpus: Path, limit: int) -> list[str]:
+def load_test_sentences(corpus: Path, limit: int, mode: str = "report") -> list[str]:
     """Sentences that occur in no training clip.
 
     Deliberately not `metadata_test.csv`. That file is the speaker-disjoint
@@ -55,11 +57,23 @@ def load_test_sentences(corpus: Path, limit: int) -> list[str]:
 
     `eval_sentences.txt` is the corpus's text holdout: sentences withheld from
     training so this number means intelligibility.
+
+    `mode` halves that list by parity. Sweeping a dozen checkpoints and then
+    reporting the winner's score on the same sentences is selection on the test
+    set: the winner is partly the checkpoint that got lucky on those sentences,
+    and its number is optimistic by however much luck was involved. `select`
+    takes the even indices, `report` the odd ones, so the number that gets
+    published was never used to choose anything.
     """
     path = corpus / "eval_sentences.txt"
     if path.exists():
         lines = [ln.strip() for ln in path.read_text(encoding="utf-8").splitlines()]
-        return [ln for ln in lines if ln][:limit]
+        lines = [ln for ln in lines if ln]
+        if mode == "select":
+            lines = lines[0::2]
+        elif mode == "report":
+            lines = lines[1::2]
+        return lines[:limit]
 
     legacy = corpus / "metadata_test.csv"
     if not legacy.exists():
@@ -129,7 +143,8 @@ def pick_reference(corpus: Path, gender: str, split: str = "test") -> tuple[Path
     return path, text
 
 
-def synthesise(f5, text: str, ref_audio: Path, ref_text: str, seed: int):
+def synthesise(f5, text: str, ref_audio: Path, ref_text: str, seed: int,
+               nfe_step: int = NFE_STEP):
     """One utterance, with the sampler's noise pinned.
 
     F5TTS.infer draws `seed = random.randint(...)` when none is given, so an
@@ -142,12 +157,59 @@ def synthesise(f5, text: str, ref_audio: Path, ref_text: str, seed: int):
         ref_file=str(ref_audio),
         ref_text=ref_text,
         gen_text=text,
-        nfe_step=NFE_STEP,
+        nfe_step=nfe_step,
         cfg_strength=CFG_STRENGTH,
         sway_sampling_coef=SWAY_SAMPLING_COEF,
         remove_silence=False,
     )
     return wav, sr
+
+
+def measure_rtf(f5, sentences, ref_audio: Path, ref_text: str,
+                nfe_steps, device: str) -> dict:
+    """Real-time factor and latency at several NFE settings.
+
+    Nothing in this repo measured whether the model runs fast enough to use.
+    The paper reports RTF 0.15 at NFE 16 on datacentre hardware; a 336M DiT
+    solving an ODE is not obviously real-time anywhere else, and the setting
+    that buys the speed is the same one that costs quality -- so the two have to
+    be read together.
+
+    RTF is wall-clock seconds per second of audio produced: below 1.0 is faster
+    than real time. Peak memory is CUDA-only; on CPU it is reported as 0.
+    """
+    import time
+
+    import torch
+
+    out = {}
+    for nfe in nfe_steps:
+        # One untimed pass: the first call pays for lazy CUDA init and any
+        # kernel autotuning, which is not what a served request costs.
+        synthesise(f5, sentences[0], ref_audio, ref_text, 0, nfe)
+        if device.startswith("cuda"):
+            torch.cuda.synchronize()
+            torch.cuda.reset_peak_memory_stats()
+
+        latencies, audio_s = [], 0.0
+        for i, text in enumerate(sentences):
+            start = time.perf_counter()
+            wav, sr = synthesise(f5, text, ref_audio, ref_text, i, nfe)
+            if device.startswith("cuda"):
+                torch.cuda.synchronize()
+            latencies.append(time.perf_counter() - start)
+            audio_s += len(wav) / sr
+
+        peak = (torch.cuda.max_memory_allocated() / 2**30
+                if device.startswith("cuda") else 0.0)
+        out[str(nfe)] = {
+            "rtf": sum(latencies) / audio_s if audio_s else float("inf"),
+            "latency_median_s": statistics.median(latencies),
+            "latency_p90_s": sorted(latencies)[int(0.9 * (len(latencies) - 1))],
+            "peak_gib": round(peak, 2),
+            "n": len(latencies),
+        }
+    return out
 
 
 def evaluate(checkpoint: Path, corpus: Path, args) -> dict:
@@ -157,7 +219,7 @@ def evaluate(checkpoint: Path, corpus: Path, args) -> dict:
 
     from oron_tts.eval import MongolianASR, bandwidth_hz, sim_o, utmos
 
-    sentences = load_test_sentences(corpus, args.n_sentences)
+    sentences = load_test_sentences(corpus, args.n_sentences, args.mode)
     asr = MongolianASR(device=args.device)
     sim_warned = False
 
@@ -227,6 +289,11 @@ def evaluate(checkpoint: Path, corpus: Path, args) -> dict:
             # Per-utterance scores, so a CI can be recomputed from the artifact.
             "cer_values": cers,
         }
+        if args.rtf and "rtf" not in results:
+            results["rtf"] = measure_rtf(
+                f5, sentences[: args.rtf_sentences], ref_audio, ref_text,
+                args.rtf_nfe, args.device,
+            )
     return results
 
 
@@ -273,9 +340,15 @@ def main() -> None:
     ap.add_argument("--seeds", type=int, nargs="+", default=[0, 1, 2],
                     help="Sampler seeds to average over. The paper reports the "
                          "average of three random seed generations (5.1).")
-    ap.add_argument("--ref-split", default="test",
-                    help="Split the reference prompt is drawn from. Anything but a "
-                         "held-out split voids the zero-shot condition.")
+    ap.add_argument("--mode", choices=("select", "report", "all"), default=None,
+                    help="select: sweep on the validation speakers and the even "
+                         "half of the held-out sentences. report: score one "
+                         "checkpoint on the test speakers and the odd half. "
+                         "Defaults to select for --sweep, report for --checkpoint.")
+    ap.add_argument("--ref-split", default=None,
+                    help="Split the reference prompt is drawn from. Defaults to "
+                         "the one --mode implies. Anything but a held-out split "
+                         "voids the zero-shot condition.")
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--use-ema", action="store_true", default=True)
     ap.add_argument("--no-ema", dest="use_ema", action="store_false",
@@ -283,6 +356,12 @@ def main() -> None:
     ap.add_argument("--no-utmos", action="store_true", help="Skip UTMOS (needs torch.hub)")
     ap.add_argument("--no-sim", action="store_true",
                     help="Skip SIM-o speaker similarity")
+    ap.add_argument("--rtf", action="store_true",
+                    help="Also measure real-time factor, latency and peak memory")
+    ap.add_argument("--rtf-nfe", type=int, nargs="+", default=[8, 16, 32],
+                    help="NFE settings to time. The paper reports RTF 0.15 at 16.")
+    ap.add_argument("--rtf-sentences", type=int, default=20,
+                    help="Utterances per NFE setting")
     ap.add_argument("--sim-checkpoint", default=None,
                     help="WavLM-large speaker-verification checkpoint "
                          "(wavlm_large_finetune.pth); or set ORON_WAVLM_CKPT")
@@ -295,6 +374,21 @@ def main() -> None:
 
     baseline = args.baseline if args.baseline is not None else HUMAN_CER_BASELINE
     args.genders = [g.strip() for g in args.genders.split(",") if g.strip()]
+
+    # Choosing a checkpoint on the test set and then reporting that checkpoint's
+    # test score is selection on the test set. The validation split exists for
+    # the choosing -- and until now nothing read it at all: the F5-TTS trainer
+    # contains no validation loop, so metadata_validation.csv was written and
+    # never opened.
+    if args.mode is None:
+        args.mode = "select" if args.sweep else "report"
+    if args.ref_split is None:
+        args.ref_split = "validation" if args.mode == "select" else "test"
+    if args.mode == "select" and args.ref_split == "test":
+        print("[WARN] Sweeping against the test split. The winner's score will be "
+              "optimistic by however much it is\n       the checkpoint that got "
+              "lucky there. Use --ref-split validation.", file=sys.stderr)
+    print(f"mode={args.mode}  reference split={args.ref_split}", file=sys.stderr)
 
     if args.sweep:
         checkpoints = sort_checkpoints(
@@ -323,7 +417,7 @@ def main() -> None:
 
     if len(all_results) > 1:
         def mean_cer(r):
-            vals = [v["cer_median"] for v in r.values()]
+            vals = [v["cer_median"] for k, v in r.items() if k != "rtf"]
             return statistics.fmean(vals) if vals else float("inf")
 
         best = min(all_results, key=lambda k: mean_cer(all_results[k]))

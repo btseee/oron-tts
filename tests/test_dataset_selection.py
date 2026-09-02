@@ -127,3 +127,63 @@ def test_an_absent_gender_is_named_in_the_failure(tmp_path):
     with pytest.raises(SystemExit) as exc:
         pick_reference(tmp_path, "male")
     assert "'male'" in str(exc.value)
+
+
+# ── selection vs reporting ────────────────────────────────────────────────────
+
+def _sentences(tmp_path: Path, n: int) -> Path:
+    (tmp_path / "eval_sentences.txt").write_text(
+        "\n".join(f"өгүүлбэр {i}" for i in range(n)) + "\n", encoding="utf-8"
+    )
+    return tmp_path
+
+
+def test_selection_and_reporting_use_disjoint_sentences(tmp_path):
+    """M15/PR5. Sweeping a dozen checkpoints and then publishing the winner's
+    score on the same sentences is selection on the test set: the winner is
+    partly whichever checkpoint got lucky there."""
+    from eval_mn import load_test_sentences
+
+    _sentences(tmp_path, 100)
+    select = load_test_sentences(tmp_path, 100, "select")
+    report = load_test_sentences(tmp_path, 100, "report")
+    assert select and report
+    assert not (set(select) & set(report))
+    assert len(select) + len(report) == 100
+
+
+def test_the_partition_is_stable_across_runs(tmp_path):
+    """Parity, not a shuffle: two invocations must agree without a seed."""
+    from eval_mn import load_test_sentences
+
+    _sentences(tmp_path, 40)
+    assert (load_test_sentences(tmp_path, 40, "select")
+            == load_test_sentences(tmp_path, 40, "select"))
+
+
+def test_all_returns_the_whole_list(tmp_path):
+    from eval_mn import load_test_sentences
+
+    _sentences(tmp_path, 30)
+    assert len(load_test_sentences(tmp_path, 30, "all")) == 30
+
+
+def test_the_held_out_sentence_file_is_preferred_over_the_audio_split(tmp_path):
+    """metadata_test.csv is the speaker holdout; its text is in training too."""
+    from eval_mn import load_test_sentences
+
+    _sentences(tmp_path, 10)
+    (tmp_path / "metadata_test.csv").write_text(
+        "audio_file|text\n/a.wav|нөгөө текст\n", encoding="utf-8"
+    )
+    assert "нөгөө текст" not in load_test_sentences(tmp_path, 10, "all")
+
+
+def test_a_missing_holdout_falls_back_loudly(tmp_path, capsys):
+    from eval_mn import load_test_sentences
+
+    (tmp_path / "metadata_test.csv").write_text(
+        "audio_file|text\n/a.wav|сайн байна уу\n", encoding="utf-8"
+    )
+    assert load_test_sentences(tmp_path, 10, "all") == ["сайн байна уу"]
+    assert "memorisation" in capsys.readouterr().err
