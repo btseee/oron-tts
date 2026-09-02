@@ -98,23 +98,21 @@ directions. The value in the repo is a placeholder computed for a corpus that
 does not exist yet, and it will be wrong for the real one.
 
 ```bash
-python scripts/preflight.py --data ../F5-TTS/data/oron_mn_pinyin
-```
-
-Refuses to let the run start on a stale `epochs`, an unextended or reordered
-vocabulary, a tokenizer that sends `load_dataset` and `get_tokenizer` to
-different directories, `grad_accumulation_steps > 1`, or `log_samples` off.
-Every one of those completes the run and produces a worse model with nothing in
-the logs.
-
-```bash
 python scripts/extend_vocab.py --out data/oron_mn_pinyin/vocab.txt \
     --checkpoint ckpts/F5TTS_v1_Base/model_1250000.safetensors \
     --checkpoint-out ckpts/oron_mn/pretrained_model_1250000.safetensors
 
+python scripts/preflight.py --data ../F5-TTS/data/oron_mn_pinyin
+
 cp configs/f5tts_mn.yaml ../F5-TTS/src/f5_tts/configs/
 cd ../F5-TTS && accelerate launch src/f5_tts/train/train.py --config-name f5tts_mn.yaml
 ```
+
+**Preflight is the last gate before the GPU bill starts.** It refuses a stale
+`epochs`, an unextended or reordered vocabulary, a tokenizer that sends
+`load_dataset` and `get_tokenizer` to different directories,
+`grad_accumulation_steps > 1`, and `log_samples` off. Every one of those
+completes the run and produces a worse model with nothing in the logs.
 
 The `pretrained_` prefix is load-bearing: `Trainer.load_checkpoint` uses it to
 cold-start at update 0 and to exclude the file from checkpoint rotation.
