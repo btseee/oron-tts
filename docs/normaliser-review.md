@@ -47,8 +47,11 @@ alternates identically. One of those three is wrong; a speaker should say which.
 
 So the normaliser raises `NumeralSuffixError` on anything not tabulated, and
 `normalize(strict=True)` — the corpus path — turns that into a dropped clip.
-**Measured cost: 3 of 56 real Mongolian sentences (5.4%)** in
-`tests/fixtures/mn_text_sample.jsonl`. All three previously produced non-words.
+**Measured cost: 3.33%.** 18,839 sentences from 400 Mongolian Wikipedia articles
+(`wikimedia/wikipedia`, `20231101.mn`), of which 6,688 contain digits: 18,211
+normalise, 628 are refused, 0 fail any other way. Every one of the 628 previously
+produced a non-word. An earlier figure of 5.4% came from a 56-sentence fixture
+and was too small to trust.
 
 ## What is already verified, so you can skip it
 
@@ -87,18 +90,45 @@ SUFFIXED_FORMS["зуу"]["д"]    = "зуунд"    # 100-д
 The 24 stems are the keys of `ABLATIVE`: тэг нэг хоёр гурав дөрөв тав зургаа
 долоо найм ес арав хорь гуч дөч тавь жар дал ная ер зуу мянга сая тэрбум наяд.
 
-The suffix families that matter, by frequency in the corpus:
+### Ordered by how much each row buys
 
-| family | written as | example |
+Counted over the 628 real refusals, so this is the order to work in rather than
+the alphabet. Ten suffixes cover 81%; **`-нд` alone covers 36%**.
+
+| written suffix | refusals | cumulative | one example to answer |
+|---|---:|---:|---|
+| `-нд` | 220 | 36% | `нэг` + `-нд` = ? |
+| `-аад` | 87 | 51% | `ная` + `-аад` = ? |
+| `-ны` | 64 | 61% | `зургаа` + `-ны` = ? |
+| `-н` | 26 | 65% | `нэг` + `-н` = ? |
+| `-ний` | 21 | 69% | `нэг` + `-ний` = ? |
+| `-д` | 21 | 72% | `зургаа` + `-д` = ? |
+| `-ээд` | 16 | 75% | `ер` + `-ээд` = ? |
+| `-с` | 13 | 77% | `зургаа` + `-с` = ? |
+| `-т` | 13 | 79% | `хоёр` + `-т` = ? |
+| `-тын` | 10 | 81% | `мянга` + `-тын` = ? |
+
+`-аад` / `-ээд` / `-өөд` is the **approximative** ("about eighty"), not a case:
+`80-аад` is read `наяад`. Wiktionary lists this form for some numerals
+(`зуугаад`, `мянгаад`), so those rows may be fillable from a dictionary rather
+than from memory.
+
+There are **146 distinct (stem, suffix) pairs** in the whole sample, and **86 of
+them cover 90%** of the refusals. Filling the top ten suffixes for the stems that
+actually occur with them is a far smaller job than the full 24 × 7 grid, and it
+is most of the benefit.
+
+The families, for completeness:
+
+| family | written as | share of refusals |
 |---|---|---|
-| genitive | `-ны -ний -ын -ийн` | `2024-ны`, `5-ын`, `3-ийн` |
-| dative-locative | `-д -т -нд` | `100-д`, `15-нд`, `37-д` |
-| accusative | `-ыг -ийг` | `20-ийг` |
+| dative-locative | `-д -т -нд` | **44% — start here** |
+| approximative | `-аад -ээд -өөд` | 19%, partly in Wiktionary |
+| genitive | `-ны -ний -ын -ийн` | 15% |
+| accusative | `-ыг -ийг` | small in text, common in speech |
 | ablative | `-аас -ээс -оос -өөс -иас -иос` | **already done** |
-| instrumental | `-аар -ээр -оор -өөр` | `5-аар` |
-| comitative | `-тай -тэй -той` | `10-тай` |
-
-Genitive and dative-locative alone cover the three refusals measured above.
+| instrumental | `-аар -ээр -оор -өөр` | small |
+| comitative | `-тай -тэй -той` | small |
 
 Two more answers are needed outside the table:
 
@@ -108,6 +138,19 @@ Two more answers are needed outside the table:
    `_fraction` can be rebuilt on them.
 2. **`нэг сая` vs `сая`.** `convert(1000000)` returns `сая`. Should a leading
    `нэг` be supplied for 1 000 000, 1 000 000 000, and for 100 and 1000?
+
+## Re-measuring as you go
+
+```bash
+python scripts/measure_refusals.py              # Mongolian Wikipedia, ~19k sentences
+python scripts/measure_refusals.py --corpus <dir>
+```
+
+Prints the refusal rate and regenerates the priority table above, so the rate
+falls visibly as rows land and the ordering re-sorts itself. It samples
+Wikipedia rather than the corpus for the headline number on purpose: the corpus
+has already been through the audio gates, so measuring on it would report the
+rate among clips that survived everything else, not the rate in the language.
 
 ## How to check the answers
 
