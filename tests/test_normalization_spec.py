@@ -31,16 +31,25 @@ SPEC = json.loads(
 # Cases that cannot pass until data/lexicon/*.tsv is extended by a speaker:
 # letter names, foreign words, chemical subscripts, an abbreviation for СБД.
 NEEDS_LEXICON = {
-    "Б.Бат", "СБД 1-р хороо", "1.2×10⁵", "H₂O", "CO₂", "https://github.com",
-    "user@example.com", "@bat", "¹", "report.pdf", "v2.1.5", "RX9070",
-    "ISBN 9781234567890", "ABC",
+    # an abbreviation entry for СБД
+    "СБД 1-р хороо",
+    # foreign words (юзер, экзампл, ком, гитхаб, репорт) and the Latin letter
+    # names the tables are still missing -- g, j, k, l, m, q, u, v, w, y, z
+    "https://github.com", "user@example.com", "@bat", "report.pdf",
 }
 
 # "1:2" is a ratio and "3:1" a score, and nothing in either string says which.
 # Flagged in docs/normaliser-review.md rather than guessed at.
 AMBIGUOUS = {"1:2", "3:1"}
 
-EXPECTED_FAILURES = NEEDS_LEXICON | AMBIGUOUS
+# The decimal place-word rule is induced from three spec examples (see
+# `NumberNormalizer._decimal_words`), and this is the case that contradicts it:
+# "12.5%" keeps "аравны" while the mantissa of "1.2x10(sup 5)" drops it. The
+# exponent is otherwise correct -- "аравын тавдугаар зэрэгт" -- so this waits on
+# a speaker settling the rule rather than on more code.
+INDUCED_RULE_CONFLICT = {"1.2×10⁵"}
+
+EXPECTED_FAILURES = NEEDS_LEXICON | AMBIGUOUS | INDUCED_RULE_CONFLICT
 
 
 @pytest.fixture(scope="module")
@@ -74,7 +83,7 @@ def test_spec_case(norm, case):
 def test_conformance_does_not_regress(norm):
     """A floor, not a target. Raise it when cases start passing."""
     passing, _ = _score(norm)
-    assert passing >= 69, f"conformance fell to {passing}/{len(SPEC)}"
+    assert passing >= 77, f"conformance fell to {passing}/{len(SPEC)}"
 
 
 def test_the_expected_failures_are_still_the_only_failures(norm):

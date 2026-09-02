@@ -322,8 +322,14 @@ def test_the_homoglyph_would_otherwise_pass_the_vocabulary_gate(norm):
 
 def test_latin_look_alikes_are_not_folded(norm):
     """Latin is in the vocabulary and preserved on purpose; folding "c" to "с"
-    would corrupt genuine Latin text."""
-    assert norm.normalize("BBC News", strict=False) == "BBC News"
+    would corrupt genuine Latin text.
+
+    "BBC" is now spelled out per spec section 70, so the check is that its
+    letters were not turned into Cyrillic ones -- "News" is untouched because
+    it is a word, not an acronym.
+    """
+    assert norm.normalize("BBC News", strict=False) == "би би си News"
+    assert norm.normalize("Wi-Fi холболт", strict=False) == "Wi-Fi холболт"
 
 
 # ── from the normalization specification ──────────────────────────────────────

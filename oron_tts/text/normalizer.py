@@ -24,8 +24,21 @@ import unicodedata
 from pathlib import Path
 from typing import Final
 
+from oron_tts.text.identifiers import (
+    POWER_WORD,
+    fold_subscripts,
+    fold_superscripts,
+    read_email,
+    read_filename,
+    read_footnote,
+    read_initials,
+    read_long_digit_run,
+    read_spellable,
+    read_url,
+    read_version,
+)
 from oron_tts.text.lexicon import all_lexicons
-from oron_tts.text.numbers import NumberNormalizer
+from oron_tts.text.numbers import NumberNormalizer, NumeralSuffixError
 from oron_tts.text.vocab import DEFAULT_VOCAB, check, unsupported
 
 # Only characters the vocabulary lacks. Curly quotes and „ have no entry; NBSP
@@ -156,11 +169,28 @@ class MongolianNormalizer:
             for mark, word in SPOKEN_PREFIXES.items()
         ]
         self._citation_re = re.compile(r"\[\s*(\d{1,4})\s*\]")
+        # "x10(sup 5)": the exponent must still be raised here.
+        self._scientific_re = re.compile(r"\s*[x×*]\s*(\d+)([⁰¹²³⁴⁵⁶⁷⁸⁹]+)")
         self._foreign_res = [
             (re.compile(rf"\b{re.escape(w)}\b"), spoken)
             for w, spoken in sorted(self._lexicons["foreign_words"].items(),
                                     key=lambda kv: -len(kv[0]))
         ]
+
+    def _read_power(self, m: re.Match[str]) -> str:
+        """"x10(sup 5)" -> "аравын тавдугаар зэрэгт".
+
+        The genitive of the base and the ordinal of the exponent, which is why
+        it lives here rather than in `identifiers`: it needs the number words.
+        A base without a tabulated genitive is left alone rather than guessed.
+        """
+        base, exponent = int(m.group(1)), int(fold_superscripts(m.group(2)))
+        try:
+            genitive = self._numbers._reference_genitive(base)
+        except NumeralSuffixError:
+            return m.group(0)
+        return (f" {genitive} {self._numbers.convert_ordinal(exponent)} "
+                f"{POWER_WORD}")
 
     def normalize(self, text: str, strict: bool = True) -> str:
         """Return the exact string that should be published, scored and trained on.
@@ -181,6 +211,23 @@ class MongolianNormalizer:
         # A bracketed number is a citation, so it has to be named before the
         # brackets are stripped: "[12]" is "ишлэл арван хоёр", not "арван хоёр".
         text = self._citation_re.sub(rf"{CITATION_WORD} \1", text)
+        # Identifiers, before anything numeric touches them. "v2.1.5" read as a
+        # decimal became "vхоёр бүхэл нэг аравны.тав"; "RX9070" became
+        # "RXесөн мянга дал". Each of these leaves the token alone when a letter
+        # name is missing from the lexicon, so an unfilled table costs nothing.
+        text = read_footnote(text)
+        # Subscripts only. A formula has to be folded before it can be spelled
+        # -- "H(2)O" spells only once it reads as "H2O" -- but a superscript is
+        # still load-bearing here, because the unit table matches on it.
+        text = fold_subscripts(text)
+        text = read_email(text, self._lexicon_dir)
+        text = read_url(text, self._lexicon_dir)
+        text = read_filename(text, self._lexicon_dir)
+        text = read_version(text, self._lexicon_dir)
+        text = read_initials(text, self._lexicon_dir)
+        text = read_spellable(text, self._lexicon_dir)
+        text = read_long_digit_run(text)
+
         # "#Монгол" -> "хаштаг Монгол", "@bat" -> "эт bat".
         for pattern, word in self._prefix_res:
             text = pattern.sub(f"{word} ", text)
@@ -189,6 +236,12 @@ class MongolianNormalizer:
             text = pattern.sub(full, text)
         for pattern, repl in self._unit_res:
             text = pattern.sub(repl, text)
+        # Scientific notation, while the exponent is still a superscript: it is
+        # the only thing distinguishing "10(sup 5)" from the number 105.
+        text = self._scientific_re.sub(self._read_power, text)
+        # Now the units and the exponent have had their look at the raised
+        # digits.
+        text = fold_superscripts(text)
         # After units, so "5 kW" is a unit rather than a foreign word.
         for pattern, repl in self._foreign_res:
             text = pattern.sub(repl, text)
