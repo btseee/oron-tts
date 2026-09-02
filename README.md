@@ -21,6 +21,10 @@ This repository owns the Mongolian-specific layer:
 | `data/oron_mn_pinyin/vocab.txt` | 2550 entries: the 2545 pretrained ones, plus `Ө ө Ү ү Ъ`. |
 | `docs/phase0-findings.md` | The measurements this design rests on. |
 | `docs/runbook.md` | The three GPU sessions from here to a release. |
+| `docs/normaliser-review.md` | The numeral table a native Khalkha speaker has to fill in. **Blocks corpus quality.** |
+| `docs/listening-test.md` | The paper's CMOS/SMOS protocol, for a naturalness claim. |
+| `docs/related-work.md` | What this can and cannot claim against published Mongolian TTS. |
+| `docs/ablations.md` | The questions a reviewer asks first, with protocols. |
 
 ## Status
 
