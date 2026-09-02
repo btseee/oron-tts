@@ -69,9 +69,15 @@ CHAR_MAP: Final[dict[str, str]] = {
     # Latin look-alikes are deliberately NOT folded. Latin is in the vocabulary
     # and preserved on purpose, so mapping "c" to "с" would corrupt genuine
     # Latin text.
+    #
+    # Only the lower-case one, and only because it is *in* the vocabulary: that
+    # is what makes it silent. Ї U+0407 and І U+0406 are absent, so they already
+    # fail the vocabulary check loudly, and mapping them would replace a correct
+    # rejection with a guess. Measured on Mongolian Wikipedia, ї is usually not
+    # a homoglyph at all but mojibake for ү -- "бїлэг" for "бүлэг", "їр дїн" for
+    # "үр дүн" -- so folding it to и would have corrupted the text rather than
+    # repaired it.
     "і": "и",
-    "Ї": "И",
-    "І": "И",
 }
 
 # A single letter followed by a period is not an abbreviation, it is a word

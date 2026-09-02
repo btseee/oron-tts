@@ -309,7 +309,20 @@ def test_the_ukrainian_i_is_folded_to_the_mongolian_one(norm):
     near-untrained embedding for a letter it already has and a speaker
     pronounces identically."""
     assert norm.normalize("сайн \u0456 байна", strict=False) == "сайн и байна"
-    assert norm.normalize("\u0406 \u0407", strict=False) == "И И"
+
+
+def test_the_upper_case_look_alikes_are_left_to_fail_the_check(norm):
+    """The two upper-case look-alikes are absent from the vocabulary, so they
+    are rejected anyway -- folding them would replace a correct rejection
+    with a guess.
+
+    On real Mongolian text the lower-case one is usually not a homoglyph at
+    all but mojibake for another letter, where folding corrupts rather than
+    repairs. The vocabulary check is the right place for it to stop.
+    """
+    pair = "І Ї"
+    assert norm.normalize(pair, strict=False) == pair
+    assert not norm.is_representable("І")
 
 
 def test_the_homoglyph_would_otherwise_pass_the_vocabulary_gate(norm):

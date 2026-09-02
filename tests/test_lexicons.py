@@ -86,3 +86,66 @@ def test_the_lexicon_directory_is_where_the_readme_says():
     assert (LEXICON_DIR / "README.md").exists()
     for name in NAMES:
         assert (LEXICON_DIR / f"{name}.tsv").exists(), name
+
+
+# ── everything the normaliser can emit ────────────────────────────────────────
+
+def test_every_emittable_constant_is_representable():
+    """The silent-failure class, applied to the normaliser's own vocabulary.
+
+    An unknown character maps to index 0, which is the SPACE token. A stray
+    character in a *lexicon* entry is caught above; this catches one in a
+    module constant, which is the same defect with no file to review. It found
+    a real one: CURRENCY_SYMBOLS mapped the tenge sign to "теңге", whose ң
+    U+04A3 is absent from vocab.txt, so "100₸" would have put a space into the
+    training text with nothing logged.
+
+    SILENT_MARKS is excluded because it is an input set -- those characters are
+    stripped, never written.
+    """
+    import oron_tts.text.identifiers as identifiers
+    import oron_tts.text.normalizer as normalizer
+    import oron_tts.text.numbers as numbers
+
+    vocab = charset()
+    excluded = {"normalizer.SILENT_MARKS", "normalizer.CHAR_MAP"}
+    problems: list[str] = []
+
+    def visit(label: str, value: object) -> None:
+        if label in excluded:
+            return
+        if isinstance(value, str):
+            missing = sorted({c for c in value if c not in vocab})
+            if missing:
+                problems.append(f"{label} = {value!r} contains {missing}")
+        elif isinstance(value, dict):
+            for key, inner in value.items():
+                visit(f"{label}[{key!r}]", inner)
+
+    for module in (numbers, normalizer, identifiers):
+        name = module.__name__.rsplit(".", 1)[-1]
+        for attribute in dir(module):
+            if attribute.isupper():
+                visit(f"{name}.{attribute}", getattr(module, attribute))
+
+    assert not problems, "\n".join(problems)
+
+
+def test_the_homoglyph_map_only_folds_what_the_vocabulary_accepts():
+    """Folding a character the vocabulary rejects replaces a correct, loud
+    rejection with a guess.
+
+    Ї U+0407 and І U+0406 were mapped to И on the strength of looking like it.
+    They are absent from vocab.txt, so they already failed the check; and on
+    real Mongolian text ї is usually mojibake for ү -- "бїлэг" for "бүлэг" --
+    where folding it corrupts rather than repairs.
+    """
+    from oron_tts.text.normalizer import CHAR_MAP
+
+    vocab = charset()
+    folded = {src for src, dst in CHAR_MAP.items() if dst and dst.isalpha()}
+    for source in folded:
+        assert source in vocab, (
+            f"{source!r} is folded but is not in the vocabulary, so it would "
+            f"have been rejected anyway -- the fold only hides that"
+        )

@@ -69,7 +69,12 @@ ORDINAL_SUFFIX: Final[dict[str, str]] = {
 
 CURRENCY_SYMBOLS: Final[dict[str, str]] = {
     "₮": "төгрөг",
-    "₸": "теңге",
+    # No ₸. That currency is out of scope for this corpus, and its Mongolian
+    # spelling "теңге" contains ң U+04A3, which vocab.txt does not have -- so
+    # expanding it would put a space in the training text with nothing logged.
+    # Left unexpanded, the symbol reaches the vocabulary check and is rejected
+    # loudly instead. Every entry here is guarded by
+    # test_every_emittable_constant_is_representable.
     "$": "америк доллар",
     "€": "евро",
     "£": "фунт",
