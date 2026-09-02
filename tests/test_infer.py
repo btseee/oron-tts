@@ -112,3 +112,54 @@ def test_mongolian_specific_vowels_survive():
 
 def test_voice_dataclass_reports_a_missing_file(tmp_path):
     assert not Voice("x", "male", tmp_path / "nope.wav", "текст").exists
+
+
+# ── refusals reach the user as a sentence, not a traceback ───────────────────
+
+def test_a_refusable_numeral_exits_with_an_explanation(monkeypatch, capsys):
+    """The normaliser refuses text it cannot expand without guessing. That is
+    right for the corpus, which drops the clip -- but a person asking for
+    speech was getting a traceback from four frames down on an ordinary
+    Mongolian sentence."""
+    import sys
+
+    from oron_tts import infer
+
+    monkeypatch.setattr(sys, "argv",
+                        ["oron-tts-infer", "--text", "100-д уулзая",
+                         "--checkpoint", "nonexistent.pt"])
+    with pytest.raises(SystemExit) as exc:
+        infer.main()
+    message = str(exc.value)
+    assert "Cannot say that yet" in message
+    assert "100-д" in message
+    assert "normaliser-review" in message
+
+
+def test_unrepresentable_text_exits_with_an_explanation(monkeypatch):
+    """A character absent from the vocabulary would be read as a space."""
+    import sys
+
+    from oron_tts import infer
+
+    monkeypatch.setattr(sys, "argv",
+                        ["oron-tts-infer", "--text", "сайн \u0457 байна",
+                         "--checkpoint", "nonexistent.pt"])
+    with pytest.raises(SystemExit) as exc:
+        infer.main()
+    assert "silently" in str(exc.value)
+
+
+def test_ordinary_text_gets_past_the_check(monkeypatch):
+    """The guard must not stand between normal input and synthesis: this should
+    fail later, on the missing checkpoint, not earlier on the text."""
+    import sys
+
+    from oron_tts import infer
+
+    monkeypatch.setattr(sys, "argv",
+                        ["oron-tts-infer", "--text", "Сайн байна уу",
+                         "--checkpoint", "nonexistent.pt"])
+    with pytest.raises(BaseException) as exc:
+        infer.main()
+    assert "Cannot say that yet" not in str(exc.value)

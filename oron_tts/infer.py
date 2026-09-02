@@ -26,7 +26,8 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-from oron_tts.text import MongolianNormalizer
+from oron_tts.text import MongolianNormalizer, VocabError
+from oron_tts.text.numbers import NumeralSuffixError
 
 REPO = Path(__file__).resolve().parents[1]
 DEFAULT_VOICES = REPO / "voices"
@@ -200,6 +201,25 @@ def main() -> None:
         args.voice = "female"
 
     import soundfile as sf
+
+    # The normaliser refuses text it cannot expand without guessing, and raises
+    # if the result is unrepresentable. Both are correct -- the corpus path
+    # turns them into a dropped clip -- but a person asking for speech should
+    # get a sentence explaining what to change, not a traceback from four
+    # frames down.
+    try:
+        prepare_text(args.text)
+    except NumeralSuffixError as exc:
+        raise SystemExit(
+            f"Cannot say that yet: {exc}\n\n"
+            f"Rewrite the numeral in words and it will synthesise. The table of "
+            f"forms is being filled in; see docs/normaliser-review.md."
+        ) from None
+    except VocabError as exc:
+        raise SystemExit(
+            f"{exc}\n\nThose characters are not in the model's vocabulary and "
+            f"would be silently read as spaces, so the text is refused instead."
+        ) from None
 
     wav, sr, seed = synthesize(
         args.text,
