@@ -8,3 +8,7 @@
 проф.	профессор
 # Section 31: "СБД 1-р хороо" is "Сүхбаатар дүүргийн нэгдүгээр хороо".
 СБД	Сүхбаатар дүүргийн
+# Small caps standing alone. The suffixed forms (ЭЗЭНий, ЭЗЭНд, ...) are
+# handled by the SMALL_CAPS rule; these bare ones need naming.
+ЭЗЭН	Эзэн
+БУРХАН	Бурхан

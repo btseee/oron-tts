@@ -44,6 +44,8 @@ from oron_tts.text.vocab import DEFAULT_VOCAB, check, unsupported
 # Only characters the vocabulary lacks. Curly quotes and „ have no entry; NBSP
 # is not a vocabulary space; the soft hyphen is an invisible line-break hint
 # that carries no pronunciation and is the one character safe to drop.
+SMALL_CAPS = re.compile(r"(?<!\w)([А-ЯЁӨҮ]{2,})(?=[а-яёөү])")
+
 CHAR_MAP: Final[dict[str, str]] = {
     "“": '"',   # “
     "”": '"',   # ”
@@ -237,6 +239,15 @@ class MongolianNormalizer:
         # "#Монгол" -> "хаштаг Монгол", "@bat" -> "эт bat".
         for pattern, word in self._prefix_res:
             text = pattern.sub(f"{word} ", text)
+
+        # Small caps: a caps run running straight into lowercase is typography,
+        # not an acronym -- Mongolian writes an acronym with a case suffix using
+        # a hyphen ("УИХ-ын"), so "ЭЗЭНий" can only be a word set in caps.
+        # Left alone it is a 13.3%-of-corpus fight with the pretrained prior
+        # that no metric would show, because both CER paths lowercase first.
+        # A *bare* caps token is not touched: an unknown acronym spelled letter
+        # by letter is the right reading, and a known one is in the table below.
+        text = SMALL_CAPS.sub(lambda m: m.group(1).capitalize(), text)
 
         for pattern, full in self._abbrev_res:
             text = pattern.sub(full, text)

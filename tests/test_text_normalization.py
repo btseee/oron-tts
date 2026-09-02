@@ -481,3 +481,43 @@ def test_a_building_or_chapter_number_becomes_an_ordinal_in_front(norm):
 def test_a_noun_that_merely_ends_in_one_is_left_alone(norm):
     """The lookbehind: "Улаанбайр 12" is not a building number."""
     assert "хоёрдугаар" not in norm.normalize("Улаанбайр 12", strict=False)
+
+
+# ── small caps ────────────────────────────────────────────────────────────────
+
+def test_small_caps_with_a_suffix_is_a_word_not_an_acronym():
+    """MBSpeech writes "ЭЗЭН" in small caps 557 times, and 276 of those carry a
+    case suffix. Upstream F5-TTS utters uppercase letter by letter, and both CER
+    paths lowercase before scoring -- so left alone this is a 13.3%-of-corpus
+    fight with the pretrained prior that no metric would ever show."""
+    n = MongolianNormalizer()
+    for src, want in [
+        ("ЭЗЭНий өмнө", "Эзэний өмнө"),
+        ("ЭЗЭНдээ хандан", "Эзэндээ хандан"),
+        ("ЭЗЭНээсээ асуув", "Эзэнээсээ асуув"),
+    ]:
+        assert n.normalize(src, strict=False) == want
+
+
+def test_a_bare_unknown_acronym_is_left_to_spell_itself_out():
+    """The rule keys on a caps run running INTO lowercase. Mongolian writes an
+    acronym with a case suffix using a hyphen, so a bare caps token is still an
+    acronym and spelling it letter by letter is the right reading."""
+    n = MongolianNormalizer()
+    assert "НАТО" in n.normalize("НАТО гэдэг", strict=False)
+
+
+def test_a_known_acronym_still_expands():
+    n = MongolianNormalizer()
+    assert n.normalize("УИХ хуралдав", strict=False).startswith("Улсын Их Хурал")
+
+
+def test_no_all_caps_run_survives_the_mbspeech_corpus():
+    """Measured on all 3,846 transcripts: 560 all-caps runs before the rule,
+    zero after. This is the training target, so a survivor is a defect."""
+    import re
+    n = MongolianNormalizer()
+    caps = re.compile(r"[А-ЯЁӨҮ]{2,}[а-яёөү]*")
+    for src in ("ЭЗЭН —Би бол чиний Бурхан.", "ЭЗЭНийхээ төлөө", "БУРХАНы үг"):
+        out = n.normalize(src, strict=True)
+        assert not caps.findall(out), f"{src!r} left an all-caps run in {out!r}"

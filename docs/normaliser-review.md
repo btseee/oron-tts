@@ -315,3 +315,27 @@ how the three broken rules were produced.
   [Numeral Morphology in Mongolian](https://lisatravis2012.wordpress.com/2016/11/21/numeral-morphology-in-mongolian/)
   — numerals are morphosyntactically distinct from ordinary nominals, which is
   why a general noun-declension rule does not transfer to them.
+
+## Acronym plus a hyphenated case suffix
+
+Surfaced while preparing the MBSpeech run; **not** exercised by that corpus (44
+hyphens in 3,846 sentences, none of them an acronym), so it blocks nothing yet.
+
+The abbreviation table expands the acronym and leaves the suffix stranded on the
+expansion:
+
+| input | produces | a speaker would say |
+| --- | --- | --- |
+| `УИХ-ын гишүүн` | `Улсын Их Хурал-ын гишүүн` | `Улсын Их Хурлын гишүүн` |
+| `МУИС-д суралцана` | `Монгол Улсын Их Сургууль-д суралцана` | `Монгол Улсын Их Сургуульд суралцана` |
+
+The suffix has to attach to the *last word of the expansion*, and which form it
+takes depends on that word's stem — `Хурал` loses its unstable vowel before the
+genitive (`Хурлын`), `Сургууль` does not. That is the same question as
+`SUFFIXED_FORMS` and has the same answer: it needs a speaker, and guessing it
+produces a published, scored and learned non-word.
+
+Deliberately **not** pinned by a test asserting the current output, because a
+test that blesses a wrong answer is what let this class of defect survive 205
+tests the first time.
+
