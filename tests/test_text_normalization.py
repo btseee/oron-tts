@@ -8,6 +8,7 @@ that changes here changes the training data.
 import pytest
 
 from oron_tts.text import MongolianNormalizer, NumberNormalizer, VocabError
+from oron_tts.text.numbers import NumeralSuffixError
 
 
 @pytest.fixture(scope="module")
@@ -64,8 +65,6 @@ def test_ordinal_vowel_harmony(num, n, expected):
         ("25 хувь", "хорин таван хувь"),
         ("1-р сар", "нэгдүгээр сар"),
         ("3-дугаар анги", "гуравдугаар анги"),
-        ("2024-ны", "хоёр мянга хорин дөрвөн"),
-        ("15-нд", "арван тавнд"),
         ("5 км", "таван километр"),
         ("50%", "тавин хувь"),
         ("14:30", "арван дөрвөн цаг гучин минут"),
@@ -76,6 +75,85 @@ def test_ordinal_vowel_harmony(num, n, expected):
 )
 def test_expansion(norm, raw, expected):
     assert norm.normalize(raw, strict=False) == expected
+
+
+# ── numeral suffixes: tabulated, or refused ───────────────────────────────────
+#
+# Two cases used to sit in the table above:
+#
+#     ("2024-ны", "хоёр мянга хорин дөрвөн")   -- deletes the genitive entirely
+#     ("15-нд",   "арван тавнд")               -- a non-word
+#
+# They asserted the defect as the specification, which is why 58 text tests
+# passed while the normaliser emitted non-words on ordinary input. Deleted
+# rather than corrected: neither correct form is derivable from the tables in
+# numbers.py, and this project's one-string rule means a guess would be
+# published, scored against itself, and trained on.
+
+
+@pytest.mark.parametrize("raw,expected", [
+    ("20-аас доош", "хориос доош"),     # ь is irregular: not *хорьаас
+    ("20-иос доош", "хориос доош"),     # the spelling people actually write
+    ("3-аас", "гурваас"),               # unstable vowel reduces
+    ("4-өөс", "дөрвөөс"),
+    ("1-ээс", "нэгээс"),
+])
+def test_a_tabulated_suffix_expands(norm, raw, expected):
+    assert norm.normalize(raw, strict=False) == expected
+
+
+@pytest.mark.parametrize("raw", ["2024-ны", "15-нд", "1-ний", "3-ийн", "20-ийг",
+                                 "100-д", "5-ын хувь"])
+def test_an_untabulated_suffix_is_refused_not_guessed(norm, raw):
+    """The whole point of the change.
+
+    Each of these previously produced a plausible-looking non-word. The CER gate
+    cannot catch that, because the corrupted string *is* the reference it scores
+    against.
+    """
+    with pytest.raises(NumeralSuffixError):
+        norm.normalize(raw, strict=False)
+
+
+def test_the_refusal_names_the_missing_entry(norm):
+    """So filling the table is a lookup, not a hunt."""
+    with pytest.raises(NumeralSuffixError, match="normaliser-review"):
+        norm.normalize("100-д", strict=False)
+
+
+@pytest.mark.parametrize("raw", ["3/4", "2/3", "1/5"])
+def test_fractions_other_than_a_half_are_refused(norm, raw):
+    """`3/4` came out as `дөрөвдүгээрийн гурав` -- an ordinal plus a genitive,
+    roughly "of the fourth, three". An ordinal names a position, not a part."""
+    with pytest.raises(NumeralSuffixError):
+        norm.normalize(raw, strict=False)
+
+
+def test_a_half_still_expands(norm):
+    assert norm.normalize("1/2", strict=False) == "хагас"
+
+
+def test_ordinary_text_with_numbers_is_untouched_by_the_refusal(norm):
+    assert norm.normalize("1990 онд 25 хүн ирсэн", strict=False) == (
+        "мянга есөн зуун ерэн онд хорин таван хүн ирсэн"
+    )
+
+
+# ── abbreviations that were not abbreviations ─────────────────────────────────
+
+def test_a_gram_unit_is_not_a_year(norm):
+    """ABBREVIATIONS["г."] = "оны" shadowed the gram unit plus a full stop, and
+    the abbreviation pass runs before the unit pass -- so the collision was
+    guaranteed, not occasional."""
+    assert norm.normalize("Жин нь 5 г.", strict=False) == "Жин нь таван грамм."
+
+
+@pytest.mark.parametrize("raw", ["Энэ бол сайн зохиолч.", "Тэр ирэв.", "Би явлаа ж."])
+def test_a_single_letter_before_a_full_stop_is_a_word_ending(norm, raw):
+    """"т." -> "товч" and "ж." -> "жил" fired on any sentence ending that way."""
+    out = norm.normalize(raw, strict=False)
+    assert "товч" not in out
+    assert "жил" not in out
 
 
 def test_number_before_mongolian_word_takes_attributive(norm):

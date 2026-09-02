@@ -104,6 +104,16 @@ MATH_SYMBOLS: Final[dict[str, str]] = {
 
 FRACTION_HALF: Final[str] = "хагас"
 
+
+class NumeralSuffixError(ValueError):
+    """A numeral suffix this module cannot expand without guessing.
+
+    Raised rather than approximated. The corpus text, the CER reference and the
+    training target are one string here, so a wrong expansion is not a cosmetic
+    defect -- it is published, scored against itself, and learned. Under
+    `MongolianNormalizer.normalize(strict=True)` this drops the clip instead.
+    """
+
 # Ablative ("from X") for range expressions. A standalone cardinal can only end
 # in one of these words, so an exact table beats a vowel-harmony heuristic --
 # stem-final ь is irregular (хорь -> хориос, not *хорьоос) and a general rule
@@ -117,6 +127,37 @@ ABLATIVE: Final[dict[str, str]] = {
     "зуу": "зуугаас", "мянга": "мянгаас", "сая": "саяас",
     "тэрбум": "тэрбумаас", "наяд": "наядаас",
 }
+
+# Written case suffix -> the full word it makes, per numeral stem.
+#
+#     "20-аас"  ->  SUFFIXED_FORMS["хорь"]["аас"]  ->  "хориос"
+#
+# Tabulated, not generated. See `NumberNormalizer.attach_suffix` for why: every
+# rule tried against this produced a non-word somewhere, and a wrong expansion
+# here is published in the corpus, used as the CER reference, and trained on.
+#
+# Seeded from ABLATIVE, which is verified data. Everything else is a hole, and
+# an unlisted combination raises rather than being approximated -- so the corpus
+# loses a clip instead of gaining a non-word.
+#
+# **To extend this you need a native Khalkha speaker.** The table to fill is in
+# docs/normaliser-review.md, one row per (numeral, written suffix). The four
+# suffix families that matter by frequency are the genitive (-ны/-ний/-ын/-ийн),
+# the dative-locative (-д/-т/-нд), the accusative (-ыг/-ийг) and the ablative
+# (already covered here).
+SUFFIXED_FORMS: Final[dict[str, dict[str, str]]] = {
+    stem: {ablative[len(stem):] if ablative.startswith(stem) else "": ablative}
+    for stem, ablative in ABLATIVE.items()
+}
+# The ablative is written several ways for the same word -- "20-аас" and
+# "20-иос" are both read as "хориос" -- so every spelling that reaches the
+# regex maps to the one verified form.
+for _stem, _ablative in ABLATIVE.items():
+    _forms = SUFFIXED_FORMS[_stem]
+    for _written in ("аас", "ээс", "оос", "өөс", "иас", "иос", "ийс", "гаас", "гоос"):
+        _forms.setdefault(_written, _ablative)
+    _forms.pop("", None)
+del _stem, _ablative, _forms, _written
 
 # Every Mongolian Cyrillic letter, both cases. Note that a naive "[а-яА-ЯёЁ]"
 # range is U+0410-U+044F and therefore EXCLUDES ө U+04E9 and ү U+04AF, two of
@@ -264,6 +305,54 @@ class NumberNormalizer:
 
     # ── Helpers ───────────────────────────────────────────────────────────
 
+    def attach_suffix(self, n: int, suffix: str) -> str:
+        """Attach a written case suffix to a numeral: "20-аас" -> "хориос".
+
+        Only from `SUFFIXED_FORMS`. Nothing here is generated, because every
+        generation rule tried against this problem produced a non-word
+        somewhere:
+
+            concatenate onto the citation form   20-иос -> *хорьиос
+            drop stem-final ь, then concatenate  20-аас -> *хораас
+            use the attributive as the stem      3-ийн  -> *гуравийн
+
+        The ABLATIVE table is why the first of those was only *mostly* wrong:
+        it is a hand-written table of verified forms, and it is right wherever
+        it applies. That is the shape the answer has to take. Mongolian numeral
+        morphology here is not derivable from the citation/attributive pairs in
+        this file -- the stems interact with the written suffix
+        orthographically (хори + ийг contracts to хорийг), the tens behave
+        differently from the ones (гуч -> гучаас, not *гучиас), and stems with
+        an unstable vowel reduce (гурав -> гурваас). A rule that gets four of
+        those right and the fifth wrong is worse than no rule, because the
+        wrong one is silent.
+
+        And silent is expensive here specifically: this string is published in
+        the corpus, is the reference CER is scored against, and is the training
+        target. A non-word is learned as a word, and the CER gate cannot catch
+        it because the reference *is* the corrupted string.
+
+        So an unlisted combination raises, and
+        `MongolianNormalizer.normalize(strict=True)` -- the corpus path -- turns
+        that into a dropped clip. A clip fewer is cheap. `docs/normaliser-review.md`
+        is the table a native speaker fills in to lift this, and
+        `SUFFIXED_FORMS` is where the answers go.
+        """
+        word = self.convert(n)
+        if not suffix:
+            return word
+        head, _, last = word.rpartition(" ")
+
+        known = SUFFIXED_FORMS.get(last)
+        if known and suffix in known:
+            return f"{head} {known[suffix]}".strip()
+
+        raise NumeralSuffixError(
+            f"No verified form for {last!r} + -{suffix} (from {n}-{suffix}). "
+            f"Mongolian numeral suffixation is tabulated, not generated -- see "
+            f"docs/normaliser-review.md and SUFFIXED_FORMS."
+        )
+
     def _roman_to_int(self, s: str) -> int | None:
         if not s:
             return None
@@ -375,11 +464,19 @@ class NumberNormalizer:
             num, den = int(m.group(1)), int(m.group(2))
             if num == 1 and den == 2:
                 return FRACTION_HALF
-            # Ordinal-genitive of the denominator, harmony already chosen by
-            # convert_ordinal (дугаар back-vowel / дүгээр front-vowel).
-            ordinal = self.convert_ordinal(den)
-            gen = ordinal + ("ийн" if ordinal.endswith("дүгээр") else "ын")
-            return f"{gen} {self.convert(num)}"
+            # An ordinal names a position, not a part, so building one and
+            # bolting a genitive onto it says the wrong thing regardless of
+            # which genitive is chosen: "3/4" came out as "дөрөвдүгээрийн
+            # гурав", roughly "of the fourth, three". The correct construction
+            # is the genitive of the *cardinal*, and which allomorph that takes
+            # per numeral is not derivable from the tables in this file.
+            #
+            # The only fraction with a settled form here is 1/2, handled above.
+            raise NumeralSuffixError(
+                f"Cannot expand the fraction {num}/{den}: it needs the genitive "
+                "of the cardinal denominator, and building an ordinal instead "
+                "produced non-words. See docs/normaliser-review.md."
+            )
 
         text = re.sub(r"(\d{1,2})/(\d{1,2})", _fraction, text)
 
@@ -404,25 +501,21 @@ class NumberNormalizer:
         text = re.sub(r"(\d+)-р\b", _ordinal, text)
         text = re.sub(r"(\d+)-д(?:угаар|үгээр|ахь)", _ordinal, text)
 
-        # Genitive/attributive markers before nouns: 2024-ны, 1-ний, 5-ын, 3-ийн
+        # Genitive markers before nouns: 2024-ны, 1-ний, 5-ын, 3-ийн.
+        #
+        # These used to return convert_attributive(), which *deletes* the
+        # genitive the author wrote: "5-ын хувь" became "таван хувь" rather than
+        # "тавын хувь". Attributive and genitive are different morphemes, and
+        # since this string is what CER is scored against, substituting one for
+        # the other manufactures the very text/audio mismatch the CER gate
+        # exists to detect.
         def _genitive(m: re.Match[str]) -> str:
-            return self.convert_attributive(int(m.group(1)))
+            return self.attach_suffix(int(m.group(1)), m.group(2))
 
-        text = re.sub(r"(\d+)-(?:ны|ний|ын|ийн)\b", _genitive, text)
+        text = re.sub(r"(\d+)-(ны|ний|ын|ийн)\b", _genitive, text)
 
-        # Any remaining case suffix attaches directly to the standalone cardinal:
-        # 15-нд -> арван тавнд, 20-аас -> хорьаас, 5-ыг -> тавыг. The written
-        # suffix already carries the author's vowel harmony, so it is appended
-        # verbatim. Without this the hyphen survives into the text as a spoken
-        # token ("арван тав-нд").
         def _suffixed(m: re.Match[str]) -> str:
-            word, suffix = self.convert(int(m.group(1))), m.group(2)
-            head, _, last = word.rpartition(" ")
-            # The ablative is irregular after stem-final ь (хорь -> хориос), so
-            # prefer the table over blind concatenation.
-            if suffix in ("аас", "ээс", "оос", "өөс") and last in ABLATIVE:
-                return f"{head} {ABLATIVE[last]}".strip()
-            return f"{word}{suffix}"
+            return self.attach_suffix(int(m.group(1)), m.group(2))
 
         text = re.sub(rf"(\d+)-({_MN_CLASS}+)", _suffixed, text)
 

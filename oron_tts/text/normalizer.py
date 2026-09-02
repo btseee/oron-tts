@@ -47,15 +47,27 @@ CHAR_MAP: Final[dict[str, str]] = {
     "ʼ": "'",   # modifier apostrophe
 }
 
+# A single letter followed by a period is not an abbreviation, it is a word
+# ending a sentence. Three entries were exactly that shape and all three fired
+# on ordinary text:
+#
+#   "г." -> "оны"    shadowed the gram unit plus a full stop, so
+#                    "Жин нь 5 г." became "Жин нь таван оны" -- "its weight is
+#                    five of-the-year". Guaranteed rather than occasional: the
+#                    abbreviation pass runs before the unit pass, so "г." was
+#                    always consumed first.
+#   "т." -> "товч"   fires on any sentence ending in a word ending in т
+#   "ж." -> "жил"    likewise for ж
+#
+# The multi-letter entries below are kept: a three-character sequence ending in
+# a period is unlikely to be a word boundary, and where one is ("сар.", "цаг.")
+# the expansion equals the word, so a false match costs nothing.
 ABBREVIATIONS: Final[dict[str, str]] = {
-    "г.": "оны",
     "км": "километр",
     "см": "сантиметр",
     "кг": "килограмм",
     "мл": "миллилитр",
-    "т.": "товч",
     "тов.": "товч",
-    "ж.": "жил",
     "сар.": "сар",
     "өд.": "өдөр",
     "мин.": "минут",
