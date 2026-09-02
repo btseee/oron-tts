@@ -99,9 +99,15 @@ directions. The value in the repo is a placeholder computed for a corpus that
 does not exist yet, and it will be wrong for the real one.
 
 ```bash
+# The pretrained file MUST land inside save_dir. Trainer.load_checkpoint
+# (trainer.py:187-213) lists save_dir, and when it holds no .pt or
+# .safetensors it returns early and training starts from RANDOM INIT --
+# silently. That is how the previous checkpoint came to be a 336M model
+# trained from scratch on 6 h of audio.
+SAVE_DIR=../F5-TTS/ckpts/F5TTS_v1_Base_vocos_pinyin_oron_mn
 python scripts/extend_vocab.py --out data/oron_mn_pinyin/vocab.txt \
     --checkpoint ckpts/F5TTS_v1_Base/model_1250000.safetensors \
-    --checkpoint-out ckpts/oron_mn/pretrained_model_1250000.safetensors
+    --checkpoint-out $SAVE_DIR/pretrained_model_1250000.safetensors
 
 python scripts/preflight.py --data ../F5-TTS/data/oron_mn_pinyin
 
