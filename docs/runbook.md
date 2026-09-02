@@ -30,8 +30,9 @@ pip install -r requirements.lock          # 94 pinned packages, resolved for 3.1
 pip install -e . --no-deps
 
 printf 'API_KEY=...\nHF_TOKEN=...\n' > .env   # never commit this
-pytest                                    # 136 tests, no models needed
+pytest                                    # no models needed
 python scripts/check_lockfile.py          # lock still covers pyproject
+python scripts/check_ci_imports.py        # nothing needs the model stack to collect
 
 python clean_pipeline.py --datasets cv --calibrate --limit 500 --no-upload
 ```
