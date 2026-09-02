@@ -116,6 +116,7 @@ MATH_SYMBOLS: Final[dict[str, str]] = {
 # was confirmed as context-dependent rather than a typo. Entries not listed are
 # absent, not guessed.
 FRACTION_GENITIVE: Final[dict[int, str]] = {
+    1: "нэгний",
     2: "хоёрны",
     4: "дөрөвний",
 }
@@ -129,15 +130,22 @@ REFERENCE_GENITIVE: Final[dict[int, str]] = {
     10: "аравын",
 }
 
-# Decimal reading: "3.14" -> "гурван бүхэл арван дөрөв". The fractional part
-# is read as a whole number, and its place is named for lengths the spec gives:
-# "0.05" -> "тэг бүхэл таван зууны", "12.5" -> "... таван аравны".
-WHOLE_WORD: Final[str] = "бүхэл"
-MIXED_WHOLE_WORD: Final[str] = "бүтэн"
+# A decimal is read as a fraction, not as a whole part plus a tail: "12.5%" is
+# "арван хоёр арваны таван хувь" -- twelve, then five-tenths, with the place
+# named first exactly as in "хоёрны нэг". There is no "бүхэл".
+#
+# An earlier version followed the specification's section 4, which does use
+# "бүхэл", and then needed a rule for when the place word appears that no
+# reading of the spec could make consistent. Confirmed as superseded: the
+# fraction reading applies everywhere.
 DECIMAL_PLACE: Final[dict[int, str]] = {
-    1: "аравны",
+    1: "арваны",
     2: "зууны",
 }
+
+# The mixed fraction keeps its own linking word, which is not "бүхэл" either:
+# "2 1/2" is "хоёр бүтэн хоёрны нэг".
+MIXED_WHOLE_WORD: Final[str] = "бүтэн"
 
 FRACTION_HALF: Final[str] = "хагас"
 
@@ -377,26 +385,26 @@ class NumberNormalizer:
             return " ".join(self.convert(int(digits[i:i + 2])) for i in range(0, 8, 2))
         return self._digit_by_digit(digits)
 
-    def _decimal_words(self, whole: str, frac: str) -> str:
-        """"3.14" -> "гурван бүхэл арван дөрөв".
+    def _decimal_words(self, whole: str, frac: str, attr: bool = False) -> str:
+        """"12.5%" -> "арван хоёр арваны таван хувь".
 
-        The place word (`аравны`, `зууны`) is inferred from three spec examples
-        and is the one rule here not stated outright:
+        A decimal is a fraction: the whole part, then the place named as a
+        genitive, then the digits -- the same order as "хоёрны нэг". There is
+        no linking word.
 
-            3.14  -> гурван бүхэл арван дөрөв        no place word
-            0.05  -> тэг бүхэл таван зууны           place word
-            12.5  -> арван хоёр бүхэл таван аравны   place word
+        `attr` puts the final digits in the attributive form, which is what a
+        following noun needs: "таван хувь", not "тав хувь".
 
-        What separates them is whether the fractional part is a single
-        significant digit -- `5` and `05` are, `14` is not. That reproduces all
-        three, but it is induced from three points rather than given, so it is
-        flagged in docs/normaliser-review.md for a speaker to confirm.
+        A fractional part longer than the tabulated places is read digit by
+        digit rather than given an invented place name.
         """
-        head = f"{self.convert_attributive(int(whole))} {WHOLE_WORD}"
-        significant = frac.lstrip("0") or "0"
-        place = DECIMAL_PLACE.get(len(frac)) if len(significant) == 1 else None
-        tail = self.convert_attributive(int(frac)) if place else self.convert(int(frac))
-        return f"{head} {tail} {place}" if place else f"{head} {tail}"
+        place = DECIMAL_PLACE.get(len(frac))
+        head = self.convert(int(whole))
+        if place is None:
+            digits = " ".join(self.convert(int(d)) for d in frac)
+            return f"{head} {digits}"
+        tail = self.convert_attributive(int(frac)) if attr else self.convert(int(frac))
+        return f"{head} {place} {tail}"
 
     def _fraction_words(self, num: int, den: int) -> str:
         """"3/4" -> "дөрөвний гурав": genitive of the denominator, then the
@@ -588,6 +596,15 @@ class NumberNormalizer:
             text,
         )
 
+        # Whatever colon is left is a ratio, and a ratio is read as a fraction:
+        # "1:2" is "хоёрны нэг" -- the same string as 1/2 -- and "3:1" is
+        # "нэгний гурав". This is what settles the ambiguity the spec left
+        # between a ratio and a sports score: both are the fraction.
+        def _ratio(m: re.Match[str]) -> str:
+            return self._fraction_words(int(m.group(1)), int(m.group(2)))
+
+        text = re.sub(r"(?<!\d)(\d{1,3}):(\d{1,3})(?!\d)", _ratio, text)
+
         pass  # verse references are handled before the time pass
 
         def _temp(m: re.Match[str]) -> str:
@@ -644,7 +661,7 @@ class NumberNormalizer:
         def _percent(m: re.Match[str]) -> str:
             whole, frac = m.group(1), m.group(2)
             if frac:
-                return f"{self._decimal_words(whole, frac)} {self._percent_word}"
+                return f"{self._decimal_words(whole, frac, attr=True)} {self._percent_word}"
             return f"{self.convert_attributive(int(whole))} {self._percent_word}"
 
         text = re.sub(r"(\d+)(?:\.(\d+))?%", _percent, text)

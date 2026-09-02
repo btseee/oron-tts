@@ -368,19 +368,42 @@ def test_a_verse_reference_is_not_a_clock_time(norm):
     assert "цаг" in norm.normalize("Цаг 14:30 боллоо", strict=False)
 
 
-def test_an_impossible_clock_time_is_left_alone(norm):
-    """25:70 is not a time, so the hour/minute guard must decline it."""
-    out = norm.normalize("25:70", strict=False)
+def test_an_impossible_clock_time_is_not_a_time(norm):
+    """25:02 has no valid hour, so the guard declines it and it falls through to
+    the ratio rule -- which is what any other colon between numbers is."""
+    out = norm.normalize("25:02", strict=False)
     assert "цаг" not in out and "минут" not in out
+    assert out == "хоёрны хорин тав"
 
 
 @pytest.mark.parametrize("raw,expected", [
-    ("3.14", "гурван бүхэл арван дөрөв"),
-    ("0.05", "тэг бүхэл таван зууны"),
-    ("12.5%", "арван хоёр бүхэл таван аравны хувь"),
+    ("3.14", "гурав зууны арван дөрөв"),
+    ("0.05", "тэг зууны тав"),
+    ("12.5%", "арван хоёр арваны таван хувь"),
 ])
-def test_decimals_follow_the_spec(norm, raw, expected):
+def test_a_decimal_reads_as_a_fraction(norm, raw, expected):
+    """The whole part, the place as a genitive, then the digits -- the same
+    order as "хоёрны нэг", and no linking word.
+
+    An earlier version followed the spec's section 4, which uses "бүхэл", and
+    then needed a place-word rule that no reading of the spec made consistent.
+    The fraction reading applies everywhere instead.
+    """
     assert norm.normalize(raw, strict=False) == expected
+
+
+@pytest.mark.parametrize("raw,expected", [("1:2", "хоёрны нэг"), ("3:1", "нэгний гурав")])
+def test_a_ratio_reads_as_a_fraction(norm, raw, expected):
+    """Which is what settles the ambiguity the spec left between a ratio and a
+    sports score: there is no score reading, both are the fraction. "1:2" is
+    the same string as "1/2"."""
+    assert norm.normalize(raw, strict=False) == expected
+    assert norm.normalize("1/2", strict=False) == norm.normalize("1:2", strict=False)
+
+
+def test_a_ratio_with_an_untabulated_denominator_refuses(norm):
+    with pytest.raises(NumeralSuffixError):
+        norm.normalize("5:7", strict=False)
 
 
 def test_a_dotted_reference_is_not_a_decimal(norm):

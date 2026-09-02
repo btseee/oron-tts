@@ -41,13 +41,15 @@
   "id": 4,
   "cat": "decimal",
   "in": "3.14",
-  "out": "гурван бүхэл арван дөрөв"
+  "out": "гурав зууны арван дөрөв",
+  "superseded": "a decimal reads as a fraction; there is no бүхэл (user decision)"
  },
  {
   "id": 4,
   "cat": "decimal",
   "in": "0.05",
-  "out": "тэг бүхэл таван зууны"
+  "out": "тэг зууны тав",
+  "superseded": "a decimal reads as a fraction; there is no бүхэл (user decision)"
  },
  {
   "id": 5,
@@ -156,7 +158,8 @@
   "id": 16,
   "cat": "percent",
   "in": "12.5%",
-  "out": "арван хоёр бүхэл таван аравны хувь"
+  "out": "арван хоёр арваны таван хувь",
+  "superseded": "a decimal reads as a fraction; there is no бүхэл (user decision)"
  },
  {
   "id": 17,
@@ -320,7 +323,8 @@
   "id": 37,
   "cat": "sci-notation",
   "in": "1.2×10⁵",
-  "out": "нэг бүхэл хоёр аравын тавдугаар зэрэгт"
+  "out": "нэг арваны хоёр аравын тавдугаар зэрэгт",
+  "superseded": "a decimal reads as a fraction; there is no бүхэл (user decision)"
  },
  {
   "id": 38,
@@ -472,13 +476,15 @@
   "id": 63,
   "cat": "ratio",
   "in": "1:2",
-  "out": "нэг харьцаа хоёр"
+  "out": "хоёрны нэг",
+  "superseded": "a ratio reads as a fraction (user decision)"
  },
  {
   "id": 64,
   "cat": "score",
   "in": "3:1",
-  "out": "гурав нэгээр"
+  "out": "нэгний гурав",
+  "superseded": "a ratio reads as a fraction (user decision)"
  },
  {
   "id": 65,

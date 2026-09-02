@@ -38,16 +38,12 @@ NEEDS_LEXICON = {
     "https://github.com", "user@example.com", "@bat", "report.pdf",
 }
 
-# "1:2" is a ratio and "3:1" a score, and nothing in either string says which.
-# Flagged in docs/normaliser-review.md rather than guessed at.
-AMBIGUOUS = {"1:2", "3:1"}
-
-# The decimal place-word rule is induced from three spec examples (see
-# `NumberNormalizer._decimal_words`), and this is the case that contradicts it:
-# "12.5%" keeps "аравны" while the mantissa of "1.2x10(sup 5)" drops it. The
-# exponent is otherwise correct -- "аравын тавдугаар зэрэгт" -- so this waits on
-# a speaker settling the rule rather than on more code.
-INDUCED_RULE_CONFLICT = {"1.2×10⁵"}
+# Both of the earlier open questions are closed. A ratio reads as a fraction --
+# "1:2" is the same string as 1/2 -- so there is no score special case; and a
+# decimal reads as a fraction too, with no "бүхэл", so the induced place-word
+# rule is gone rather than patched.
+AMBIGUOUS: set[str] = set()
+INDUCED_RULE_CONFLICT: set[str] = set()
 
 EXPECTED_FAILURES = NEEDS_LEXICON | AMBIGUOUS | INDUCED_RULE_CONFLICT
 
@@ -83,7 +79,7 @@ def test_spec_case(norm, case):
 def test_conformance_does_not_regress(norm):
     """A floor, not a target. Raise it when cases start passing."""
     passing, _ = _score(norm)
-    assert passing >= 77, f"conformance fell to {passing}/{len(SPEC)}"
+    assert passing >= 80, f"conformance fell to {passing}/{len(SPEC)}"
 
 
 def test_the_expected_failures_are_still_the_only_failures(norm):

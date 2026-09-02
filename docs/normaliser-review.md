@@ -70,26 +70,28 @@ Note there are **two** genitive tables, confirmed as context-dependent rather
 than a typo: `FRACTION_GENITIVE` has the n-stem form (`дөрөвний`) and
 `REFERENCE_GENITIVE` the reduced one (`дөрвийн`).
 
-## Three questions the spec opened
+## Two of the three questions are closed
 
-1. **The decimal place word.** `_decimal_words` uses a rule induced from three
-   examples — the place word appears when the fraction is a single significant
-   digit:
+1. **~~The decimal place word.~~** Closed. A decimal reads as a *fraction*:
+   the whole part, the place as a genitive, then the digits, in that order and
+   with no `бүхэл`. Section 4's `бүхэл` is superseded, and the induced
+   place-word rule is gone rather than patched.
 
    | | |
    |---|---|
-   | `3.14` | `гурван бүхэл арван дөрөв` — no place word |
-   | `0.05` | `тэг бүхэл таван зууны` |
-   | `12.5%` | `арван хоёр бүхэл таван аравны хувь` |
+   | `3.14` | `гурав зууны арван дөрөв` |
+   | `0.05` | `тэг зууны тав` |
+   | `12.5%` | `арван хоёр арваны таван хувь` |
 
-   Section 37 then contradicts it: the mantissa of `1.2×10⁵` is `нэг бүхэл
-   хоёр`, with no `аравны`. What is the actual rule?
+   Note the place word is `арваны` (`арван` + `ы`), matching `зууны`, not the
+   spec's `аравны`.
 
-2. **`1:2` versus `3:1`.** The spec reads the first as a ratio (`нэг харьцаа
-   хоёр`) and the second as a sports score (`гурав нэгээр`). Nothing in either
-   string separates them. Is there a default, or does it need context?
+2. **~~`1:2` versus `3:1`.~~** Closed, and simpler than the spec suggested:
+   **a ratio reads as a fraction.** `1:2` is `хоёрны нэг` — the same string as
+   `1/2` — and `3:1` is `нэгний гурав`. There is no sports-score reading, so
+   nothing needs to tell them apart. `FRACTION_GENITIVE` gained `1: нэгний`.
 
-3. **The `хорь` ablative.** Section 13 gives `2020-2024` as `... хорьноос ...`,
+3. **The `хорь` ablative — still open.** Section 13 gives `2020-2024` as `... хорьноос ...`,
    while the verified `ABLATIVE` table has `хориос`. The table was chosen, so
    the spec line is treated as a slip — but the fleeting-n rule leans the other
    way, and if the spec is right the whole table needs the same review.
