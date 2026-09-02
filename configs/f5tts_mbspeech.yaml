@@ -1,0 +1,95 @@
+# Finetune F5TTS_v1_Base on MBSpeech alone (btsee/mbspeech_mn).
+#
+# Differs from f5tts_mn.yaml in three ways that all follow from the corpus being
+# one male narrator reading ~6.7 h of biblical text on a 24 GB card:
+#
+#   * batch_size_per_gpu is sized for 24 GB, not 32
+#   * the run is far shorter -- 6.7 h packs into ~250 updates per epoch, so the
+#     update counts that suit a 40 h corpus are hundreds of epochs here
+#   * save_per_updates is tighter, because the deliverable is TWO checkpoints
+#     from one run: an early one that still clones an arbitrary reference voice,
+#     and a converged one locked to the narrator. Both come out of the sweep, so
+#     the saves have to be dense enough to catch the crossover.
+#
+# Launch from the F5-TTS repo:
+#   accelerate launch src/f5_tts/train/train.py --config-name f5tts_mbspeech.yaml
+
+hydra:
+  run:
+    dir: ckpts/${model.name}_${model.mel_spec.mel_spec_type}_${model.tokenizer}_${datasets.name}/${now:%Y-%m-%d}/${now:%H-%M-%S}
+
+datasets:
+  name: oron_mn
+  # Upstream's heuristic is 38400 * (GPU_GB - 5) / 75 -- 9728 on a 24 GB 4090.
+  # Rounded down to 9600. At a 6.6 s mean clip (619 frames) that is ~15 clips
+  # per batch, so frames bind before max_samples does.
+  batch_size_per_gpu: 9600
+  batch_size_type: frame
+  max_samples: 32
+  num_workers: 8
+
+optim:
+  # PLACEHOLDER. scripts/preflight.py refuses to launch while this is unset,
+  # because `epochs` sets the LR decay horizon rather than just the stop point:
+  # guess it high and the run ends with the LR still hot, guess it low and the
+  # LR is at zero long before the sweep finds its peak. Compute it against the
+  # real packing once the dataset exists:
+  #   python scripts/compute_epochs.py --data data/oron_mn_pinyin \
+  #       --target-updates 24000 --frames 9600
+  epochs: PLACEHOLDER
+  # Upstream's finetune default, and the right order of magnitude for adapting a
+  # 100k-hour model on single digits of hours. Anything hotter erases the
+  # zero-shot cloning this run is trying to keep half of.
+  learning_rate: 1.0e-5
+  num_warmup_updates: 1000
+  # Keep at 1: scheduler.step() fires per batch, not per optimizer update, so
+  # accumulation silently compresses the LR schedule by that factor.
+  grad_accumulation_steps: 1
+  max_grad_norm: 1.0
+  bnb_optimizer: False
+
+model:
+  name: F5TTS_v1_Base
+  tokenizer: pinyin
+  tokenizer_path: null
+  backbone: DiT
+  arch:
+    dim: 1024
+    depth: 22
+    heads: 16
+    ff_mult: 2
+    text_dim: 512
+    text_mask_padding: True
+    qk_norm: null
+    conv_layers: 4
+    pe_attn_head: null
+    attn_backend: torch
+    attn_mask_enabled: False
+    # Required on 24 GB. Trades compute for memory.
+    checkpoint_activations: True
+  mel_spec:
+    target_sample_rate: 24000
+    n_mel_channels: 100
+    hop_length: 256
+    win_length: 1024
+    n_fft: 1024
+    mel_spec_type: vocos
+  vocoder:
+    is_local: False
+    local_path: null
+
+ckpts:
+  logger: tensorboard
+  wandb_project: oron-tts
+  wandb_run_name: ${model.name}_${model.tokenizer}_mbspeech
+  wandb_resume_id: null
+  log_samples: True
+  # ~12 sweep candidates across 24k updates. Denser than f5tts_mn.yaml because
+  # this run has to locate a crossover, not just a minimum.
+  save_per_updates: 2000
+  # Each .pt is ~5.4 GB (weights + grads + AdamW + EMA); three is 16 GB.
+  keep_last_n_checkpoints: 3
+  # Resumability. The run is on a preemptible community-cloud pod, so losing
+  # more than 1000 updates to a reclaim is not acceptable.
+  last_per_updates: 1000
+  save_dir: ckpts/${model.name}_${model.mel_spec.mel_spec_type}_${model.tokenizer}_${datasets.name}
