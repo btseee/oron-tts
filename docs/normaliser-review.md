@@ -50,6 +50,30 @@ So the normaliser raises `NumeralSuffixError` on anything not tabulated, and
 **Measured cost: 3 of 56 real Mongolian sentences (5.4%)** in
 `tests/fixtures/mn_text_sample.jsonl`. All three previously produced non-words.
 
+## What is already verified, so you can skip it
+
+The **ordinals are correct** and need no review. An earlier draft of this
+document's parent review listed `convert_ordinal(100)` → `зуудугаар` as a
+non-word; Wiktionary lists exactly that form, and `мянгадугаар` and
+`хорьдугаар` too. The claim was wrong and is withdrawn.
+
+| n | produced | Wiktionary |
+|---|---|---|
+| 20 | `хорьдугаар` | ✓ |
+| 100 | `зуудугаар` | ✓ |
+| 1000 | `мянгадугаар` | ✓ |
+
+The **ablative table is correct** wherever it applies — it is hand-written
+verified data and is what `SUFFIXED_FORMS` is seeded from. One entry is worth a
+second look: `гурав → гурваас` and `дөрөв → дөрвөөс` drop the unstable
+vowel, while `арав → араваас` keeps it, though `арав/арван` alternates
+identically. Is `араваас` or `арваас` right?
+
+What background reading did establish, and what it did not: the **fleeting-n**
+(hidden-n) surfaces before the genitive, dative and ablative markers, which is
+the right general shape. It does not tell you which allomorph each of the 24
+numeral stems takes, and that is exactly the gap below.
+
 ## What to fill in
 
 `SUFFIXED_FORMS` in `oron_tts/text/numbers.py`, keyed by numeral stem, then by
@@ -103,3 +127,20 @@ from `test_an_untabulated_suffix_is_refused_not_guessed`.
 
 **Do not fill these in by pattern-matching the examples above.** That is exactly
 how the three broken rules were produced.
+
+## Sources consulted
+
+- [Trying to understand the "fleeting-n" in Mongolian](https://thelanguagecloset.com/2021/08/28/trying-to-understand-the-fleeting-n-in-mongolian/)
+  — confirms the -н surfaces before genitive, dative and ablative markers.
+- [Wiktionary: хорь](https://en.wiktionary.org/wiki/%D1%85%D0%BE%D1%80%D1%8C),
+  [зуу](https://en.wiktionary.org/wiki/%D0%B7%D1%83%D1%83),
+  [мянга](https://en.wiktionary.org/wiki/%D0%BC%D1%8F%D0%BD%D0%B3%D0%B0)
+  — cardinal, attributive and ordinal forms. **No case declension tables**, which
+  is why this document exists.
+- [Монгол хэлний зөв бичих дүрмийн журамласан толь](https://toli.gov.mn/r)
+  — the state orthographic dictionary. Documents the rules; does not give
+  declined forms per word.
+- [Mongolian numerals](https://en.wikipedia.org/wiki/Mongolian_numerals),
+  [Numeral Morphology in Mongolian](https://lisatravis2012.wordpress.com/2016/11/21/numeral-morphology-in-mongolian/)
+  — numerals are morphosyntactically distinct from ordinary nominals, which is
+  why a general noun-declension rule does not transfer to them.
