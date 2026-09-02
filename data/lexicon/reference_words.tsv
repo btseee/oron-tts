@@ -1,0 +1,5 @@
+# Words that make a following "N:M" a chapter-and-verse reference rather than a
+# clock time. "Иохан 3:16" is a verse; "Цаг 14:30" is a time; nothing in the
+# shape of either separates them, so it takes a list.
+# The second column is unused; the key is what matters.
+Иохан	verse

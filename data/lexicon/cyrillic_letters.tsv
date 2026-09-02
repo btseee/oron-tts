@@ -1,0 +1,3 @@
+# Cyrillic letter -> spoken name, for initials: "Б.Бат" -> "бэ бат".
+# Seeded from the spec, section 29. The rest of the alphabet is still needed.
+б	бэ

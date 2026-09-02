@@ -24,6 +24,7 @@ import unicodedata
 from pathlib import Path
 from typing import Final
 
+from oron_tts.text.lexicon import all_lexicons
 from oron_tts.text.numbers import NumberNormalizer
 from oron_tts.text.vocab import DEFAULT_VOCAB, check, unsupported
 
@@ -99,19 +100,39 @@ UNIT_ABBREVS: Final[dict[str, str]] = {
 class MongolianNormalizer:
     """Normalize Mongolian text into exactly what the model will be fed."""
 
-    def __init__(self, vocab_path: Path | str = DEFAULT_VOCAB) -> None:
+    def __init__(self, vocab_path: Path | str = DEFAULT_VOCAB,
+                 lexicon_dir: Path | str | None = None) -> None:
         self._vocab_path = vocab_path
-        self._numbers = NumberNormalizer()
+        self._lexicons = all_lexicons(lexicon_dir)
+        self._lexicon_dir = lexicon_dir
+        self._numbers = NumberNormalizer(
+            reference_words=set(self._lexicons["reference_words"])
+        )
         self._char_map = str.maketrans(CHAR_MAP)
         self._whitespace_re = re.compile(r"\s+")
         self._multi_punct_re = re.compile(r"([.!?,]){2,}")
+
+        # Longest first, so "тов." wins over "т" and "МУИС" over "МУ".
+        abbreviations = {**ABBREVIATIONS, **self._lexicons["abbreviations"]}
         self._abbrev_res = [
-            (re.compile(rf"(?<!\w){re.escape(a)}(?!\w)", re.IGNORECASE), full)
-            for a, full in ABBREVIATIONS.items()
+            (re.compile(rf"(?<!\w){re.escape(a)}(?!\w)"), full)
+            for a, full in sorted(abbreviations.items(), key=lambda kv: -len(kv[0]))
         ]
+        # Units are matched after a digit only, and longest first so "м²" beats
+        # "м". Without the ordering "50 м²" became "тавин метр²".
+        units = {**UNIT_ABBREVS, **self._lexicons["units"]}
         self._unit_res = [
-            (re.compile(rf"(\d)\s*{re.escape(a)}(?!\w)", re.IGNORECASE), rf"\1 {full}")
-            for a, full in UNIT_ABBREVS.items()
+            (re.compile(rf"(\d)\s*{re.escape(a)}(?!\w)"), rf"\1 {full}")
+            for a, full in sorted(units.items(), key=lambda kv: -len(kv[0]))
+        ]
+        self._emoji_res = [
+            (re.compile(re.escape(e)), f" {word} ")
+            for e, word in self._lexicons["emoji"].items()
+        ]
+        self._foreign_res = [
+            (re.compile(rf"\b{re.escape(w)}\b"), spoken)
+            for w, spoken in sorted(self._lexicons["foreign_words"].items(),
+                                    key=lambda kv: -len(kv[0]))
         ]
 
     def normalize(self, text: str, strict: bool = True) -> str:
@@ -124,9 +145,18 @@ class MongolianNormalizer:
         text = unicodedata.normalize("NFC", text)
         text = text.translate(self._char_map)
 
+        # Emoji first: they are not in the vocabulary, so anything left becomes
+        # a space, and an emoji sitting between two words would silently merge
+        # them. An unlisted emoji is left alone and caught by the vocabulary check.
+        for pattern, repl in self._emoji_res:
+            text = pattern.sub(repl, text)
+
         for pattern, full in self._abbrev_res:
             text = pattern.sub(full, text)
         for pattern, repl in self._unit_res:
+            text = pattern.sub(repl, text)
+        # After units, so "5 kW" is a unit rather than a foreign word.
+        for pattern, repl in self._foreign_res:
             text = pattern.sub(repl, text)
 
         text = self._numbers.normalize_text(text)

@@ -1,0 +1,5 @@
+# Emoji -> spoken description. Absent: the emoji is dropped, since it is not in
+# the vocabulary and would otherwise become a space.
+# Seeded from the spec, section 46.
+❤️	улаан зүрх
+😂	инээж уйлж буй царай

@@ -1,0 +1,10 @@
+# Latin-script word -> Mongolian transliteration.
+# Absent: the word is left in Latin. Latin is in the vocabulary and the model
+# will attempt it, which is better than a wrong Cyrillic guess.
+# Seeded from the spec, sections 39-41 and 56.
+Scholz	Шольц
+Macron	Макрон
+Google	Гүүгл
+GitHub	ГитХаб
+Frankfurt	Франкфурт
+project	прожект

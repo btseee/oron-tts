@@ -1,0 +1,19 @@
+# Latin letter -> Mongolian name, for spelling out ABC, ISBN, H2O, URLs.
+# Seeded from the spec: "ABC" -> "эй би си", "H2O" -> "эйч хоёр оу",
+# "ISBN" -> "ай эс би эн", "RX9070" -> "ар икс ...", "report.pdf" -> "... пи ди эф".
+a	эй
+b	би
+c	си
+d	ди
+e	и
+f	эф
+h	эйч
+i	ай
+n	эн
+o	оу
+p	пи
+r	ар
+s	эс
+t	ти
+x	икс
+# Still needed: g j k l m q u v w y z

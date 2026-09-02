@@ -102,6 +102,40 @@ MATH_SYMBOLS: Final[dict[str, str]] = {
     "~": "ойролцоогоор",
 }
 
+# Genitive of a cardinal, for reading "3/4" as "of four, three". From the
+# specification, verbatim -- not generated. Mongolian numeral genitives are not
+# derivable from the citation/attributive pairs in this file (see
+# docs/normaliser-review.md), and the spec supplies exactly these.
+#
+# There are two of them, and that is deliberate rather than a duplication. The
+# spec gives the n-stem genitive in fractions (3/4 -> "дөрөвний гурав") and the
+# reduced one in section references (3.4.1.7 -> "гурвын дөрвийн ..."), which
+# was confirmed as context-dependent rather than a typo. Entries not listed are
+# absent, not guessed.
+FRACTION_GENITIVE: Final[dict[int, str]] = {
+    2: "хоёрны",
+    4: "дөрөвний",
+}
+
+# Reduced genitive, for dotted references: 5.1.2 -> "тавын нэгийн хоёр".
+REFERENCE_GENITIVE: Final[dict[int, str]] = {
+    1: "нэгийн",
+    3: "гурвын",
+    4: "дөрвийн",
+    5: "тавын",
+    10: "аравын",
+}
+
+# Decimal reading: "3.14" -> "гурван бүхэл арван дөрөв". The fractional part
+# is read as a whole number, and its place is named for lengths the spec gives:
+# "0.05" -> "тэг бүхэл таван зууны", "12.5" -> "... таван аравны".
+WHOLE_WORD: Final[str] = "бүхэл"
+MIXED_WHOLE_WORD: Final[str] = "бүтэн"
+DECIMAL_PLACE: Final[dict[int, str]] = {
+    1: "аравны",
+    2: "зууны",
+}
+
 FRACTION_HALF: Final[str] = "хагас"
 
 
@@ -194,8 +228,11 @@ _ROMAN_RE: Final[re.Pattern[str]] = re.compile(
 class NumberNormalizer:
     """Expand digits, symbols and numeric idioms into Mongolian words."""
 
-    def __init__(self) -> None:
-        self._cache: dict[tuple[int, bool], str] = {}
+    def __init__(self, reference_words: set[str] | None = None) -> None:
+        self._cache: dict[tuple[int, bool, bool], str] = {}
+        # Words that make a following "N:M" a verse reference rather than a
+        # clock time. Supplied by the normaliser from data/lexicon.
+        self._reference_words = reference_words or set()
         self._zero_word = "тэг"
         self._minus_word = "хасах"
         self._point_word = "цэг"
@@ -245,23 +282,30 @@ class NumberNormalizer:
         )
         return f"{h_str} {self._convert_under_100(remainder, attr)}"
 
-    def _convert_large(self, n: int, scale: int, attr: bool = False) -> tuple[str, int]:
+    def _convert_large(self, n: int, scale: int, attr: bool = False,
+                       bare: bool = False) -> tuple[str, int]:
         scale_count, remainder = divmod(n, scale)
         base, attr_form = LARGE[scale]
         is_terminal = remainder == 0
         form = attr_form if (attr and is_terminal) else base
         if scale_count == 1:
-            return form, remainder
+            # "1005" is "нэг мянга тав", not "мянга тав": a bare scale word is a
+            # noun, and one of them still needs counting. The exception is a
+            # year, where "1990" is "мянга есөн зуун ерэн" -- handled by the
+            # caller, which passes bare=True for a year context.
+            return (form if bare else f"{ONES[1][0]} {form}"), remainder
         return f"{self._convert_number(scale_count, attr=True)} {form}", remainder
 
-    def _convert_number(self, n: int, attr: bool = False) -> str:
+    def _convert_number(self, n: int, attr: bool = False, bare: bool = False) -> str:
         if n < 1000:
             return self._convert_under_1000(n, attr)
         parts: list[str] = []
         remaining = n
         for scale in sorted(LARGE.keys(), reverse=True):
             if remaining >= scale:
-                word, remaining = self._convert_large(remaining, scale, attr=attr)
+                word, remaining = self._convert_large(
+                    remaining, scale, attr=attr, bare=bare and not parts
+                )
                 parts.append(word)
         if remaining > 0:
             parts.append(self._convert_under_1000(remaining, attr))
@@ -269,32 +313,37 @@ class NumberNormalizer:
 
     # ── Public API ────────────────────────────────────────────────────────
 
-    def convert(self, n: int) -> str:
-        """Cardinal in standalone form (тав, хорь, зуу)."""
-        key = (n, False)
+    def convert(self, n: int, bare: bool = False) -> str:
+        """Cardinal in standalone form (тав, хорь, зуу).
+
+        `bare` drops the "нэг" a leading scale word otherwise takes, which is
+        what a year does: 1990 is "мянга есөн зуун ерэн", while the same digits
+        as a quantity are "нэг мянга есөн зуун ерэн".
+        """
+        key = (n, False, bare)
         if key in self._cache:
             return self._cache[key]
         if n == 0:
             return self._zero_word
         if n < 0:
             return f"{self._minus_word} {self.convert(-n)}"
-        result = self._convert_number(n, attr=False)
+        result = self._convert_number(n, attr=False, bare=bare)
         self._cache[key] = result
         return result
 
-    def convert_attributive(self, n: int) -> str:
+    def convert_attributive(self, n: int, bare: bool = False) -> str:
         """Cardinal in attributive form, used before nouns.
 
         таван (мянга), тавин (хувь), зуун (төгрөг).
         """
-        key = (n, True)
+        key = (n, True, bare)
         if key in self._cache:
             return self._cache[key]
         if n == 0:
             return self._zero_word
         if n < 0:
             return f"{self._minus_word} {self.convert_attributive(-n)}"
-        result = self._convert_number(n, attr=True)
+        result = self._convert_number(n, attr=True, bare=bare)
         self._cache[key] = result
         return result
 
@@ -304,6 +353,62 @@ class NumberNormalizer:
         return f"{cardinal}{self._get_ordinal_suffix(cardinal)}"
 
     # ── Helpers ───────────────────────────────────────────────────────────
+
+    def _decimal_words(self, whole: str, frac: str) -> str:
+        """"3.14" -> "гурван бүхэл арван дөрөв".
+
+        The place word (`аравны`, `зууны`) is inferred from three spec examples
+        and is the one rule here not stated outright:
+
+            3.14  -> гурван бүхэл арван дөрөв        no place word
+            0.05  -> тэг бүхэл таван зууны           place word
+            12.5  -> арван хоёр бүхэл таван аравны   place word
+
+        What separates them is whether the fractional part is a single
+        significant digit -- `5` and `05` are, `14` is not. That reproduces all
+        three, but it is induced from three points rather than given, so it is
+        flagged in docs/normaliser-review.md for a speaker to confirm.
+        """
+        head = f"{self.convert_attributive(int(whole))} {WHOLE_WORD}"
+        significant = frac.lstrip("0") or "0"
+        place = DECIMAL_PLACE.get(len(frac)) if len(significant) == 1 else None
+        tail = self.convert_attributive(int(frac)) if place else self.convert(int(frac))
+        return f"{head} {tail} {place}" if place else f"{head} {tail}"
+
+    def _fraction_words(self, num: int, den: int) -> str:
+        """"3/4" -> "дөрөвний гурав": genitive of the denominator, then the
+        numerator.
+
+        The genitive comes from `FRACTION_GENITIVE`, which is tabulated from the
+        specification rather than generated. An earlier version built an
+        *ordinal* and bolted a genitive onto it -- "дөрөвдүгээрийн гурав",
+        roughly "of the fourth, three" -- which says the wrong thing however the
+        genitive is chosen, because an ordinal names a position and not a part.
+        """
+        genitive = FRACTION_GENITIVE.get(den)
+        if genitive is None:
+            raise NumeralSuffixError(
+                f"No verified genitive for {den}, so the fraction {num}/{den} "
+                f"cannot be expanded. Add it to FRACTION_GENITIVE -- see "
+                f"docs/normaliser-review.md."
+            )
+        return f"{genitive} {self.convert(num)}"
+
+    def _reference_genitive(self, n: int) -> str:
+        """The genitive used in a dotted reference: "5.1.2" -> "тавын нэгийн ...".
+
+        A different table from `FRACTION_GENITIVE` on purpose. The spec gives
+        the n-stem form in fractions (`дөрөвний`) and the reduced form here
+        (`дөрвийн`), and that was confirmed as context-dependent rather than a
+        typo.
+        """
+        genitive = REFERENCE_GENITIVE.get(n)
+        if genitive is None:
+            raise NumeralSuffixError(
+                f"No verified genitive for {n} in a dotted reference. Add it to "
+                f"REFERENCE_GENITIVE -- see docs/normaliser-review.md."
+            )
+        return genitive
 
     def attach_suffix(self, n: int, suffix: str) -> str:
         """Attach a written case suffix to a numeral: "20-аас" -> "хориос".
@@ -392,7 +497,7 @@ class NumberNormalizer:
         def _date_ymd(m: re.Match[str]) -> str:
             y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
             return (
-                f"{self.convert_attributive(y)} {self._year_suffix} "
+                f"{self.convert_attributive(y, bare=True)} {self._year_suffix} "
                 f"{self.convert_ordinal(mo)} {self._month_suffix} "
                 f"{self.convert(d)}"
             )
@@ -400,7 +505,7 @@ class NumberNormalizer:
         def _date_dmy(m: re.Match[str]) -> str:
             d, mo, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
             return (
-                f"{self.convert_attributive(y)} {self._year_suffix} "
+                f"{self.convert_attributive(y, bare=True)} {self._year_suffix} "
                 f"{self.convert_ordinal(mo)} {self._month_suffix} "
                 f"{self.convert(d)}"
             )
@@ -418,7 +523,49 @@ class NumberNormalizer:
                 parts.append(f"{self.convert_attributive(int(sec))} {self._second_word}")
             return " ".join(parts)
 
-        text = re.sub(r"(\d{1,2}):(\d{2})(?::(\d{2}))?", _time, text)
+        # "Иохан 3:16" is a chapter-and-verse reference, "Цаг 14:30" is a time,
+        # and nothing in the shape of either string separates them -- both are a
+        # capitalised word, a space, and two colon-separated numbers that are
+        # valid as an hour and a minute. It takes knowing that Иохан is a book
+        # and Цаг is not, so it takes a list. Seeded from the spec; extend it in
+        # data/lexicon/reference_words.tsv.
+        def _verse(m: re.Match[str]) -> str:
+            return (f"{m.group(1)} {self.convert(int(m.group(2)))} "
+                    f"{self.convert(int(m.group(3)))}")
+
+        if self._reference_words:
+            names = "|".join(re.escape(w) for w in sorted(self._reference_words))
+            text = re.sub(rf"\b({names})\s+(\d{{1,3}}):(\d{{1,3}})\b", _verse, text)
+
+        # A colon between numbers is a clock time only sometimes. Unguarded,
+        # this rewrote "Иохан 3:16" as "Иохан гурван цаг арван зургаан минут" --
+        # the same class of collision as an abbreviation shadowing a real word,
+        # and just as silent.
+        #
+        # Two guards, both from the shape of the text rather than a word list:
+        #
+        #   * the hour and minute must be possible ones, so 3:16 stays a
+        #     candidate but 25:70 does not;
+        #   * a capitalised word immediately before it means a reference -- a
+        #     book, chapter or verse -- not a time of day.
+        #
+        # What is left ambiguous is a bare "3:1": the spec reads it as a sports
+        # score and "1:2" as a ratio, and nothing in the string separates them.
+        # Those are handled below, and flagged in docs/normaliser-review.md.
+        def _guarded_time(m: re.Match[str]) -> str:
+            h, mi = int(m.group(1)), int(m.group(2))
+            if h > 23 or mi > 59:
+                return m.group(0)
+            return _time(m)
+
+        text = re.sub(
+            rf"(?<!{_MN_CLASS})(?<![A-Za-z])"
+            rf"(\d{{1,2}}):(\d{{2}})(?::(\d{{2}}))?",
+            _guarded_time,
+            text,
+        )
+
+        pass  # verse references are handled before the time pass
 
         def _temp(m: re.Match[str]) -> str:
             sign, num, unit = m.group(1), int(m.group(2)), m.group(3)
@@ -449,34 +596,51 @@ class NumberNormalizer:
 
         text = re.sub(rf"({_sym_pattern})\s*(\d+)", _currency_before, text)
 
-        def _percent(m: re.Match[str]) -> str:
-            return f"{self.convert_attributive(int(m.group(1)))} {self._percent_word}"
+        # A year keeps the bare scale word: "1990 он" is "мянга есөн зуун ерэн
+        # он", where the same digits as a quantity are "нэг мянга ...". Done
+        # here, before the generic digit pass, because only the following noun
+        # distinguishes the two.
+        def _year(m: re.Match[str]) -> str:
+            return f"{self.convert_attributive(int(m.group(1)), bare=True)} {m.group(2)}"
 
-        text = re.sub(r"(\d+)%", _percent, text)
+        text = re.sub(r"\b(\d{4})\s+(он|оны|онд|оноос|оноор)\b", _year, text)
+
+        # Percent must see the decimal before the decimal pass splits it:
+        # "12.5%" was matching "5%" and leaving "арван хоёр.таван хувь".
+        def _percent(m: re.Match[str]) -> str:
+            whole, frac = m.group(1), m.group(2)
+            if frac:
+                return f"{self._decimal_words(whole, frac)} {self._percent_word}"
+            return f"{self.convert_attributive(int(whole))} {self._percent_word}"
+
+        text = re.sub(r"(\d+)(?:\.(\d+))?%", _percent, text)
+
+        # Dotted references before decimals: "5.1.2" and "3.4.1.7" are section
+        # numbers, not numbers with a fractional part, and reading them as
+        # decimals produced "тав цэг нэг.хоёр".
+        def _reference(m: re.Match[str]) -> str:
+            parts = [int(g) for g in m.group(0).split(".")]
+            head = [self._reference_genitive(n) for n in parts[:-1]]
+            return " ".join([*head, self.convert(parts[-1])])
+
+        text = re.sub(r"\b\d{1,3}(?:\.\d{1,3}){2,}\b", _reference, text)
 
         def _decimal(m: re.Match[str]) -> str:
-            frac = " ".join(self.convert(int(d)) for d in m.group(2))
-            return f"{self.convert(int(m.group(1)))} {self._point_word} {frac}"
+            return self._decimal_words(m.group(1), m.group(2))
 
         text = re.sub(r"(\d+)\.(\d+)", _decimal, text)
 
+        # "2 1/2" is "хоёр бүтэн хоёрны нэг" -- a different linking word from
+        # the plain fraction, so it has to be matched before it.
+        def _mixed_fraction(m: re.Match[str]) -> str:
+            whole, num, den = (int(m.group(i)) for i in (1, 2, 3))
+            return (f"{self.convert(whole)} {MIXED_WHOLE_WORD} "
+                    f"{self._fraction_words(num, den)}")
+
+        text = re.sub(r"\b(\d+)\s+(\d{1,2})/(\d{1,2})\b", _mixed_fraction, text)
+
         def _fraction(m: re.Match[str]) -> str:
-            num, den = int(m.group(1)), int(m.group(2))
-            if num == 1 and den == 2:
-                return FRACTION_HALF
-            # An ordinal names a position, not a part, so building one and
-            # bolting a genitive onto it says the wrong thing regardless of
-            # which genitive is chosen: "3/4" came out as "дөрөвдүгээрийн
-            # гурав", roughly "of the fourth, three". The correct construction
-            # is the genitive of the *cardinal*, and which allomorph that takes
-            # per numeral is not derivable from the tables in this file.
-            #
-            # The only fraction with a settled form here is 1/2, handled above.
-            raise NumeralSuffixError(
-                f"Cannot expand the fraction {num}/{den}: it needs the genitive "
-                "of the cardinal denominator, and building an ordinal instead "
-                "produced non-words. See docs/normaliser-review.md."
-            )
+            return self._fraction_words(int(m.group(1)), int(m.group(2)))
 
         text = re.sub(r"(\d{1,2})/(\d{1,2})", _fraction, text)
 

@@ -28,7 +28,10 @@ def num() -> NumberNormalizer:
     [
         (0, "тэг"), (1, "нэг"), (5, "тав"), (10, "арав"), (15, "арван тав"),
         (20, "хорь"), (25, "хорин тав"), (100, "зуу"), (101, "зуун нэг"),
-        (1000, "мянга"), (2024, "хоёр мянга хорин дөрөв"),
+        # "нэг мянга", not "мянга": a bare scale word is a noun and one of them
+        # still needs counting. The spec gives "1005" as "нэг мянга тав". A year
+        # is the exception and drops it -- see test_a_year_drops_the_leading_neg.
+        (1000, "нэг мянга"), (2024, "хоёр мянга хорин дөрөв"),
         (-5, "хасах тав"),
     ],
 )
@@ -68,7 +71,7 @@ def test_ordinal_vowel_harmony(num, n, expected):
         ("5 км", "таван километр"),
         ("50%", "тавин хувь"),
         ("14:30", "арван дөрвөн цаг гучин минут"),
-        ("1/2", "хагас"),
+        ("1/2", "хоёрны нэг"),
         ("-15°C", "хасах арван таван градус цельсий"),
         ("100₮", "зуун төгрөг"),
     ],
@@ -121,16 +124,22 @@ def test_the_refusal_names_the_missing_entry(norm):
         norm.normalize("100-д", strict=False)
 
 
-@pytest.mark.parametrize("raw", ["3/4", "2/3", "1/5"])
-def test_fractions_other_than_a_half_are_refused(norm, raw):
-    """`3/4` came out as `дөрөвдүгээрийн гурав` -- an ordinal plus a genitive,
-    roughly "of the fourth, three". An ordinal names a position, not a part."""
+@pytest.mark.parametrize("raw,expected", [("1/2", "хоёрны нэг"), ("3/4", "дөрөвний гурав")])
+def test_a_tabulated_fraction_expands(norm, raw, expected):
+    """Genitive of the denominator, then the numerator.
+
+    `3/4` used to come out as `дөрөвдүгээрийн гурав` -- an ordinal plus a
+    genitive, roughly "of the fourth, three". An ordinal names a position, not
+    a part, so that was wrong however the genitive was chosen.
+    """
+    assert norm.normalize(raw, strict=False) == expected
+
+
+@pytest.mark.parametrize("raw", ["2/3", "1/5", "5/7"])
+def test_an_untabulated_fraction_is_refused(norm, raw):
+    """FRACTION_GENITIVE holds only the denominators the spec supplies."""
     with pytest.raises(NumeralSuffixError):
         norm.normalize(raw, strict=False)
-
-
-def test_a_half_still_expands(norm):
-    assert norm.normalize("1/2", strict=False) == "хагас"
 
 
 def test_ordinary_text_with_numbers_is_untouched_by_the_refusal(norm):
@@ -286,3 +295,89 @@ def test_latin_look_alikes_are_not_folded(norm):
     """Latin is in the vocabulary and preserved on purpose; folding "c" to "с"
     would corrupt genuine Latin text."""
     assert norm.normalize("BBC News", strict=False) == "BBC News"
+
+
+# ── from the normalization specification ──────────────────────────────────────
+
+def test_a_bare_scale_word_takes_neg(num):
+    """The spec: "1005" is "нэг мянга тав", "1256789" starts "нэг сая"."""
+    assert num.convert(1005) == "нэг мянга тав"
+    assert num.convert(1_000_000) == "нэг сая"
+
+
+def test_a_year_drops_the_leading_neg(norm):
+    """"1990 он" is "мянга есөн зуун ерэн он" -- the same digits as a quantity
+    are "нэг мянга ...". Only the following noun separates them."""
+    assert norm.normalize("1990 он", strict=False) == "мянга есөн зуун ерэн он"
+    # Standalone, so 90 is "ер" rather than the attributive "ерэн" -- but the
+    # "нэг" is back.
+    assert norm.normalize("1990", strict=False) == "нэг мянга есөн зуун ер"
+
+
+def test_a_verse_reference_is_not_a_clock_time(norm):
+    """Unguarded, "Иохан 3:16" became "Иохан гурван цаг арван зургаан минут".
+
+    Nothing in the shape of the string separates it from "Цаг 14:30", so it
+    takes a word list -- data/lexicon/reference_words.tsv.
+    """
+    assert norm.normalize("Иохан 3:16", strict=False) == "Иохан гурав арван зургаа"
+    assert "цаг" in norm.normalize("Цаг 14:30 боллоо", strict=False)
+
+
+def test_an_impossible_clock_time_is_left_alone(norm):
+    """25:70 is not a time, so the hour/minute guard must decline it."""
+    out = norm.normalize("25:70", strict=False)
+    assert "цаг" not in out and "минут" not in out
+
+
+@pytest.mark.parametrize("raw,expected", [
+    ("3.14", "гурван бүхэл арван дөрөв"),
+    ("0.05", "тэг бүхэл таван зууны"),
+    ("12.5%", "арван хоёр бүхэл таван аравны хувь"),
+])
+def test_decimals_follow_the_spec(norm, raw, expected):
+    assert norm.normalize(raw, strict=False) == expected
+
+
+def test_a_dotted_reference_is_not_a_decimal(norm):
+    """"5.1.2" is a section number. Read as a decimal it became "тав цэг нэг.хоёр"."""
+    assert norm.normalize("5.1.2", strict=False) == "тавын нэгийн хоёр"
+    assert norm.normalize("3.4.1.7", strict=False) == "гурвын дөрвийн нэгийн долоо"
+
+
+def test_a_mixed_fraction_uses_its_own_linking_word(norm):
+    """бүтэн, not бүхэл."""
+    assert norm.normalize("2 1/2", strict=False) == "хоёр бүтэн хоёрны нэг"
+
+
+@pytest.mark.parametrize("raw,expected", [
+    ("50 м²", "тавин квадрат метр"),
+    ("20 м³", "хорин шоо метр"),
+    ("5 kW", "таван киловатт"),
+])
+def test_units_come_from_the_lexicon(norm, raw, expected):
+    """Longest-first matching, or "50 м²" becomes "тавин метр²"."""
+    assert norm.normalize(raw, strict=False) == expected
+
+
+@pytest.mark.parametrize("raw,expected", [
+    ("УИХ", "Улсын Их Хурал"),
+    ("МУИС", "Монгол Улсын Их Сургууль"),
+    ("д-р Бат", "доктор Бат"),
+])
+def test_abbreviations_come_from_the_lexicon(norm, raw, expected):
+    assert norm.normalize(raw, strict=False) == expected
+
+
+def test_a_foreign_word_in_the_lexicon_is_transliterated(norm):
+    assert norm.normalize("Google", strict=False) == "Гүүгл"
+
+
+def test_a_foreign_word_not_in_the_lexicon_stays_latin(norm):
+    """Latin is in the vocabulary and the model will attempt it, which beats a
+    wrong Cyrillic guess."""
+    assert "Zzyzx" in norm.normalize("Zzyzx хот", strict=False)
+
+
+def test_a_known_emoji_is_spoken(norm):
+    assert norm.normalize("❤️", strict=False).strip() == "улаан зүрх"

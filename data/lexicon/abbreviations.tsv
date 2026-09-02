@@ -1,0 +1,8 @@
+# Abbreviation -> full spoken form.
+# Absent: spelled out letter by letter via cyrillic_letters.tsv / latin_letters.tsv.
+# Seeded from the normalization spec, sections 26-28.
+УИХ	Улсын Их Хурал
+ЗГ	Засгийн газар
+МУИС	Монгол Улсын Их Сургууль
+д-р	доктор
+проф.	профессор
