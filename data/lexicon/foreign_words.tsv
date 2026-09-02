@@ -8,3 +8,13 @@ Google	Гүүгл
 GitHub	ГитХаб
 Frankfurt	Франкфурт
 project	прожект
+# Read straight off the specification's own expected outputs -- these are not
+# guesses. Section 43 gives "user@example.com" as "юзер эт экзампл цэг ком",
+# section 42 gives "https://github.com" as "... гитхаб цэг ком", section 57
+# gives "report.pdf" as "репорт пи ди эф", section 45 gives "@bat" as "эт бат".
+user	юзер
+example	экзампл
+com	ком
+github	гитхаб
+report	репорт
+bat	бат

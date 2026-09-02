@@ -30,13 +30,13 @@ SPEC = json.loads(
 
 # Cases that cannot pass until data/lexicon/*.tsv is extended by a speaker:
 # letter names, foreign words, chemical subscripts, an abbreviation for СБД.
-NEEDS_LEXICON = {
-    # an abbreviation entry for СБД
-    "СБД 1-р хороо",
-    # foreign words (юзер, экзампл, ком, гитхаб, репорт) and the Latin letter
-    # names the tables are still missing -- g, j, k, l, m, q, u, v, w, y, z
-    "https://github.com", "user@example.com", "@bat", "report.pdf",
-}
+# Empty, and it should stay that way. Every case the spec states is met.
+#
+# The last four were not blocked on a speaker at all: the spec's own expected
+# outputs contain the words. "user@example.com" -> "юзер эт экзампл цэг ком"
+# supplies user, example and com; section 42 supplies github, 57 report, 45
+# bat, 31 СБД. They were transcribed, not invented.
+NEEDS_LEXICON: set[str] = set()
 
 # Both of the earlier open questions are closed. A ratio reads as a fraction --
 # "1:2" is the same string as 1/2 -- so there is no score special case; and a
@@ -79,7 +79,7 @@ def test_spec_case(norm, case):
 def test_conformance_does_not_regress(norm):
     """A floor, not a target. Raise it when cases start passing."""
     passing, _ = _score(norm)
-    assert passing >= 80, f"conformance fell to {passing}/{len(SPEC)}"
+    assert passing >= 85, f"conformance fell to {passing}/{len(SPEC)}"
 
 
 def test_the_expected_failures_are_still_the_only_failures(norm):
@@ -95,6 +95,13 @@ def test_every_allowance_is_still_needed(norm):
     _, failing = _score(norm)
     stale = EXPECTED_FAILURES - set(failing)
     assert not stale, f"these now pass and should leave the allowance: {sorted(stale)}"
+
+
+def test_the_whole_specification_is_met(norm):
+    """The allowance is empty. If this ever needs one again, say why in it."""
+    passing, failing = _score(norm)
+    assert not failing, f"no longer conforming: {sorted(failing)}"
+    assert passing == len(SPEC)
 
 
 def test_superseded_rows_say_why():

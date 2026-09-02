@@ -77,8 +77,16 @@ def fold_scripts(text: str) -> str:
 
 
 def _word(part: str, directory=None) -> str | None:
-    """A URL or file-name component: a known foreign word, or spelled out."""
+    """A URL or file-name component: a known foreign word, or spelled out.
+
+    Exact case first. The same word can have two spoken forms depending on
+    where it appears -- the spec gives the company as "GitHub" -> "ГитХаб" and
+    the host in a URL as "github" -> "гитхаб" -- so a case-insensitive match
+    alone let the company name win inside the URL.
+    """
     foreign = load("foreign_words", directory)
+    if part in foreign:
+        return foreign[part]
     lowered = part.lower()
     for key, spoken in foreign.items():
         if key.lower() == lowered:
