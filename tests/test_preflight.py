@@ -9,6 +9,7 @@ config was the one place still relying on an operator remembering.
 import json
 import shutil
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -166,3 +167,28 @@ def test_the_shipped_config_only_fails_on_epochs(tmp_path):
     cfg = yaml.safe_load((ROOT / "configs" / "f5tts_mn.yaml").read_text(encoding="utf-8"))
     problems, _ = run(check_training, cfg, _data(tmp_path))
     assert not problems, problems
+
+
+def test_epoch_check_honours_a_declared_update_target():
+    """epochs sets the LR decay horizon, so it has to match the run actually
+    intended. Hardcoding 40,000 made preflight refuse a deliberately shorter
+    run on a small corpus: 160 epochs x 188 updates = 30,080, correct for a
+    30,000-update target, was reported as 25% drift against 40,000."""
+    problems: list[str] = []
+    notes: list[str] = []
+    config = {"datasets": {"batch_size_per_gpu": 9600, "max_samples": 32},
+              "optim": {"epochs": 160}}
+    with tempfile.TemporaryDirectory() as td:
+        data = Path(td)
+        # 2,996 clips averaging 6.3 s: what the real MBSpeech corpus packs to.
+        (data / "duration.json").write_text(
+            json.dumps({"duration": [6.3] * 2996}), encoding="utf-8")
+
+        check_epochs(config, data, problems, notes, target_updates=30_000)
+        assert not problems, f"a matching target must pass: {problems}"
+
+        problems.clear()
+        notes.clear()
+        check_epochs(config, data, problems, notes, target_updates=40_000)
+        assert problems, "real drift against the declared target must still fail"
+        assert "40,000" in problems[0]

@@ -89,7 +89,8 @@ def check_vocab(vocab: Path, problems: list[str], notes: list[str]) -> None:
     notes.append(f"vocab {len(lines)} entries, {APPENDED} appended in order")
 
 
-def check_epochs(config: dict, data: Path, problems: list[str], notes: list[str]) -> None:
+def check_epochs(config: dict, data: Path, problems: list[str], notes: list[str],
+                 target_updates: int = 40_000) -> None:
     duration = data / "duration.json"
     if not duration.exists():
         problems.append(
@@ -117,16 +118,21 @@ def check_epochs(config: dict, data: Path, problems: list[str], notes: list[str]
         return
 
     total = per_epoch * configured
-    # What the value should be for the target the runbook uses.
-    want = math.ceil(40_000 / max(1, per_epoch))
+    # What the value should be for the target being aimed at. Defaults to
+    # the runbook's 40,000, but a shorter run is a legitimate choice on a
+    # small corpus -- so it is declared rather than hardcoded, and drift is
+    # still caught against whatever was declared.
+    want = math.ceil(target_updates / max(1, per_epoch))
     drift = abs(configured - want) / max(1, want)
     if drift > EPOCH_TOLERANCE:
         problems.append(
             f"optim.epochs is {configured}, but this dataset packs into "
-            f"{per_epoch:,} updates/epoch -- {want} would give ~40,000 updates. "
+            f"{per_epoch:,} updates/epoch -- {want} would give ~{target_updates:,} "
+            f"updates. "
             f"epochs sets the LR decay length, so {configured} decays over "
             f"{total:,} updates and the schedule is wrong by {drift:.0%}. Run:\n"
-            f"    python scripts/compute_epochs.py --data {data}"
+            f"    python scripts/compute_epochs.py --data {data} "
+            f"--target-updates {target_updates}"
         )
         return
 
@@ -178,6 +184,10 @@ def main() -> None:
     ap.add_argument("--config", type=Path, default=REPO / "configs" / "f5tts_mn.yaml")
     ap.add_argument("--data", type=Path, required=True,
                     help="Prepared dataset dir, e.g. ../F5-TTS/data/oron_mn_pinyin")
+    ap.add_argument("--target-updates", type=int, default=40_000,
+                    help="Updates this run aims for. epochs sets the LR decay "
+                         "horizon, so it must match the run you intend, not a "
+                         "default from a different corpus.")
     ap.add_argument("--vocab", type=Path, default=None,
                     help="Defaults to <data>/vocab.txt, which is what training reads")
     args = ap.parse_args()
@@ -190,7 +200,7 @@ def main() -> None:
     problems: list[str] = []
     notes: list[str] = []
     check_vocab(vocab, problems, notes)
-    check_epochs(config, args.data, problems, notes)
+    check_epochs(config, args.data, problems, notes, args.target_updates)
     check_training(config, args.data, problems, notes)
 
     for note in notes:
