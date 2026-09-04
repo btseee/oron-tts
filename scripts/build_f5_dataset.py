@@ -116,6 +116,33 @@ def write_metadata_csv(corpus: Path, records: list[dict], out: Path) -> int:
     return written
 
 
+def find_prepare_script(f5_repo: Path) -> Path:
+    """Locate prepare_csv_wavs.py wherever upstream currently keeps it.
+
+    The path was hardcoded to src/f5_tts/train/datasets/. Upstream moved it, and
+    a checkout newer than that assumption failed here after the corpus had
+    already been filtered and the CSV written -- on a rented GPU, at the point
+    where the next step is a multi-hour training run.
+    """
+    known = [
+        f5_repo / "src" / "f5_tts" / "train" / "datasets" / "prepare_csv_wavs.py",
+        f5_repo / "src" / "f5_tts" / "train" / "prepare_csv_wavs.py",
+        f5_repo / "src" / "f5_tts" / "data" / "prepare_csv_wavs.py",
+    ]
+    for candidate in known:
+        if candidate.is_file():
+            return candidate
+    found = sorted(f5_repo.rglob("prepare_csv_wavs.py"))
+    if found:
+        print(f"[WARN] prepare_csv_wavs.py is at {found[0]}, not any expected path")
+        return found[0]
+    searched = " ".join(str(k) for k in known)
+    raise SystemExit(
+        f"prepare_csv_wavs.py not found under {f5_repo}. Searched: "
+        f"{searched} and recursively. Is --f5-repo pointing at an "
+        f"F5-TTS checkout?")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -159,9 +186,7 @@ def main() -> None:
     n = write_metadata_csv(args.corpus, records, csv_path)
     print(f"wrote {csv_path} ({n} rows)")
 
-    script = args.f5_repo / "src" / "f5_tts" / "train" / "datasets" / "prepare_csv_wavs.py"
-    if not script.exists():
-        raise SystemExit(f"prepare_csv_wavs.py not found at {script}")
+    script = find_prepare_script(args.f5_repo)
     cmd = [sys.executable, str(script), str(csv_path), str(out_dir)]
     if args.workers:
         cmd += ["--workers", str(args.workers)]

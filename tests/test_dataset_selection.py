@@ -187,3 +187,28 @@ def test_a_missing_holdout_falls_back_loudly(tmp_path, capsys):
     )
     assert load_test_sentences(tmp_path, 10, "all") == ["сайн байна уу"]
     assert "memorisation" in capsys.readouterr().err
+
+
+def test_prepare_script_is_located_not_assumed(tmp_path):
+    """The path was hardcoded to src/f5_tts/train/datasets/. Upstream moved it,
+    and the run died after the corpus was filtered and the CSV written -- on a
+    rented GPU, immediately before a multi-hour training run."""
+    import sys
+    sys.path.insert(0, str(ROOT / "scripts"))
+    from build_f5_dataset import find_prepare_script
+
+    repo = tmp_path / "F5-TTS"
+    moved = repo / "src" / "f5_tts" / "train" / "prepare_csv_wavs.py"
+    moved.parent.mkdir(parents=True)
+    moved.write_text("# moved by upstream\n", encoding="utf-8")
+    assert find_prepare_script(repo) == moved
+
+    elsewhere = tmp_path / "other"
+    odd = elsewhere / "deep" / "nested" / "prepare_csv_wavs.py"
+    odd.parent.mkdir(parents=True)
+    odd.write_text("#\n", encoding="utf-8")
+    assert find_prepare_script(elsewhere) == odd
+
+    import pytest
+    with pytest.raises(SystemExit):
+        find_prepare_script(tmp_path / "empty")
