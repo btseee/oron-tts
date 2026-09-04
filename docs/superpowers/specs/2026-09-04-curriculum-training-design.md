@@ -28,11 +28,17 @@ Four decisions were settled before design:
    that are not in the recording, and the CER gate cannot see it because the
    wrong string is the reference.
 
-3. **Both fixed voices come from WorldSpeech, held out of training.** It is
-   24 kHz native — the only Mongolian source with real full-band content. Output
-   bandwidth follows the reference prompt, so every other source caps the shipped
-   voices at ~7.7 kHz. Holding them out keeps CER and any similarity number
-   honest.
+3. **The two voices are trained ON, not held out, and locked in by a fifth
+   stage.** The requirement is that `--voice male` and `--voice female` never
+   produce anything but those two identities. Zero-shot cloning from a held-out
+   clip drifts: same prompt, different text, different voice. Consistency
+   requires the model to have heard those speakers heavily, so they stay in the
+   data and a final low-LR stage trains on them alone.
+
+   The cost is stated rather than hidden: CER and any speaker-similarity number
+   are then measured on *seen* speakers, and this model is not a zero-shot
+   cloner. That trade is deliberate — consistent voices are the product
+   requirement; zero-shot purity is only a metric.
 
 4. **One model file, best-checkpoint handoff.** Each stage publishes to the same
    `model.safetensors`. The next stage resumes from the stage's *best* checkpoint
@@ -49,6 +55,7 @@ Four decisions were settled before design:
 | 2 | + FLEURS | ~1,900 | ~4.3 | both genders, 16 kHz native |
 | 3 | + Common Voice 26 | ~15,100 | ~16.3 | 378 speakers, both genders |
 | 4 | + WorldSpeech | 10,000-60,000 | 8-50 | 24 kHz native, full-band |
+| 5 | **voice lock** — the two chosen speakers only | ~4,000 | ~6 | low LR; collapses the voice prior onto exactly two identities |
 
 Stage 4's range is wide because it is the open empirical question: untrimmed,
 6.9% of WorldSpeech survives the gates (~9,500 clips, ~7 h); the trimming exists
@@ -59,6 +66,25 @@ is below 15%, the full pass is not worth $18 and the run stops at stage 3 with
 WorldSpeech used only to source the two reference voices. At or above 15% the
 full pass proceeds. Either way the outcome is reported before the money is
 spent.
+
+## Choosing the two voices
+
+**Male: settled.** The MBSpeech narrator — one speaker, ~5 h, already validated
+at CER 0.0867.
+
+**Female: decided by measurement during the run, not assumed now.** No corpus
+currently here has a female speaker over 0.60 h, because Common Voice's
+per-speaker cap flattens every contributor. WorldSpeech is parliamentary and
+conference audio and very likely contains a recurring female speaker with real
+hours at 24 kHz; stage 4's cleaning reports per-speaker female hours and the
+largest is taken.
+
+If nothing exceeds ~1 h, the fallback is the largest Common Voice female
+speaker, and the model card says plainly that the female voice rests on less
+data than the male one. It does not get presented as an equal pair.
+
+For the two chosen speakers only, the per-speaker cap is lifted so stage 5 sees
+all of their audio.
 
 CV26 and FLEURS corpora already exist on the volume and are reused. MBSpeech
 must be re-cleaned — its corpus died with an earlier volume.
@@ -116,12 +142,13 @@ re-clean MBSpeech ──┐
 reuse CV26, FLEURS ─┤
 clean WorldSpeech ──┴─→ publish btsee/WorldSpeech-mn
       (trimmed)          │
-                         ├─→ select 2 full-band voices, exclude from training
+                         ├─→ choose the male and female voice by measured per-speaker hours
                          │
   stage 1  MBSpeech                  → sweep → best → publish
   stage 2  + FLEURS                  → sweep → best → publish
   stage 3  + Common Voice 26         → sweep → best → publish
-  stage 4  + WorldSpeech             → sweep → best → publish + demos
+  stage 4  + WorldSpeech             → sweep → best → publish
+  stage 5  voice lock (2 speakers)   → sweep → best → publish FINAL + 2 demos
                          │
                          └─→ verify from the server → delete pod
 ```
@@ -142,7 +169,8 @@ btsee/oron-tts
 ├── voices/
 │   ├── male.wav   male.txt
 │   └── female.wav female.txt
-├── demos/                   both voices, several sentences
+├── demos/male.wav           one file per voice, nothing more
+│   demos/female.wav
 ├── tensorboard/             full curriculum
 ├── logs/train.log
 └── eval.json                per-stage CER per gender, with confidence intervals
@@ -178,6 +206,11 @@ Nothing else. The 39 files and 4.05 GB currently there are removed.
   is rejected rather than trimmed.
 - `train_curriculum.py`: stage handoff uses the best checkpoint by CER, not the
   last; a stage cannot start before the previous stage's publication verifies.
+- `make_demos.py`: produces exactly two files, one per voice.
+- Voice lock: after stage 5, the same sentence synthesised with the male prompt
+  three times stays within a speaker-similarity threshold of itself, and is
+  measurably distinct from the female prompt. A model that drifts between runs
+  fails the requirement even if its CER is good.
 - Config: exactly one config file exists; it names `logger: tensorboard` and the
   package declares tensorboard.
 - Both suites (348 + 226) stay green.
@@ -191,12 +224,13 @@ Nothing else. The 39 files and 4.05 GB currently there are removed.
 | re-clean MBSpeech | 0.7 h | $0.50 |
 | clean WorldSpeech, 138,529 clips with trimming | 24.6 h | $18.20 |
 | 4-stage training, ~55,000 updates | 5.1 h | $3.77 |
-| 4 sweeps, demos, publication | 3.0 h | $2.22 |
+| stage 5 voice lock, ~4,000 updates | 0.4 h | $0.30 |
+| 5 sweeps, 2 demos, publication | 3.5 h | $2.59 |
 | 100 GB volume, ~2 days | — | $0.46 |
 | retries (EU-RO-1 wedged five pods on 2026-09-04) | | ~$5.00 |
-| **total** | **~34 h** | **~$30** |
+| **total** | **~36 h** | **~$32** |
 
-Balance at design time: $16.69. **Top-up required: $15.**
+Balance at design time: $16.69. **Top-up required: $16.**
 
 Hardware: 1 × RTX 4090 24 GB, RunPod secure cloud, EU-RO-1 (the network volume
 is pinned to that datacenter).
@@ -210,6 +244,9 @@ is pinned to that datacenter).
   This was accepted deliberately.
 - **Gender labels on WorldSpeech are inferred from F0**, not self-reported.
   `gender_source` records this per clip.
+- **This is not a zero-shot voice cloner.** The two shipped voices are in the
+  training data by design, so CER and any similarity figure are measured on seen
+  speakers. Cloning an arbitrary new voice is out of scope.
 - **No listening test.** UTMOS is a proxy trained on English and Japanese MOS
   data and has never been validated for Mongolian.
 - **SIM-o requires a manual WavLM download.** If absent, speaker similarity is
