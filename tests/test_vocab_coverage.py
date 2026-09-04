@@ -20,6 +20,14 @@ BASE_VOCAB = REPO / ".." / "F5-TTS" / "data" / "Emilia_ZH_EN_pinyin" / "vocab.tx
 MN_VOCAB = REPO / "data" / "oron_mn_pinyin" / "vocab.txt"
 FIXTURE = Path(__file__).parent / "fixtures" / "mn_text_sample.jsonl"
 
+# SHA-256 of the 2,545 base entries, joined by newline. The base vocab lives
+# in a sibling F5-TTS checkout that CI does not have, and skipping there would
+# silently remove the guard that keeps every pretrained embedding row aligned.
+# This pins the same invariant without the checkout; when F5-TTS IS present the
+# tests below compare against the real file, which is stronger still.
+BASE_PREFIX_SHA256 = "a9abf949d11b3a6336e135ea710e92369733018cc317fd3c1b7a6ca67f8e6f6a"
+BASE_ENTRIES = 2545
+
 MN_ALPHABET = "абвгдеёжзийклмноөпрстуүфхцчшщъыьэюя"
 
 
@@ -75,10 +83,21 @@ def test_space_is_index_zero(mn_vocab):
 
 def test_pretrained_prefix_is_untouched(mn_vocab):
     # Every pretrained embedding row is addressed by position. Reordering or
-    # regenerating the base entries silently misaligns all 2545 of them.
-    base = read_vocab(BASE_VOCAB)
-    assert mn_vocab[: len(base)] == base
-    assert len(mn_vocab) == len(base) + 5
+    # regenerating the base entries silently misaligns all 2,545 of them.
+    import hashlib
+
+    prefix = mn_vocab[:BASE_ENTRIES]
+    assert len(mn_vocab) == BASE_ENTRIES + 5
+    digest = hashlib.sha256(chr(10).join(prefix).encode("utf-8")).hexdigest()
+    assert digest == BASE_PREFIX_SHA256, (
+        f"the first {BASE_ENTRIES} entries changed; every pretrained embedding "
+        f"row is now addressed by the wrong index")
+
+    if BASE_VOCAB.exists():
+        # Stronger when the sibling checkout is there: compare to the source.
+        base = read_vocab(BASE_VOCAB)
+        assert prefix == base
+        assert len(mn_vocab) == len(base) + 5
 
 
 def test_no_duplicate_entries(mn_vocab):
@@ -119,8 +138,12 @@ def test_corpus_charset_is_covered(mn_vocab):
 
 
 def test_base_vocab_would_fail_this(mn_vocab):
-    """Guard the guard: prove the corpus check is actually load-bearing."""
-    base = set(read_vocab(BASE_VOCAB))
+    """Guard the guard: prove the corpus check is actually load-bearing.
+
+    The base vocab is this file's own first BASE_ENTRIES entries -- pinned by
+    test_pretrained_prefix_is_untouched -- so this needs no sibling checkout.
+    """
+    base = set(mn_vocab[:BASE_ENTRIES])
     texts = fixture_texts()
     n_oov = sum(1 for t in texts for c in t if c not in base and not c.isspace())
     n_total = sum(len(t) for t in texts)
