@@ -164,7 +164,7 @@ def test_log_samples_off_is_refused(tmp_path):
 
 def test_the_shipped_config_only_fails_on_epochs(tmp_path):
     """Everything except the placeholder should already be right."""
-    cfg = yaml.safe_load((ROOT / "configs" / "f5tts_mn.yaml").read_text(encoding="utf-8"))
+    cfg = yaml.safe_load((ROOT / "configs" / "oron.yaml").read_text(encoding="utf-8"))
     problems, _ = run(check_training, cfg, _data(tmp_path))
     assert not problems, problems
 

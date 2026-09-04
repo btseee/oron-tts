@@ -193,7 +193,7 @@ def test_checkpoint_retention_survives_a_sweep():
     that deleted everything before update 26,000, so the sweep could only pick
     among the last three and the early still-cloning checkpoint was gone."""
     import yaml
-    for name in ("f5tts_mbspeech.yaml", "f5tts_mn.yaml"):
+    for name in ("oron.yaml",):
         cfg = yaml.safe_load((ROOT / "configs" / name).read_text(encoding="utf-8"))
         keep = cfg["ckpts"]["keep_last_n_checkpoints"]
         per = cfg["ckpts"]["save_per_updates"]
@@ -211,7 +211,14 @@ def test_tensorboard_is_declared_when_configs_ask_for_it():
     import yaml
     deps = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     declared = " ".join(deps["project"]["dependencies"]).lower()
-    for name in ("f5tts_mbspeech.yaml", "f5tts_mn.yaml"):
+    for name in ("oron.yaml",):
         cfg = yaml.safe_load((ROOT / "configs" / name).read_text(encoding="utf-8"))
         if cfg["ckpts"].get("logger") == "tensorboard":
             assert "tensorboard" in declared, f"{name} wants tensorboard; nothing declares it"
+
+
+def test_exactly_one_training_config_exists():
+    """Two configs drift apart. Curriculum stages vary only epochs and learning
+    rate, which the orchestrator substitutes -- so there is one file."""
+    configs = sorted(p.name for p in (ROOT / "configs").glob("*.yaml"))
+    assert configs == ["oron.yaml"], f"expected only oron.yaml, found {configs}"

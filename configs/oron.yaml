@@ -1,18 +1,8 @@
-# Finetune F5TTS_v1_Base on MBSpeech alone (btsee/mbspeech_mn).
+# The one training config. Curriculum stages differ only in `epochs` and
+# `learning_rate`, which scripts/curriculum.py substitutes per stage -- there is
+# no second config to drift out of sync with this one.
 #
-# Differs from f5tts_mn.yaml in three ways that all follow from the corpus being
-# one male narrator reading ~6.7 h of biblical text on a 24 GB card:
-#
-#   * batch_size_per_gpu is sized for 24 GB, not 32
-#   * the run is far shorter -- 6.7 h packs into ~250 updates per epoch, so the
-#     update counts that suit a 40 h corpus are hundreds of epochs here
-#   * save_per_updates is tighter, because the deliverable is TWO checkpoints
-#     from one run: an early one that still clones an arbitrary reference voice,
-#     and a converged one locked to the narrator. Both come out of the sweep, so
-#     the saves have to be dense enough to catch the crossover.
-#
-# Launch from the F5-TTS repo:
-#   accelerate launch src/f5_tts/train/train.py --config-name f5tts_mbspeech.yaml
+# Launch:  accelerate launch src/f5_tts/train/train.py --config-name oron_<stage>
 
 hydra:
   run:
@@ -98,4 +88,4 @@ ckpts:
   # Resumability. The run is on a preemptible community-cloud pod, so losing
   # more than 1000 updates to a reclaim is not acceptable.
   last_per_updates: 1000
-  save_dir: ckpts/${model.name}_${model.mel_spec.mel_spec_type}_${model.tokenizer}_${datasets.name}
+  save_dir: ckpts/oron
