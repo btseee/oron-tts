@@ -88,7 +88,13 @@ ckpts:
   # this run has to locate a crossover, not just a minimum.
   save_per_updates: 2000
   # Each .pt is ~5.4 GB (weights + grads + AdamW + EMA); three is 16 GB.
-  keep_last_n_checkpoints: 3
+  # Was 3, which on a 30,000-update run with save_per_updates 2000 deleted
+  # everything before update 26,000 -- so the sweep could only choose among the
+  # last three, and the early checkpoint that still carried the base model's
+  # zero-shot cloning was gone before anyone could evaluate it. Each .pt is
+  # ~5.4 GB, so 10 is ~54 GB: size the disk for it, or lower this deliberately
+  # rather than discovering the loss afterwards.
+  keep_last_n_checkpoints: 10
   # Resumability. The run is on a preemptible community-cloud pod, so losing
   # more than 1000 updates to a reclaim is not acceptable.
   last_per_updates: 1000

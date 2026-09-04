@@ -153,3 +153,65 @@ def test_the_model_card_leaves_the_unmeasured_numbers_blank():
     The blanks are the point."""
     card = (ROOT / "docs" / "model-card.md").read_text(encoding="utf-8")
     assert card.count("`<>`") >= 10, "the reporting run's blanks have gone missing"
+
+
+# ── the EMA trap ──────────────────────────────────────────────────────────────
+
+def test_eval_scores_raw_weights_by_default():
+    """Measured on a 30,000-update Mongolian finetune, same checkpoint and
+    sentence: use_ema=True gives CER 0.921 (fluent non-words), use_ema=False
+    gives 0.026. The EMA had moved 2.78% off the pretrained weights, so it was
+    still essentially the base English/Chinese model. The failure is inaudible
+    -- it sounds like confident speech -- so the default must be the safe one."""
+    src = (ROOT / "scripts" / "eval_mn.py").read_text(encoding="utf-8")
+    i = src.index('"--use-ema"')
+    decl = src[i:i + 260]
+    assert "default=False" in decl, "eval must score raw weights unless asked"
+
+
+def test_infer_defaults_match_eval():
+    """A model scored with raw weights and shipped for inference with EMA would
+    sound nothing like its reported CER."""
+    src = (ROOT / "oron_tts" / "infer.py").read_text(encoding="utf-8")
+    assert "use_ema" in src
+
+
+def test_reference_split_falls_back_when_empty():
+    """A single-narrator corpus has no speaker-disjoint split, so the default
+    reference split does not exist and the sweep died with
+    'no rows in split validation'. It should fall back and say so."""
+    src = (ROOT / "scripts" / "eval_mn.py").read_text(encoding="utf-8")
+    assert "def split_sizes(" in src
+    i = src.index("args.ref_split = \"validation\" if args.mode == \"select\" else \"test\"")
+    block = src[i:i + 900]
+    assert "split_sizes(" in block
+    assert "withheld" in block, "withheld is the only holdout a 1-speaker corpus has"
+
+
+def test_checkpoint_retention_survives_a_sweep():
+    """keep_last_n_checkpoints was 3: on a 30,000-update run saving every 2,000
+    that deleted everything before update 26,000, so the sweep could only pick
+    among the last three and the early still-cloning checkpoint was gone."""
+    import yaml
+    for name in ("f5tts_mbspeech.yaml", "f5tts_mn.yaml"):
+        cfg = yaml.safe_load((ROOT / "configs" / name).read_text(encoding="utf-8"))
+        keep = cfg["ckpts"]["keep_last_n_checkpoints"]
+        per = cfg["ckpts"]["save_per_updates"]
+        assert keep >= 8, f"{name}: keeping only {keep} checkpoints starves the sweep"
+        assert keep * per >= 16000, (
+            f"{name}: retention spans {keep * per} updates, too narrow to sweep")
+
+
+def test_tensorboard_is_declared_when_configs_ask_for_it():
+    """The configs set logger: tensorboard and F5-TTS's Trainer imports
+    SummaryWriter in __init__, so a missing package kills the run before its
+    first update."""
+    import tomllib
+
+    import yaml
+    deps = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    declared = " ".join(deps["project"]["dependencies"]).lower()
+    for name in ("f5tts_mbspeech.yaml", "f5tts_mn.yaml"):
+        cfg = yaml.safe_load((ROOT / "configs" / name).read_text(encoding="utf-8"))
+        if cfg["ckpts"].get("logger") == "tensorboard":
+            assert "tensorboard" in declared, f"{name} wants tensorboard; nothing declares it"

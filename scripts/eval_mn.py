@@ -146,6 +146,24 @@ def pick_reference(corpus: Path, gender: str, split: str = "test") -> tuple[Path
     return path, text
 
 
+def split_sizes(corpus: Path) -> dict[str, int]:
+    """How many clips each split actually holds.
+
+    Used to avoid defaulting to a split the corpus does not have. Reading the
+    manifest is cheap next to loading a 336M model and finding out the hard way.
+    """
+    counts: dict[str, int] = {}
+    manifest = corpus / "manifest.jsonl"
+    if not manifest.exists():
+        return counts
+    with open(manifest, encoding="utf-8") as f:
+        for line in f:
+            if line.strip():
+                sp = json.loads(line).get("split")
+                counts[sp] = counts.get(sp, 0) + 1
+    return counts
+
+
 def synthesise(f5, text: str, ref_audio: Path, ref_text: str, seed: int,
                nfe_step: int = NFE_STEP):
     """One utterance, with the sampler's noise pinned.
@@ -436,9 +454,19 @@ def main() -> None:
                          "-- so it is contaminated. Pass an independent one "
                          "(e.g. facebook/mms-1b-all) for a second opinion.")
     ap.add_argument("--device", default="cuda")
-    ap.add_argument("--use-ema", action="store_true", default=True)
+    # Default OFF, and this is not a preference. Measured on a 30,000-update
+    # Mongolian finetune: the EMA weights differ from the raw weights by 2.78%
+    # mean relative magnitude -- still essentially the pretrained English/Chinese
+    # model -- and synthesise fluent NON-WORDS. Same checkpoint, same sentence:
+    #   use_ema=True  -> CER 0.921
+    #   use_ema=False -> CER 0.026
+    # It sounds like confident speech, so the failure is inaudible. An EMA that
+    # has actually converged is worth using; check before turning this on.
+    ap.add_argument("--use-ema", action="store_true", default=False,
+                    help="Score the EMA weights. Only sound once the EMA has "
+                         "moved meaningfully off the pretrained weights.")
     ap.add_argument("--no-ema", dest="use_ema", action="store_false",
-                    help="Early finetunes: EMA is still dominated by pretrained weights")
+                    help="Explicitly score the raw weights (the default).")
     ap.add_argument("--no-utmos", action="store_true", help="Skip UTMOS (needs torch.hub)")
     ap.add_argument("--no-sim", action="store_true",
                     help="Skip SIM-o speaker similarity")
@@ -475,6 +503,21 @@ def main() -> None:
         args.mode = "select" if args.sweep else "report"
     if args.ref_split is None:
         args.ref_split = "validation" if args.mode == "select" else "test"
+        # A single-narrator corpus has no speaker-disjoint split at all -- every
+        # clip is train plus a text holdout -- so the default names a split that
+        # cannot exist and the run died with "no rows in split 'validation'".
+        # Fall back through the held-out splits that do exist.
+        available = split_sizes(args.corpus)
+        if not available.get(args.ref_split):
+            for candidate in ("validation", "test", "withheld"):
+                if available.get(candidate):
+                    print(f"[WARN] split {args.ref_split!r} is empty; using "
+                          f"{candidate!r} for the reference prompt. On a "
+                          f"single-speaker corpus this is a TEXT holdout, not a "
+                          f"speaker one, so it is not a zero-shot condition.",
+                          file=sys.stderr)
+                    args.ref_split = candidate
+                    break
     if args.mode == "select" and args.ref_split == "test":
         print("[WARN] Sweeping against the test split. The winner's score will be "
               "optimistic by however much it is\n       the checkpoint that got "

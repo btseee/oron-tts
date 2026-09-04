@@ -24,7 +24,12 @@ classifiers = [
 # the vocabulary contract -- is pure stdlib, so oron-cleaner can depend on this
 # package for text handling without pulling torch into a data pipeline. Anything
 # needing tensors lives behind an extra.
-dependencies = []
+dependencies = [
+  # configs set `logger: tensorboard`, and F5-TTS's Trainer imports
+  # SummaryWriter in __init__ -- without this a run dies before its first
+  # update, which is an expensive way to find a missing package on a rented GPU.
+  "tensorboard>=2.16",
+]
 
 [project.optional-dependencies]
 audio = [
