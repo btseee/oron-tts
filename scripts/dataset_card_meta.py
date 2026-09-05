@@ -57,6 +57,23 @@ def enrich(card: str, *, used_by: str | None, note: str | None) -> str:
                                     default_flow_style=False) + "---\n" + body
 
 
+def missing_from(card: str, *, used_by: str | None, note: str | None) -> list[str]:
+    """Everything this script should have added that the given card does not carry.
+
+    Read against the *server's* copy after the upload. This project has twice
+    published something an upload call reported as successful and that was not
+    there, so "the call returned" is not evidence that the card changed.
+    """
+    meta, body = split_card(card)
+    missing = [key for key in DEFAULTS if key not in meta]
+    if used_by and (USED_BY_HEADING not in body
+                    or f"https://huggingface.co/{used_by}" not in body):
+        missing.append(USED_BY_HEADING)
+    if note and note not in body:
+        missing.append("the note")
+    return missing
+
+
 def main() -> None:
     import os
 
@@ -72,18 +89,30 @@ def main() -> None:
 
     token = os.environ["HF_TOKEN"]
     api = HfApi(token=token)
-    path = Path(hf_hub_download(args.repo, "README.md", repo_type="dataset",
-                                token=token, force_download=True))
-    updated = enrich(path.read_text(encoding="utf-8"),
-                     used_by=args.used_by, note=args.note)
+
+    def from_server() -> tuple[Path, str]:
+        path = Path(hf_hub_download(args.repo, "README.md", repo_type="dataset",
+                                    token=token, force_download=True))
+        return path, path.read_text(encoding="utf-8")
+
+    path, current = from_server()
+    updated = enrich(current, used_by=args.used_by, note=args.note)
     if args.dry_run:
         print(updated[:updated.index("\n---\n", 3) + 5])
+        return
+    if updated == current:
+        # enrich is idempotent, so a second run has nothing to add. Uploading
+        # anyway spends a commit on the dataset's history saying nothing.
+        print(f"  {args.repo} already carries all of it; nothing uploaded")
         return
     path.write_text(updated, encoding="utf-8")
     api.upload_file(path_or_fileobj=str(path), path_in_repo="README.md",
                     repo_id=args.repo, repo_type="dataset",
                     commit_message="Add descriptive metadata and link the model")
-    print(f"  updated {args.repo}")
+    missing = missing_from(from_server()[1], used_by=args.used_by, note=args.note)
+    if missing:
+        raise SystemExit(f"{args.repo} VERIFY FAILED, not on the server: {missing}")
+    print(f"  updated {args.repo}, verified from the server")
 
 
 if __name__ == "__main__":
