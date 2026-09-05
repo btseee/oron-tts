@@ -169,11 +169,41 @@ def test_eval_scores_raw_weights_by_default():
     assert "default=False" in decl, "eval must score raw weights unless asked"
 
 
-def test_infer_defaults_match_eval():
+def test_infer_defaults_match_eval(monkeypatch, tmp_path):
     """A model scored with raw weights and shipped for inference with EMA would
-    sound nothing like its reported CER."""
-    src = (ROOT / "oron_tts" / "infer.py").read_text(encoding="utf-8")
-    assert "use_ema" in src
+    sound nothing like its reported CER, and the failure is inaudible.
+
+    The published card tells readers to install this package and keep
+    `use_ema=False`; a library whose own default contradicts its card ships the
+    trap it documents. Asserting the value, not the presence of the name -- the
+    earlier `"use_ema" in src` passed for a year while the default was True.
+    """
+    import inspect
+    import types
+
+    import oron_tts.infer as infer
+
+    assert inspect.signature(infer.synthesize).parameters["use_ema"].default is False,         "synthesize() must default to the raw weights the CER was measured on"
+
+    # The CLI default is a separate value from the function's and has been
+    # wrong on its own, so drive main() and read what it actually passes down.
+    seen: dict = {}
+
+    def record(*args, **kwargs):
+        seen.update(kwargs)
+        return [0.0], 24000, 7
+
+    monkeypatch.setitem(sys.modules, "soundfile",
+                        types.SimpleNamespace(write=lambda *a, **k: None))
+    monkeypatch.setattr(infer, "synthesize", record)
+    monkeypatch.setattr(sys, "argv", [
+        "oron-tts-infer", "--text", "Сайн байна уу",
+        "--checkpoint", str(tmp_path / "model.pt"),
+        "--output", str(tmp_path / "out.wav")])
+
+    infer.main()
+
+    assert seen["use_ema"] is False, "the CLI must not re-enable EMA by default"
 
 
 def test_reference_split_falls_back_when_empty():
