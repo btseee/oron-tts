@@ -208,9 +208,9 @@ def write_summary_run(out_dir: Path, audio: dict, consistency: dict,
     run.mkdir(parents=True, exist_ok=True)
     writer = SummaryWriter(log_dir=str(run))
 
-    for name, (wav, sr) in sorted(audio.items()):
-        import numpy as np
+    import numpy as np
 
+    for name, (wav, sr) in sorted(audio.items()):
         samples = np.asarray(wav, dtype="float32")
         writer.add_audio(f"audio/{name}", samples, 0, sample_rate=sr)
         writer.add_image(f"mel/{name}", mel_image(samples, sr), 0)
@@ -221,15 +221,22 @@ def write_summary_run(out_dir: Path, audio: dict, consistency: dict,
             writer.add_scalar(f"similarity/{name}", float(value), 0)
 
     calibration = consistency.get("calibration", {})
-    writer.add_text("summary/speaker_similarity", (
-        "Metric: `{}`. Same-speaker pairs of real recordings scored {}, "
-        "different-speaker pairs {}, so {} separates them.\n\n{}".format(
-            consistency.get("metric", "unknown"),
-            calibration.get("same_speaker_range"),
-            calibration.get("different_speaker_range"),
-            calibration.get("same_speaker_threshold"),
-            "\n".join(f"* `{k}` = {v:.4f}" for k, v in sorted(measured.items())
-                      if isinstance(v, (int, float))))), 0)
+    calibration_keys = ("same_speaker_range", "different_speaker_range",
+                        "same_speaker_threshold")
+    sentences = ["Metric: `{}`.".format(consistency.get("metric", "unknown"))]
+    if all(calibration.get(key) is not None for key in calibration_keys):
+        sentences.append(
+            "Same-speaker pairs of real recordings scored {}, different-speaker "
+            "pairs {}, so {} separates them.".format(
+                *(calibration[key] for key in calibration_keys)))
+    # Dropped whole rather than filled with None. Without --consistency this
+    # rendered "scored None ... so None separates them", which reads as a
+    # measurement; and this sentence is the only thing in the tab that says what
+    # the similarity scalars mean, so a half-written one is worse than none.
+    table = "\n".join(f"* `{k}` = {v:.4f}" for k, v in sorted(measured.items())
+                      if isinstance(v, (int, float)))
+    writer.add_text("summary/speaker_similarity",
+                    " ".join(sentences) + "\n\n" + table, 0)
     writer.add_text("summary/stages", "Stages in this report: " + ", ".join(stages), 0)
     writer.close()
     return run

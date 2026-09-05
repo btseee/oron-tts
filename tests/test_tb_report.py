@@ -311,3 +311,36 @@ def test_no_stage_metadata_means_no_corpus_scalars(tmp_path):
     out = tmp_path / "tensorboard"
     run = tb_report.write_stage_run(out, "cv", {}, events=None, hparams={}, metrics={})
     assert not [tag for tag in read_scalars(run) if tag.startswith("corpus/")]
+
+
+def test_the_calibration_sentence_is_omitted_when_nothing_calibrated_it(tmp_path):
+    """--consistency is optional, and without it the summary read "Same-speaker
+    pairs of real recordings scored None ... so None separates them" -- which
+    reads as a measurement rather than as a gap."""
+    out = tmp_path / "tensorboard"
+    run = tb_report.write_summary_run(out, {}, {}, ["cv"])
+    text = read_text_tags(run)["summary/speaker_similarity"]
+    assert "None" not in text
+    assert "separates them" not in text
+
+
+def test_a_partial_calibration_is_not_half_reported(tmp_path):
+    """Two of the three numbers make no sentence: the threshold is what the
+    ranges are read against."""
+    out = tmp_path / "tensorboard"
+    run = tb_report.write_summary_run(
+        out, {}, {"metric": "ecapa_voxceleb",
+                  "calibration": {"same_speaker_range": [0.54, 0.83]},
+                  "measured": {"male_demo_vs_male_prompt": 0.7251}}, ["cv"])
+    text = read_text_tags(run)["summary/speaker_similarity"]
+    assert "separates them" not in text
+    assert "ecapa_voxceleb" in text
+    assert "male_demo_vs_male_prompt" in text, "the measured table must survive"
+
+
+def test_the_calibration_sentence_is_written_when_the_data_is_there(tmp_path):
+    out = tmp_path / "tensorboard"
+    run = tb_report.write_summary_run(out, {}, CONSISTENCY, ["cv"])
+    text = read_text_tags(run)["summary/speaker_similarity"]
+    assert "separates them" in text
+    assert "0.52" in text

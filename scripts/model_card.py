@@ -181,6 +181,22 @@ train on WorldSpeech, so it carries no non-commercial restriction.
 """
 
 
+def calibration_range(calibration: dict, key: str) -> tuple[float, float]:
+    """A low/high pair from consistency.json, or NaNs.
+
+    The default only covers a *missing* key; a key present with any other
+    length raised ValueError from the unpack, halfway through rendering a card
+    whose other numbers were already correct. A card with a blank in it can be
+    read and fixed -- the blanks are already the convention here for what was
+    not measured -- so an unusable range leaves one rather than aborting.
+    """
+    value = calibration.get(key)
+    if (isinstance(value, (list, tuple)) and len(value) == 2
+            and all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in value)):
+        return float(value[0]), float(value[1])
+    return float("nan"), float("nan")
+
+
 def render(evals: dict, consistency: dict) -> str:
     import yaml
 
@@ -189,8 +205,8 @@ def render(evals: dict, consistency: dict) -> str:
     _, best = best_checkpoint(evals[FINAL_STAGE])
     measured = consistency.get("measured", {})
     calibration = consistency.get("calibration", {})
-    same_low, same_high = calibration.get("same_speaker_range", [float("nan")] * 2)
-    diff_low, diff_high = calibration.get("different_speaker_range", [float("nan")] * 2)
+    same_low, same_high = calibration_range(calibration, "same_speaker_range")
+    diff_low, diff_high = calibration_range(calibration, "different_speaker_range")
     meta = yaml.safe_dump(frontmatter(evals, consistency, best=best), sort_keys=False,
                           allow_unicode=True, default_flow_style=False)
     body = BODY.format(

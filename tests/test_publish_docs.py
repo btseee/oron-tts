@@ -201,3 +201,17 @@ def test_a_card_only_dry_run_proposes_no_deletes(monkeypatch, tmp_path, capsys):
     assert "+ README.md" in out
     assert " - " not in out
     assert api.deleted == []
+
+
+def test_a_missing_token_says_which_variable(monkeypatch, tmp_path):
+    """os.environ["HF_TOKEN"] raised a bare KeyError, which names the dict key
+    but not the fix, from a script whose other refusals are sentences."""
+    import types
+
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    monkeypatch.setitem(sys.modules, "huggingface_hub",
+                        types.SimpleNamespace(HfApi=lambda token=None: FakeApi([])))
+    monkeypatch.setattr(sys, "argv", ["publish_docs.py", "--card", "README.md"])
+
+    with pytest.raises(SystemExit, match="HF_TOKEN is not set"):
+        publish_docs.main()

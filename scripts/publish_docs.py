@@ -97,7 +97,10 @@ def main() -> None:
     # enforces that statically by walking module-scope imports only.
     from huggingface_hub import HfApi
 
-    api = HfApi(token=os.environ["HF_TOKEN"])
+    token = os.environ.get("HF_TOKEN")
+    if not token:
+        raise SystemExit("HF_TOKEN is not set")
+    api = HfApi(token=token)
     expected: list[str] = []
 
     if args.dry_run:

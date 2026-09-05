@@ -151,3 +151,13 @@ def test_missing_from_names_every_absent_piece():
         *dcm.DEFAULTS, dcm.USED_BY_HEADING, "the note"]
     complete = dcm.enrich(CARD, used_by="btsee/oron-tts", note=NOTE)
     assert dcm.missing_from(complete, used_by="btsee/oron-tts", note=NOTE) == []
+
+
+def test_a_missing_token_says_which_variable(monkeypatch, tmp_path):
+    """A bare KeyError names the dict key, not the fix."""
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    monkeypatch.setitem(sys.modules, "huggingface_hub", FakeHub(tmp_path, CARD))
+    monkeypatch.setattr(sys, "argv", ["dataset_card_meta.py", "--repo", "btsee/cv-mn"])
+
+    with pytest.raises(SystemExit, match="HF_TOKEN is not set"):
+        dcm.main()

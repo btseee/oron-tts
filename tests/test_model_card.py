@@ -161,3 +161,26 @@ def test_best_checkpoint_raises_value_error_not_system_exit():
     SystemExit; only main() should ever exit the process."""
     with pytest.raises(ValueError):
         model_card.best_checkpoint({"not_a_checkpoint": "no per-gender scores here"})
+
+
+def test_a_malformed_calibration_range_leaves_a_blank_rather_than_raising():
+    """The default covered a missing key only; a key present with any other
+    length raised ValueError from the unpack, halfway through rendering a card
+    whose other numbers were already correct. Blanks are this card's convention
+    for what was not measured, so an unusable range becomes one."""
+    assert model_card.calibration_range({}, "same_speaker_range") != (0, 0)
+    for bad in ([0.5], [0.1, 0.2, 0.3], "0.5-0.8", None, [None, None]):
+        low, high = model_card.calibration_range({"same_speaker_range": bad},
+                                                 "same_speaker_range")
+        assert low != low and high != high, f"{bad!r} should give NaNs, got {low}, {high}"
+
+    broken = dict(CONSISTENCY, calibration={"same_speaker_range": [0.5],
+                                            "different_speaker_range": [0.034, 0.503],
+                                            "same_speaker_threshold": 0.52})
+    card = model_card.render(EVALS, broken)          # must not raise
+    assert "nan" in card
+
+
+def test_a_well_formed_range_still_reaches_the_card():
+    assert model_card.calibration_range(CONSISTENCY["calibration"],
+                                        "same_speaker_range") == (0.540, 0.833)

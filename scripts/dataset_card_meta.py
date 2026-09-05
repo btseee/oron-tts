@@ -87,7 +87,9 @@ def main() -> None:
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
-    token = os.environ["HF_TOKEN"]
+    token = os.environ.get("HF_TOKEN")
+    if not token:
+        raise SystemExit("HF_TOKEN is not set")
     api = HfApi(token=token)
 
     def from_server() -> tuple[Path, str]:
