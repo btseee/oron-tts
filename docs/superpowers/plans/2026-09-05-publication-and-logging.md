@@ -353,7 +353,7 @@ import pathlib, subprocess, sys
 p = pathlib.Path("scripts/tb_report.py")
 orig = p.read_text(encoding="utf-8")
 p.write_text(orig.replace('CHECKPOINT = re.compile(r"^model_(\\d+)\\.pt$")',
-                          'CHECKPOINT = re.compile(r"^model_(\\d+)")'), encoding="utf-8")
+                          'CHECKPOINT = re.compile(r"^model_(\\w+)\\.pt$")'), encoding="utf-8")
 r = subprocess.run([sys.executable, "-m", "pytest", "tests/test_tb_report.py", "-q"],
                    capture_output=True, text=True)
 p.write_text(orig, encoding="utf-8")
@@ -361,7 +361,9 @@ print(r.stdout.strip().splitlines()[-1])
 PY
 ```
 
-Expected: a line reporting at least `1 failed` — `model_last.pt` must stop being rejected.
+Expected: `4 failed`. Dropping only the trailing anchor mutates nothing, because the
+digit class already rejects `model_last.pt` before the anchor is reached; widening the
+capture is what changes behaviour.
 
 - [ ] **Step 6: Commit**
 
