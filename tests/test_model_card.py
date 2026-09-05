@@ -35,7 +35,10 @@ EVALS = {
 
 CONSISTENCY = {"measured": {"male_demo_vs_male_prompt": 0.7251,
                             "female_demo_vs_female_prompt": 0.8082,
-                            "male_demo_vs_female_demo": 0.1029}}
+                            "male_demo_vs_female_demo": 0.1029},
+               "calibration": {"same_speaker_range": [0.540, 0.833],
+                               "different_speaker_range": [0.034, 0.503],
+                               "same_speaker_threshold": 0.52}}
 
 
 def parse_frontmatter(card: str) -> dict:
@@ -79,6 +82,47 @@ def test_eval_results_are_read_from_the_measurements_not_typed_in():
     assert metrics["Speaker similarity, male"] == pytest.approx(0.7251)
 
 
+def test_frontmatter_values_are_full_precision_not_rounded():
+    """Rounding here is how the Eval Results panel and the body's Numbers
+    table end up showing two different figures for one measurement."""
+    meta = model_card.frontmatter(EVALS, CONSISTENCY)
+    metrics = {m["name"]: m["value"] for m in meta["model-index"][0]["results"][0]["metrics"]}
+    assert metrics["CER, male voice"] == 0.06329113924050633
+
+
+def test_frontmatter_and_the_body_table_agree_on_the_same_measurement():
+    card = model_card.render(EVALS, CONSISTENCY)
+    meta = parse_frontmatter(card)
+    metrics = {m["name"]: m["value"] for m in meta["model-index"][0]["results"][0]["metrics"]}
+    body = card[card.index("\n---\n", 3) + 5:]
+    assert f"{metrics['CER, male voice']:.4f}" in body
+
+
+def test_the_calibration_sentence_is_read_from_consistency_json():
+    """The four numbers in this sentence are already in consistency.json's
+    calibration block; typing them by hand would let the card drift from it."""
+    body = model_card.render(EVALS, CONSISTENCY)
+    calibration = CONSISTENCY["calibration"]
+    same_low, same_high = calibration["same_speaker_range"]
+    diff_low, diff_high = calibration["different_speaker_range"]
+    assert f"{same_low:.3f}" in body
+    assert f"{same_high:.3f}" in body
+    assert f"{diff_low:.3f}" in body
+    assert f"{diff_high:.3f}" in body
+
+
+def test_the_calibration_sentence_changes_when_the_fixture_does():
+    other = {**CONSISTENCY,
+             "calibration": {"same_speaker_range": [0.601, 0.777],
+                             "different_speaker_range": [0.011, 0.222],
+                             "same_speaker_threshold": 0.5}}
+    default_body = model_card.render(EVALS, CONSISTENCY)
+    changed_body = model_card.render(EVALS, other)
+    assert default_body != changed_body
+    assert "0.601" in changed_body
+    assert "0.601" not in default_body
+
+
 def test_the_body_leads_with_usage_and_stays_short():
     card = model_card.render(EVALS, CONSISTENCY)
     body = card[card.index("\n---\n", 3) + 5:]
@@ -96,3 +140,24 @@ def test_the_two_silent_failures_are_stated():
     body = model_card.render(EVALS, CONSISTENCY)
     assert "use_ema=False" in body
     assert "normalize" in body or "normalise" in body
+
+
+def test_the_ema_warning_has_no_hand_typed_cer_numbers():
+    """Those figures were real once, but from a run no artifact this script
+    reads can reproduce; the warning must make its point without them."""
+    body = model_card.render(EVALS, CONSISTENCY)
+    assert "0.921" not in body
+    assert "0.026" not in body
+
+
+def test_the_opening_sentence_has_no_hand_typed_duration():
+    """No artifact this script reads carries a corpus-duration field."""
+    body = model_card.render(EVALS, CONSISTENCY)
+    assert "25 hours" not in body
+
+
+def test_best_checkpoint_raises_value_error_not_system_exit():
+    """A caller handling 'no scored checkpoints' shouldn't have to catch
+    SystemExit; only main() should ever exit the process."""
+    with pytest.raises(ValueError):
+        model_card.best_checkpoint({"not_a_checkpoint": "no per-gender scores here"})

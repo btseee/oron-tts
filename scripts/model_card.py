@@ -38,17 +38,21 @@ def best_checkpoint(stage_eval: dict) -> tuple[str, dict]:
         if cers:
             scored.append((statistics.fmean(cers), name, per_gender))
     if not scored:
-        raise SystemExit("no scored checkpoints in this stage")
+        raise ValueError("no scored checkpoints in this stage")
     scored.sort(key=lambda row: row[0])
     return scored[0][1], scored[0][2]
 
 
-def frontmatter(evals: dict, consistency: dict) -> dict:
-    _, best = best_checkpoint(evals[FINAL_STAGE])
+def frontmatter(evals: dict, consistency: dict, best: dict | None = None) -> dict:
+    if best is None:
+        _, best = best_checkpoint(evals[FINAL_STAGE])
     measured = consistency.get("measured", {})
 
     def metric(kind: str, value, name: str) -> dict:
-        return {"type": kind, "value": round(float(value), 8), "name": name}
+        # Unrounded: this is machine-readable metadata parsed by the Hub, not
+        # prose. Rounding here would let it diverge from the body's own
+        # human-formatted rendering of the same measurement.
+        return {"type": kind, "value": float(value), "name": name}
 
     results = [metric("cer", best["male"]["cer_median"], "CER, male voice"),
                metric("cer", best["female"]["cer_median"], "CER, female voice"),
@@ -91,7 +95,8 @@ BODY = """
 # OronTTS — Mongolian text to speech
 
 Speaks Mongolian (Khalkha, Cyrillic) in two fixed voices, one male and one
-female. A finetune of F5-TTS on {hours} of cleaned Mongolian speech.
+female. A finetune of F5-TTS on cleaned Mongolian speech from three public
+corpora.
 
 ## Listen
 
@@ -138,9 +143,9 @@ sf.write("out.wav", wav, sr)
 
 ## Two things that break it silently
 
-**Keep `use_ema=False`.** The EMA weights synthesise fluent non-words at CER
-0.921 against 0.026 for the raw tensors. It sounds like confident speech, so you
-will not hear the mistake.
+**Keep `use_ema=False`.** The EMA weights synthesise fluent non-words, an order
+of magnitude worse by CER than the raw tensors, while sounding like confident
+speech -- so you will not hear the mistake.
 
 **Normalise the text.** Anything outside the vocabulary is read as a space,
 because unknown ids map to index 0 and index 0 is the space token. Digits, Latin
@@ -155,8 +160,8 @@ letters and punctuation all need `MongolianNormalizer`.
 | speaker similarity to its own prompt | {sim_male:.3f} | {sim_female:.3f} |
 
 The two voices score {sim_cross:.3f} against each other. On this project's own
-recordings, real same-speaker pairs score 0.540–0.833 and different-speaker
-pairs 0.034–0.503.
+recordings, real same-speaker pairs score {same_low:.3f}–{same_high:.3f} and
+different-speaker pairs {diff_low:.3f}–{diff_high:.3f}.
 
 Per-checkpoint numbers are in `eval.json`, curves in the TensorBoard tab, the
 full run in `logs/`.
@@ -179,17 +184,24 @@ train on WorldSpeech, so it carries no non-commercial restriction.
 def render(evals: dict, consistency: dict) -> str:
     import yaml
 
+    # Picked once here; frontmatter() takes it rather than re-selecting, so
+    # the two panels can never disagree about which checkpoint is "best".
     _, best = best_checkpoint(evals[FINAL_STAGE])
     measured = consistency.get("measured", {})
-    meta = yaml.safe_dump(frontmatter(evals, consistency), sort_keys=False,
+    calibration = consistency.get("calibration", {})
+    same_low, same_high = calibration.get("same_speaker_range", [float("nan")] * 2)
+    diff_low, diff_high = calibration.get("different_speaker_range", [float("nan")] * 2)
+    meta = yaml.safe_dump(frontmatter(evals, consistency, best=best), sort_keys=False,
                           allow_unicode=True, default_flow_style=False)
     body = BODY.format(
-        repo=REPO, hours="25 hours",
+        repo=REPO,
         cer_male=best["male"]["cer_median"], cer_female=best["female"]["cer_median"],
         utmos_male=best["male"]["utmos_mean"], utmos_female=best["female"]["utmos_mean"],
         sim_male=measured.get("male_demo_vs_male_prompt", float("nan")),
         sim_female=measured.get("female_demo_vs_female_prompt", float("nan")),
-        sim_cross=measured.get("male_demo_vs_female_demo", float("nan")))
+        sim_cross=measured.get("male_demo_vs_female_demo", float("nan")),
+        same_low=same_low, same_high=same_high,
+        diff_low=diff_low, diff_high=diff_high)
     return "---\n" + meta + "---\n" + body
 
 
