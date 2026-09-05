@@ -121,6 +121,64 @@ def write_stage_run(out_dir: Path, stage: str, series: dict[str, list[tuple[int,
     return run
 
 
+def mel_image(audio, sr: int):
+    """A mel spectrogram as a CHW uint8 image, for `add_image`.
+
+    Rendered without matplotlib so the report has no plotting dependency: the
+    magnitudes are normalised to 0-255 and mapped to a simple blue-to-yellow
+    ramp, which is enough to see structure, silence, and a collapsed output.
+    """
+    import librosa
+    import numpy as np
+
+    mel = librosa.feature.melspectrogram(y=np.asarray(audio, dtype="float32"),
+                                         sr=sr, n_mels=100, n_fft=1024, hop_length=256)
+    db = librosa.power_to_db(mel, ref=np.max)
+    scaled = np.clip((db - db.min()) / max(float(np.ptp(db)), 1e-6), 0.0, 1.0)
+    scaled = np.flipud(scaled)                      # low frequencies at the bottom
+    red = scaled
+    green = np.clip(scaled * 1.4 - 0.2, 0, 1)
+    blue = np.clip(1.0 - scaled * 1.6, 0, 1)
+    rgb = np.stack([red, green, blue])
+    return (rgb * 255).astype("uint8")
+
+
+def write_summary_run(out_dir: Path, audio: dict, consistency: dict,
+                      stages: list[str]) -> Path:
+    """One run holding the artifacts a reader inspects rather than plots."""
+    from torch.utils.tensorboard import SummaryWriter
+
+    run = out_dir / "summary"
+    run.mkdir(parents=True, exist_ok=True)
+    writer = SummaryWriter(log_dir=str(run))
+
+    for name, (wav, sr) in sorted(audio.items()):
+        import numpy as np
+
+        samples = np.asarray(wav, dtype="float32")
+        writer.add_audio(f"audio/{name}", samples, 0, sample_rate=sr)
+        writer.add_image(f"mel/{name}", mel_image(samples, sr), 0)
+
+    measured = consistency.get("measured", {})
+    for name, value in sorted(measured.items()):
+        if isinstance(value, (int, float)):
+            writer.add_scalar(f"similarity/{name}", float(value), 0)
+
+    calibration = consistency.get("calibration", {})
+    writer.add_text("summary/speaker_similarity", (
+        "Metric: `%s`. Same-speaker pairs of real recordings scored %s, "
+        "different-speaker pairs %s, so %s separates them.\n\n%s" % (
+            consistency.get("metric", "unknown"),
+            calibration.get("same_speaker_range"),
+            calibration.get("different_speaker_range"),
+            calibration.get("same_speaker_threshold"),
+            "\n".join("* `%s` = %.4f" % (k, v) for k, v in sorted(measured.items())
+                      if isinstance(v, (int, float))))), 0)
+    writer.add_text("summary/stages", "Stages in this report: " + ", ".join(stages), 0)
+    writer.close()
+    return run
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -130,6 +188,10 @@ def main() -> None:
                         help="training events file for a stage; repeatable")
     parser.add_argument("--stages", type=Path,
                         help="JSON of per-stage hparams: corpora, clips, hours, learning_rate")
+    parser.add_argument("--audio", action="append", default=[], metavar="NAME=PATH",
+                        help="wav to embed in the summary run; repeatable")
+    parser.add_argument("--consistency", type=Path,
+                        help="demos/consistency.json, for the speaker-similarity charts")
     args = parser.parse_args()
 
     evals = json.loads(args.eval.read_text(encoding="utf-8"))
@@ -156,6 +218,21 @@ def main() -> None:
         run = write_stage_run(args.out, stage, series, events_for.get(stage), meta, metrics)
         print(f"  {stage}: {run} ({len(series)} eval series, "
               f"{'training curve carried' if stage in events_for else 'no training events'})")
+
+    if args.audio or args.consistency:
+        import soundfile as sf
+
+        clips = {}
+        for pair in args.audio:
+            name, _, path = pair.partition("=")
+            samples, sr = sf.read(path, dtype="float32")
+            clips[name] = (samples, sr)
+        consistency = (json.loads(args.consistency.read_text(encoding="utf-8"))
+                       if args.consistency else {})
+        run = write_summary_run(args.out, clips, consistency,
+                                sorted(set(evals) | set(events_for)))
+        print(f"  summary: {run} ({len(clips)} clips, "
+              f"{len(consistency.get('measured', {}))} similarity scores)")
 
 
 if __name__ == "__main__":

@@ -165,3 +165,57 @@ def test_an_empty_events_file_is_recognised(tmp_path):
     w.add_scalar("loss", 0.5, 1)
     w.close()
     assert tb_report.is_empty_events(next(full_dir.glob("events.out.tfevents.*"))) is False
+
+
+CONSISTENCY = {
+    "metric": "ecapa_voxceleb",
+    "calibration": {"same_speaker_threshold": 0.52,
+                    "same_speaker_range": [0.540, 0.833],
+                    "different_speaker_range": [0.034, 0.503]},
+    "measured": {"male_demo_vs_male_prompt": 0.7251,
+                 "female_demo_vs_female_prompt": 0.8082,
+                 "male_demo_vs_female_demo": 0.1029},
+}
+
+
+def _tone(seconds=1.0, sr=24000, freq=220.0):
+    import numpy as np
+    t = np.arange(int(seconds * sr)) / sr
+    return (0.2 * np.sin(2 * np.pi * freq * t)).astype("float32")
+
+
+def test_the_demos_are_listenable_in_tensorboard(tmp_path):
+    """The two demos are the artifact a reader most wants, and they were not in
+    the tab at all."""
+    out = tmp_path / "tensorboard"
+    run = tb_report.write_summary_run(
+        out, {"demo_male": (_tone(), 24000), "demo_female": (_tone(freq=330.0), 24000)},
+        CONSISTENCY, ["fleurs", "cv", "voicelock"])
+    acc = EventAccumulator(str(run), size_guidance={"audio": 10, "images": 10})
+    acc.Reload()
+    assert set(acc.Tags()["audio"]) == {"audio/demo_male", "audio/demo_female"}
+
+
+def test_the_spectrograms_are_rendered(tmp_path):
+    out = tmp_path / "tensorboard"
+    run = tb_report.write_summary_run(out, {"demo_male": (_tone(), 24000)}, CONSISTENCY, ["cv"])
+    acc = EventAccumulator(str(run), size_guidance={"images": 10})
+    acc.Reload()
+    assert "mel/demo_male" in acc.Tags()["images"]
+
+
+def test_speaker_similarity_reaches_the_charts(tmp_path):
+    """The voice lock is the mechanism behind "the same voice every time" and
+    nothing measured it during the run."""
+    out = tmp_path / "tensorboard"
+    run = tb_report.write_summary_run(out, {}, CONSISTENCY, ["cv"])
+    scalars = read_scalars(run)
+    assert scalars["similarity/male_demo_vs_male_prompt"][0][1] == pytest.approx(0.7251)
+    assert scalars["similarity/male_demo_vs_female_demo"][0][1] == pytest.approx(0.1029)
+
+
+def test_mel_image_is_a_renderable_array():
+    import numpy as np
+    image = tb_report.mel_image(_tone(), 24000)
+    assert image.dtype == np.uint8
+    assert image.ndim == 3 and image.shape[0] == 3, "add_image wants CHW"
