@@ -19,3 +19,9 @@ Task 3: complete (commits 474faee..6a63f10, review clean after one fix round)
   Minor, for final triage:
   - inference config numerals (nfe_step=32, cfg_strength=2.0, seed=0) remain literal in the usage sample -- configuration, not measurements
   - frontmatter() still self-computes best_checkpoint when called without best=, to stay independently testable
+Task 4: complete (commits 495ca15..cf56364, review clean)
+  cf56364 also cleared the ruff gate branch-wide: 7 errors, 2 of which pre-dated the branch (they arrived on main with the speaker_similarity commit). CI lint is now green.
+  Minor, for final triage:
+  - dataset_card_meta.main() raises a bare KeyError if HF_TOKEN is unset
+  - `import yaml` duplicated at function scope in split_card and enrich (inherited from the plan's code)
+  - Task 4 report claimed the files matched the brief "verbatim"; one unused `import yaml` was dropped, correctly
