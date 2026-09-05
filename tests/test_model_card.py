@@ -131,7 +131,46 @@ def test_the_body_leads_with_usage_and_stays_short():
     assert "github.com/btseee/oron-tts" in body
     assert body.index("pip install") < body.index("use_ema"), \
         "installation comes before caveats; a reader wants to run it first"
-    assert len(body) < 3000, "the body is instructions, not a paper"
+    # Raised from 3000 when `## Limits` landed: the six disclosures cost ~1,065
+    # characters and the body is 3,954. The bound stays because "short" is the
+    # requirement that keeps this card readable, not a formality -- anything
+    # much longer belongs in docs/model-card.md, which the Links section points
+    # at precisely so this one does not have to grow.
+    assert len(body) < 4000, "the body is instructions, not a paper"
+
+
+def test_the_published_card_carries_every_disclosure_the_long_card_makes():
+    """docs/model-card.md is not the card that ships; this one is.
+
+    The two diverged once, and the published copy was the one missing the
+    consent and contamination caveats -- the two a reader cannot reconstruct
+    from the audio. Each assertion matches a distinctive phrase rather than a
+    common word, so dropping a disclosure fails here instead of passing on an
+    incidental collision.
+    """
+    body = model_card.render(EVALS, CONSISTENCY)
+    for claim, marker in [
+        ("the ~8 kHz bandwidth ceiling", "roughly 8 kHz -- not full-band"),
+        ("the CER scorer's contamination", "scorer is fine-tuned on Common Voice"),
+        ("that CER must be read against the human floor",
+         "never against zero"),
+        ("the absence of a listening test", "No listening test has been run"),
+        ("UTMOS being an unvalidated proxy", "never validated for Mongolian"),
+        ("the absence of watermarking", "There is no watermarking"),
+        ("the consent basis", "did not consent to having their individual voice cloned"),
+        ("the normaliser's numeral refusals",
+         "refuses** numeral case suffixes it cannot expand"),
+    ]:
+        assert marker.lower() in body.lower(), f"the published card omits {claim}"
+
+
+def test_the_published_card_points_at_the_long_form_one():
+    """Six one-line disclosures are a summary. The reader who wants the method,
+    the per-source bandwidth figures or the out-of-scope list needs somewhere
+    to go, or the short card reads as the whole story."""
+    body = model_card.render(EVALS, CONSISTENCY)
+    assert "docs/model-card.md" in body
+    assert "github.com/btseee/oron-tts/blob/main/docs/model-card.md" in body
 
 
 def test_the_two_silent_failures_are_stated():

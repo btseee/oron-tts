@@ -11,6 +11,13 @@ never trained on. The model saw MBSpeech (MIT), FLEURS (CC-BY-4.0) and Common
 Voice (CC0), all commercial-safe. Commercial safety is why WorldSpeech was
 excluded in the first place.
 
+This is the card that ships. `docs/model-card.md` is its long-form companion and
+is not published; the two diverged once, and the published one was the copy
+missing the consent and contamination caveats -- exactly the ones a reader
+cannot reconstruct for themselves. `## Limits` carries all six of the
+disclosures that file makes, in one line each, so the short card can stay short
+without shedding them.
+
     python scripts/model_card.py --eval eval.json \\
         --consistency consistency.json --out README.md
 """
@@ -166,9 +173,27 @@ different-speaker pairs {diff_low:.3f}–{diff_high:.3f}.
 Per-checkpoint numbers are in `eval.json`, curves in the TensorBoard tab, the
 full run in `logs/`.
 
+## Limits
+
+* **The output is wideband, roughly 8 kHz -- not full-band**, because no
+  Mongolian training source is, and no amount of training changes that.
+* **The CER above is optimistic**: its scorer is fine-tuned on Common Voice,
+  which is most of this model's training data, so read every CER against the
+  ground-truth human floor, never against zero.
+* **No listening test has been run** -- UTMOS is a proxy trained on English and
+  Japanese MOS data, never validated for Mongolian.
+* **There is no watermarking**; audio from this model cannot be detected as
+  synthetic by any downstream tool.
+* **Consent:** Common Voice contributors dedicated their recordings CC0 for
+  speech research and did not consent to having their individual voice cloned.
+* **The normaliser refuses** numeral case suffixes it cannot expand without
+  guessing, so a little input is rejected rather than mispronounced.
+
 ## Links
 
 * Code: [github.com/btseee/oron-tts](https://github.com/btseee/oron-tts)
+* Full card: [docs/model-card.md](https://github.com/btseee/oron-tts/blob/main/docs/model-card.md)
+  -- the longer version, with the full method and every caveat
 * Corpus tooling: [github.com/btseee/oron-cleaner](https://github.com/btseee/oron-cleaner)
 * Training data: [mbspeech-mn](https://huggingface.co/datasets/btsee/mbspeech-mn),
   [fleurs-mn](https://huggingface.co/datasets/btsee/fleurs-mn),
