@@ -108,7 +108,13 @@ def write_stage_run(out_dir: Path, stage: str, series: dict[str, list[tuple[int,
     for tag, points in sorted(series.items()):
         for step, value in points:
             writer.add_scalar(tag, value, step)
-    if hparams and metrics:
+    if metrics:
+        # hparams is optional -- the production invocation never passes
+        # --stages, so hparams is {} on every call. add_hparams only requires
+        # its first argument to be a dict, and an empty one is fine; gating on
+        # `hparams and metrics` used to drop final/cer_mean and
+        # final/best_update -- the numbers checkpoint selection actually
+        # ranks on -- in the one invocation that matters.
         writer.add_hparams({k: v for k, v in hparams.items() if isinstance(v, (int, float, str, bool))},
                            metrics, run_name=".")
     writer.close()

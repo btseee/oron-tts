@@ -105,6 +105,49 @@ def test_the_training_curve_is_carried_into_the_stage_run(tmp_path):
     assert [s for s, _ in scalars["loss"]] == [1, 2, 3]
 
 
+def test_metrics_are_written_even_without_hparams(tmp_path):
+    """The production command never passes --stages, so hparams is {} on every
+    real call. add_hparams only requires its first argument to be a dict, not
+    a non-empty one, so gating the write on `hparams and metrics` silently
+    dropped final/cer_mean and final/best_update -- the numbers checkpoint
+    selection actually ranks on -- in the one invocation that matters."""
+    out = tmp_path / "tensorboard"
+    run = tb_report.write_stage_run(
+        out, "cv", {}, events=None, hparams={},
+        metrics={"final/cer_mean": 0.0824, "final/best_update": 12000.0})
+    acc = EventAccumulator(str(run))
+    acc.Reload()
+    hparam_metrics = {tag: acc.Scalars(tag)[-1].value for tag in acc.Tags()["scalars"]}
+    assert hparam_metrics["final/cer_mean"] == pytest.approx(0.0824)
+    assert hparam_metrics["final/best_update"] == pytest.approx(12000.0)
+
+
+def test_copied_training_curve_and_new_eval_series_both_survive(tmp_path):
+    """write_stage_run copies an existing events file into the run directory
+    and then opens a SummaryWriter on that same directory -- main() does this
+    for every stage with both training events and eval data. Steps are
+    non-monotonic between the two sets (loss at 1..3, eval at 2000/12000)
+    because that is the case that would trigger a TensorBoard purge if its
+    out-of-order heuristics changed; a purge here would silently erase the
+    copied curve instead of merely failing loudly."""
+    source = tmp_path / "src"
+    source.mkdir()
+    from torch.utils.tensorboard import SummaryWriter
+    w = SummaryWriter(log_dir=str(source))
+    for step in (1, 2, 3):
+        w.add_scalar("loss", 0.5 + step / 10, step)
+    w.close()
+    events = next(source.glob("events.out.tfevents.*"))
+
+    out = tmp_path / "tensorboard"
+    series = tb_report.eval_series(CV_EVAL)
+    run = tb_report.write_stage_run(out, "cv", series, events=events, hparams={}, metrics={})
+    scalars = read_scalars(run)
+    assert [s for s, _ in scalars["loss"]] == [1, 2, 3]
+    assert scalars["eval/cer_male"] == [(2000, pytest.approx(0.0789)),
+                                        (12000, pytest.approx(0.06329113924050633))]
+
+
 def test_an_empty_events_file_is_recognised(tmp_path):
     """One published file holds no scalars at all -- the aborted first fleurs
     attempt, which died before its first update. Copying it in would add a run
