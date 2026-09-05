@@ -16,7 +16,15 @@ import sys
 from pathlib import Path
 
 import pytest
-from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
+
+# CI installs neither torch nor tensorboard: oron_tts.text is pure stdlib, and a
+# ~2 GB torch install would make CI slow enough to be switched off (see
+# scripts/check_ci_imports.py and .github/workflows/test.yml). Skip cleanly
+# instead of failing when they are absent.
+torch = pytest.importorskip("torch")
+pytest.importorskip("tensorboard")
+
+from tensorboard.backend.event_processing.event_accumulator import EventAccumulator  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
