@@ -29,3 +29,7 @@ Task 5: complete (commits caae373..00945d2, review clean)
   Reviewer independently re-verified all three anchors against the real upstream trainer.py, derived the add_image tensor shape (1, n_mel, gen_time = valid CHW), and confirmed the grad-norm read is guarded on every path.
   Minor, for final triage:
   - no automated test asserts against the real upstream trainer.py (deliberate: CI installs neither torch nor F5-TTS; the loud failure fires at patch time on the pod)
+Task 6: complete (commits 68a779d..c3e39e37, review clean after two fix rounds)
+  Critical fixed: main() deleted the remote tensorboard/ folder BEFORE uploading; an empty local tree left the repo with neither and printed success. Now: refuse on missing/empty local tree, upload first, then delete only stale paths.
+  Important fixed: the "uploads before deleting" test asserted membership on two independent lists, so reordering passed. FakeApi now keeps one ordered call log; mutation B fails as it should.
+  Step 5 (live publish) deliberately withheld from the subagent; run by the controller.
