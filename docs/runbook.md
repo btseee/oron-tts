@@ -254,10 +254,18 @@ existing `f5tts_best.pt` loads only via code deleted at the `v1-from-scratch`
 tag — so state the old SHA in the card and remove the two stale `.pt` files
 (6.85 GB each) in the same commit.
 
-Fill in [model-card.md](model-card.md) and publish it with the weights: it is
-written with every measured fact already in place and the reporting run's
-numbers left as blanks, so releasing without it is a choice rather than an
-oversight.
+Generate the card and publish it with the weights — do not hand-write one, and
+do not upload [model-card.md](model-card.md):
+
+```bash
+python scripts/model_card.py --eval eval.json --consistency consistency.json --out README.md
+```
+
+Every number in that card is read from the two JSON files, so it cannot drift
+from the run that produced it. [model-card.md](model-card.md) is the long-form
+reference the generated card links to — the full method and the caveats that do
+not fit on a page read before a first synthesis. Fill its `<>` blanks from the
+same reporting run and commit it, but it is not the published artifact.
 
 The card must say the output is **wideband ~8 kHz, not full-band**. No Mongolian
 source is full-band: Common Voice's median cutoff is 7.1 kHz, FLEURS and

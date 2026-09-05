@@ -237,5 +237,6 @@ data/*/raw.arrow
 data/*/duration.json
 data/*/metadata.csv
 
-# Claude  
+# Claude. Covers the plugin skill and plugin assets that land under here; they
+# are not this project. `build/` and `ckpts/` are already ignored above.
 .claude/*

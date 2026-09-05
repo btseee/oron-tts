@@ -125,7 +125,15 @@ def synthesize(
     nfe_step: int = NFE_STEP,
     cfg_strength: float = CFG_STRENGTH,
     device: str | None = None,
-    use_ema: bool = True,
+    # Off, and not a preference. Measured on a 30,000-update Mongolian finetune,
+    # same checkpoint and sentence: use_ema=True gives CER 0.921, use_ema=False
+    # 0.026. The EMA had moved 2.78% off the pretrained weights, so it was still
+    # essentially the base English/Chinese model, and it synthesises fluent
+    # non-words -- which sound like confident speech, so the failure is
+    # inaudible. scripts/eval_mn.py scores raw weights for the same reason; a
+    # default that disagreed with the harness would ship a model that sounds
+    # nothing like its published CER.
+    use_ema: bool = False,
     seed: int | None = None,
 ):
     """Synthesize one utterance. Returns (waveform, sample_rate, seed).
@@ -187,8 +195,14 @@ def main() -> None:
                     help="Pin the sampler noise. Omitted, one is drawn at random "
                          "and printed so the run can be reproduced.")
     ap.add_argument("--device", default=None)
-    ap.add_argument("--no-ema", dest="use_ema", action="store_false", default=True,
-                    help="Early finetunes: EMA is still dominated by pretrained weights")
+    # Defined before --use-ema so this default is the one argparse applies to
+    # the shared dest. See synthesize() for the measurement behind it.
+    ap.add_argument("--no-ema", dest="use_ema", action="store_false", default=False,
+                    help="Score the raw weights (the default).")
+    ap.add_argument("--use-ema", dest="use_ema", action="store_true",
+                    help="Use the EMA weights. Only sound once the EMA has moved "
+                         "meaningfully off the pretrained weights; check before "
+                         "turning this on.")
     ap.add_argument("--list-voices", action="store_true")
     args = ap.parse_args()
 
