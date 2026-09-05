@@ -21,8 +21,18 @@ DEFAULTS = {
     "language_creators": ["crowdsourced"],
     "multilinguality": "monolingual",
     "source_datasets": ["original"],
-    "task_ids": ["text-to-speech"],
+    # No `task_ids`. On the Hub a task_id is a *subtask* of a task_category, and
+    # the validated list has none for text-to-speech -- its audio entries are
+    # keyword-spotting, speaker-identification and the audio classification
+    # tasks, none of which describe this. `task_ids: [text-to-speech]` was
+    # published on all four cards and the Hub warned on every one of them.
+    # `task_categories: [text-to-speech]`, which the cards already carry, is the
+    # correct and sufficient declaration.
 }
+
+# Keys published in error, removed on the next run. `enrich` only ever adds, so
+# a bad key would otherwise outlive the fix on every card already carrying it.
+INVALID_KEYS = ("task_ids",)
 
 USED_BY_HEADING = "## Used by"
 
@@ -42,6 +52,8 @@ def enrich(card: str, *, used_by: str | None, note: str | None) -> str:
     import yaml
 
     meta, body = split_card(card)
+    for key in INVALID_KEYS:
+        meta.pop(key, None)
     for key, value in DEFAULTS.items():
         meta.setdefault(key, value)
 

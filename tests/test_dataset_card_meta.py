@@ -40,7 +40,7 @@ def test_the_existing_metadata_and_body_survive():
 def test_the_missing_descriptive_keys_are_added():
     meta, _ = dcm.split_card(dcm.enrich(CARD, used_by=None, note=None))
     for key in ("annotations_creators", "language_creators", "multilinguality",
-                "source_datasets", "task_ids"):
+                "source_datasets"):
         assert key in meta, f"missing {key}"
     assert meta["multilinguality"] == "monolingual"
 
@@ -161,3 +161,21 @@ def test_a_missing_token_says_which_variable(monkeypatch, tmp_path):
 
     with pytest.raises(SystemExit, match="HF_TOKEN is not set"):
         dcm.main()
+
+
+def test_no_task_ids_are_added():
+    """A Hub `task_ids` is a *subtask* of a task_category, and the validated
+    list has none for text-to-speech. Publishing one warns on every card."""
+    meta, _ = dcm.split_card(dcm.enrich(CARD, used_by=None, note=None))
+    assert "task_ids" not in meta
+
+
+def test_a_task_ids_key_already_published_is_removed():
+    """`enrich` only adds, so without this the bad key outlives the fix on every
+    card that already carries it -- which is all four."""
+    published = CARD.replace("task_categories:\n- text-to-speech\n",
+                             "task_categories:\n- text-to-speech\ntask_ids:\n- text-to-speech\n")
+    assert "task_ids" in published
+    meta, _ = dcm.split_card(dcm.enrich(published, used_by=None, note=None))
+    assert "task_ids" not in meta
+    assert meta["task_categories"] == ["text-to-speech"], "the valid key must survive"
