@@ -344,3 +344,17 @@ def test_the_calibration_sentence_is_written_when_the_data_is_there(tmp_path):
     text = read_text_tags(run)["summary/speaker_similarity"]
     assert "separates them" in text
     assert "0.52" in text
+
+
+def test_corpora_given_as_a_string_is_not_split_into_characters():
+    """`", ".join` over a plain string walks it one character at a time, which
+    rendered "mbspeech + fleurs" as "m, b, s, p, e, e, c, h" in the published
+    tree. A string is the natural way to write this field."""
+    text = tb_report.stage_summary("cv", {}, {"corpora": "mbspeech + fleurs"})
+    assert "**Trained on:** mbspeech + fleurs" in text
+    assert "m, b, s" not in text
+
+
+def test_corpora_given_as_a_list_still_reads_as_a_list():
+    text = tb_report.stage_summary("cv", {}, {"corpora": ["mbspeech", "fleurs"]})
+    assert "**Trained on:** mbspeech, fleurs" in text

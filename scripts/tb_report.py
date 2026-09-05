@@ -95,8 +95,10 @@ def stage_summary(stage: str, series: dict[str, list[tuple[int, float]]],
     run has to say it.
     """
     corpora = meta.get("corpora") or []
-    lines = [f"### {stage}", "**Trained on:** " + (", ".join(str(c) for c in corpora)
-                                                   if corpora else "not recorded (no --stages metadata)")]
+    described = (corpora if isinstance(corpora, str)
+                 else ", ".join(str(c) for c in corpora))
+    lines = [f"### {stage}",
+             "**Trained on:** " + (described or "not recorded (no --stages metadata)")]
     points = series.get("eval/cer_mean") or []
     if points:
         update, cer = min(points, key=lambda p: p[1])
