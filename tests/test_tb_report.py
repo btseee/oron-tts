@@ -225,3 +225,89 @@ def test_mel_image_is_a_renderable_array():
     image = tb_report.mel_image(_tone(), 24000)
     assert image.dtype == np.uint8
     assert image.ndim == 3 and image.shape[0] == 3, "add_image wants CHW"
+
+
+# ── the two deliverables that reached nothing ─────────────────────────────────
+
+STAGE_META = {
+    "corpora": ["MBSpeech", "FLEURS", "Common Voice 26"],
+    "clips": 41230,
+    "hours": 25.2,
+    "speakers": 187,
+    "male_hours": 11.4,
+    "female_hours": 13.8,
+    "learning_rate": 1e-05,
+}
+
+
+def read_text_tags(run_dir: Path) -> dict[str, str]:
+    """add_text lands as a tensor tag with a "/text_summary" suffix; the suffix
+    is TensorBoard's, so it is stripped back to the tag that was written."""
+    acc = EventAccumulator(str(run_dir), size_guidance={"tensors": 10})
+    acc.Reload()
+    return {tag.removesuffix("/text_summary"):
+            acc.Tensors(tag)[-1].tensor_proto.string_val[0].decode("utf-8")
+            for tag in acc.Tags()["tensors"]}
+
+
+def test_the_stage_says_what_it_trained_on_and_what_won(tmp_path):
+    """The spec asks for an add_text naming the corpora, the chosen checkpoint
+    and how it was chosen. Nothing in the published tab said any of it."""
+    out = tmp_path / "tensorboard"
+    run = tb_report.write_stage_run(out, "cv", tb_report.eval_series(CV_EVAL), events=None,
+                                    hparams=STAGE_META, metrics={})
+    text = read_text_tags(run)["stage/summary"]
+    assert "Common Voice 26" in text and "FLEURS" in text
+    assert "model_12000.pt" in text, "the winning checkpoint must be named"
+    assert "chosen by CER" in text
+    assert "0.0824" in text, "the mean CER it won on must be stated"
+    assert "2 evaluated checkpoints" in text
+
+
+def test_a_stage_with_no_eval_data_says_the_choice_was_a_fallback(tmp_path):
+    """voicelock is the case: loss and lr and nothing else, and no indication
+    anywhere that its checkpoint was taken by fallback because its sweep
+    produced nothing scoreable. A reader cannot tell that from the charts."""
+    out = tmp_path / "tensorboard"
+    run = tb_report.write_stage_run(out, "voicelock", {}, events=None,
+                                    hparams={"corpora": ["the two chosen speakers"]},
+                                    metrics={})
+    text = read_text_tags(run)["stage/summary"]
+    assert "fallback" in text.lower()
+    assert "chosen by CER" not in text
+    assert "the two chosen speakers" in text
+
+
+def test_a_stage_with_no_metadata_says_so_rather_than_inventing_corpora(tmp_path):
+    """--stages is optional. Naming no corpus is honest; naming a guessed one
+    would be a number this report made up."""
+    out = tmp_path / "tensorboard"
+    run = tb_report.write_stage_run(out, "fleurs", {}, events=None, hparams={}, metrics={})
+    assert "not recorded" in read_text_tags(run)["stage/summary"]
+
+
+def test_corpus_scalars_come_from_the_stage_metadata(tmp_path):
+    """--stages was decorative: the spec asked for corpus/* scalars and the
+    flag carried the numbers no further than hparams."""
+    out = tmp_path / "tensorboard"
+    run = tb_report.write_stage_run(out, "cv", {}, events=None,
+                                    hparams=STAGE_META, metrics={})
+    scalars = read_scalars(run)
+    assert scalars["corpus/clips"] == [(0, pytest.approx(41230.0))]
+    assert scalars["corpus/hours"] == [(0, pytest.approx(25.2))]
+    assert scalars["corpus/speakers"] == [(0, pytest.approx(187.0))]
+    assert scalars["corpus/male_hours"] == [(0, pytest.approx(11.4))]
+    assert scalars["corpus/female_hours"] == [(0, pytest.approx(13.8))]
+
+
+def test_the_schedule_is_not_dressed_up_as_a_corpus_measurement():
+    """learning_rate is in the same JSON but describes the schedule, not the
+    corpus; under corpus/ it would read as a property of the data."""
+    assert "corpus/learning_rate" not in tb_report.corpus_scalars(STAGE_META)
+    assert tb_report.corpus_scalars({}) == {}
+
+
+def test_no_stage_metadata_means_no_corpus_scalars(tmp_path):
+    out = tmp_path / "tensorboard"
+    run = tb_report.write_stage_run(out, "cv", {}, events=None, hparams={}, metrics={})
+    assert not [tag for tag in read_scalars(run) if tag.startswith("corpus/")]

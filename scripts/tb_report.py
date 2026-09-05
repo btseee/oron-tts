@@ -84,6 +84,47 @@ def eval_series(stage_eval: dict) -> dict[str, list[tuple[int, float]]]:
     return series
 
 
+def stage_summary(stage: str, series: dict[str, list[tuple[int, float]]],
+                  meta: dict) -> str:
+    """What this stage trained on, and how its checkpoint was chosen.
+
+    The `voicelock` run is why this exists: it shows `loss` and `lr` and
+    nothing else, and nothing in the tab says that its checkpoint was taken by
+    fallback because the sweep produced no scoreable output. A reader cannot
+    tell an unscored stage from a scored one by looking at the charts, so the
+    run has to say it.
+    """
+    corpora = meta.get("corpora") or []
+    lines = [f"### {stage}", "**Trained on:** " + (", ".join(str(c) for c in corpora)
+                                                   if corpora else "not recorded (no --stages metadata)")]
+    points = series.get("eval/cer_mean") or []
+    if points:
+        update, cer = min(points, key=lambda p: p[1])
+        lines.append(
+            f"**Checkpoint:** `model_{update}.pt`, chosen by CER -- best mean CER "
+            f"{cer:.4f} of {len(points)} evaluated checkpoint"
+            f"{'' if len(points) == 1 else 's'}.")
+    else:
+        lines.append(
+            "**Checkpoint:** chosen by **fallback**, not by CER. No checkpoint of "
+            "this stage was scored -- the sweep produced no scoreable output -- so "
+            "the last checkpoint was taken. The charts below show training "
+            "progress only; nothing here measures quality.")
+    return "\n\n".join(lines)
+
+
+def corpus_scalars(meta: dict) -> dict[str, float]:
+    """The stage's corpus size, as scalars, from `--stages`.
+
+    Listed by name rather than "every number in the metadata": `learning_rate`
+    and the update target describe the schedule, not the corpus, and belong in
+    hparams where the HPARAMS tab can compare them.
+    """
+    keys = ("clips", "hours", "speakers", "male_hours", "female_hours")
+    return {f"corpus/{key}": float(meta[key]) for key in keys
+            if isinstance(meta.get(key), (int, float)) and not isinstance(meta[key], bool)}
+
+
 def is_empty_events(path: Path) -> bool:
     """True when a tfevents file carries no scalars, so copying it adds nothing."""
     from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
@@ -104,7 +145,22 @@ def write_stage_run(out_dir: Path, stage: str, series: dict[str, list[tuple[int,
         # Copied verbatim. The point is to put the existing curve somewhere
         # selectable, not to regenerate it from a summary of itself.
         shutil.copy2(events, run / events.name)
+
+    corpus = corpus_scalars(hparams)
+    summary = stage_summary(stage, series, hparams)
+    # Nothing to say, no file: an empty tfevents beside the copied curve is the
+    # very "empty file" this script's docstring lists as a fault it fixes, and
+    # one was written into the voicelock run. `summary` is non-empty for every
+    # stage, so this is a backstop rather than a live path -- but it is the
+    # condition, not a comment, that keeps it that way.
+    if not (series or metrics or corpus or summary):
+        return run
+
     writer = SummaryWriter(log_dir=str(run))
+    writer.add_text("stage/summary", summary, 0)
+    for tag, value in sorted(corpus.items()):
+        # Step 0: a corpus size is one number for the whole stage, not a series.
+        writer.add_scalar(tag, value, 0)
     for tag, points in sorted(series.items()):
         for step, value in points:
             writer.add_scalar(tag, value, step)
@@ -187,7 +243,10 @@ def main() -> None:
     parser.add_argument("--events", action="append", default=[], metavar="STAGE=PATH",
                         help="training events file for a stage; repeatable")
     parser.add_argument("--stages", type=Path,
-                        help="JSON of per-stage hparams: corpora, clips, hours, learning_rate")
+                        help="JSON of per-stage metadata: corpora (names, for the "
+                             "summary text), clips, hours, speakers, male_hours, "
+                             "female_hours (corpus/* scalars), plus anything else, "
+                             "which becomes hparams")
     parser.add_argument("--audio", action="append", default=[], metavar="NAME=PATH",
                         help="wav to embed in the summary run; repeatable")
     parser.add_argument("--consistency", type=Path,
@@ -217,6 +276,8 @@ def main() -> None:
             metrics = {"final/cer_mean": best[1], "final/best_update": float(best[0])}
         run = write_stage_run(args.out, stage, series, events_for.get(stage), meta, metrics)
         print(f"  {stage}: {run} ({len(series)} eval series, "
+              f"{len(corpus_scalars(meta))} corpus scalars, "
+              f"checkpoint by {'CER' if metrics else 'FALLBACK'}, "
               f"{'training curve carried' if stage in events_for else 'no training events'})")
 
     if args.audio or args.consistency:
