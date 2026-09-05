@@ -182,9 +182,10 @@ Plus a `summary/` run holding `add_audio` for both demos and both reference
 prompts, `add_image` of their mel spectrograms, and the speaker-similarity
 table as `add_text` and scalars.
 
-The empty tfevents file is dropped. The missing mbspeech stage is stated in the
-summary text rather than silently absent — a reader counting three stages in a
-four-stage curriculum should be told why.
+The empty tfevents file is dropped. The mbspeech stage's events are gone with
+the pod that produced them and are not reconstructible, so the report covers the
+three stages whose events survive and the summary text lists them by name. No
+placeholder run is fabricated for the missing one.
 
 **`scripts/patch_trainer_logging.py`** — applies the in-loop logging upstream
 cannot be asked for. F5-TTS is refetched fresh on every pod, so this is a patch
@@ -217,7 +218,7 @@ not. It adds:
 ## Out of scope
 
 * Retraining, or any GPU spend.
-* Recovering the mbspeech curves.
+* Recovering the mbspeech curves. They are gone; the report covers what exists.
 * SIM-o on the paper's scale — it needs a 1.3 GB WavLM checkpoint and an s3prl
   fetch through `torch.hub` that prompts for trust and so cannot run
   unattended. `speaker_similarity_any()` already falls back and reports which
