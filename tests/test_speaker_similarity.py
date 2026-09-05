@@ -11,7 +11,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from oron_tts.eval import SAME_SPEAKER_MIN, speaker_similarity_any
+from oron_tts.eval import SAME_SPEAKER_MIN
 from oron_tts.eval.metrics import SimOUnavailable
 
 
