@@ -216,6 +216,86 @@ def sim_o(generated, reference, sr: int, ref_sr: int | None = None, *,
     return float(F.cosine_similarity(a, b)[0].item())
 
 
+ECAPA_VOXCELEB = "speechbrain/spkrec-ecapa-voxceleb"
+
+# Calibrated on this project's own corpora: 17 genuine same-speaker pairs (12
+# Common Voice, 5 MBSpeech) against 30 different-speaker pairs, all real
+# recordings, cosine on ECAPA-VoxCeleb embeddings.
+#
+#     same speaker       median 0.714   range 0.540 .. 0.833
+#     different speaker  median 0.208   range 0.034 .. 0.503
+#
+# The two ranges do not overlap, so 0.52 separates them with margin on both
+# sides. `microsoft/wavlm-base-plus-sv` was tried first and rejected: it put the
+# same pairs at 0.964 against 0.886, an overlap wide enough to call two
+# strangers the same person.
+SAME_SPEAKER_MIN = 0.52
+
+
+@lru_cache(maxsize=1)
+def _ecapa_voxceleb(device: str):
+    from speechbrain.inference.speaker import EncoderClassifier
+
+    return EncoderClassifier.from_hparams(
+        source=ECAPA_VOXCELEB, savedir="ckpts/ecapa", run_opts={"device": device})
+
+
+def speaker_similarity(generated, reference, sr: int, ref_sr: int | None = None,
+                       *, device: str = "cpu") -> float:
+    """Speaker similarity that does not depend on a checkpoint nobody has.
+
+    `sim_o` reproduces the paper's number, and should be preferred when it can
+    run. It needs two things a fresh machine does not have: the 1.3 GB
+    `wavlm_large_finetune.pth`, and s3prl fetched through `torch.hub`, which
+    prompts for trust and so hangs or fails unattended. On the run that produced
+    this model both were missing, and the consequence was not a bad number but
+    no number: the voice lock is the mechanism that makes `--voice female`
+    return the same person every time, and nothing measured whether it worked.
+
+    This uses ECAPA-TDNN trained on VoxCeleb, which pip-installs and
+    self-downloads. The scale is its own -- do not compare it to the paper's
+    SIM-o -- so `SAME_SPEAKER_MIN` above is calibrated against real pairs from
+    these corpora rather than borrowed from a leaderboard.
+    """
+    import torch
+    import torchaudio
+
+    encoder = _ecapa_voxceleb(device)
+
+    def embed(audio, rate: int):
+        import numpy as np
+
+        wav = np.asarray(audio, dtype="float32")
+        if wav.ndim == 2:                      # soundfile gives (n, channels)
+            wav = wav.mean(axis=1)
+        tensor = torch.as_tensor(wav)
+        if rate != SAMPLE_RATE:
+            tensor = torchaudio.transforms.Resample(rate, SAMPLE_RATE)(tensor)
+        with torch.no_grad():
+            return encoder.encode_batch(tensor.unsqueeze(0)).squeeze()
+
+    a = embed(generated, sr)
+    b = embed(reference, ref_sr if ref_sr is not None else sr)
+    import torch.nn.functional as F
+    return float(F.cosine_similarity(a.unsqueeze(0), b.unsqueeze(0))[0].item())
+
+
+def speaker_similarity_any(generated, reference, sr: int, ref_sr: int | None = None,
+                           *, checkpoint: str | None = None,
+                           device: str = "cpu") -> tuple[float, str]:
+    """The paper's SIM-o where possible, a measured number always.
+
+    Returns the value and which metric produced it, because the two are on
+    different scales and a card that does not say which is worse than no card.
+    """
+    try:
+        return sim_o(generated, reference, sr, ref_sr,
+                     checkpoint=checkpoint, device=device), "sim_o"
+    except Exception:
+        return speaker_similarity(generated, reference, sr, ref_sr,
+                                  device=device), "ecapa_voxceleb"
+
+
 @lru_cache(maxsize=1)
 def _utmos():
     """UTMOS naturalness predictor. Language-agnostic, so reused as-is."""

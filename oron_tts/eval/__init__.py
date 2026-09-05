@@ -13,7 +13,10 @@ from oron_tts.eval.metrics import (
     bandwidth_hz,
     cer,
     normalize_for_scoring,
+    SAME_SPEAKER_MIN,
     sim_o,
+    speaker_similarity,
+    speaker_similarity_any,
     utmos,
 )
 
@@ -26,6 +29,9 @@ __all__ = [
     "bandwidth_hz",
     "cer",
     "normalize_for_scoring",
+    "SAME_SPEAKER_MIN",
     "sim_o",
+    "speaker_similarity",
+    "speaker_similarity_any",
     "utmos",
 ]
