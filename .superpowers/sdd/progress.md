@@ -25,3 +25,7 @@ Task 4: complete (commits 495ca15..cf56364, review clean)
   - dataset_card_meta.main() raises a bare KeyError if HF_TOKEN is unset
   - `import yaml` duplicated at function scope in split_card and enrich (inherited from the plan's code)
   - Task 4 report claimed the files matched the brief "verbatim"; one unused `import yaml` was dropped, correctly
+Task 5: complete (commits caae373..00945d2, review clean)
+  Reviewer independently re-verified all three anchors against the real upstream trainer.py, derived the add_image tensor shape (1, n_mel, gen_time = valid CHW), and confirmed the grad-norm read is guarded on every path.
+  Minor, for final triage:
+  - no automated test asserts against the real upstream trainer.py (deliberate: CI installs neither torch nor F5-TTS; the loud failure fires at patch time on the pod)
