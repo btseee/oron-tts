@@ -83,6 +83,9 @@ def main() -> None:
     parser.add_argument("--card", type=Path, help="README.md to upload")
     parser.add_argument("--tensorboard", type=Path, help="tensorboard/ directory to upload")
     parser.add_argument("--repo", default=REPO)
+    parser.add_argument("--dry-run", action="store_true",
+                        help="Print what would be uploaded and, more to the point, "
+                             "what would be deleted. Changes nothing.")
     args = parser.parse_args()
 
     # A run with neither flag touches nothing and would still print "verified
@@ -96,6 +99,21 @@ def main() -> None:
 
     api = HfApi(token=os.environ["HF_TOKEN"])
     expected: list[str] = []
+
+    if args.dry_run:
+        # Reads the server and writes nothing. The delete list is the reason
+        # this flag exists and it cannot be derived without knowing what is
+        # already there, so the read is not optional -- the sibling
+        # dataset_card_meta.py --dry-run downloads the card for the same reason.
+        files = local_files(args.tensorboard) if args.tensorboard else []
+        present = sorted(s.rfilename for s in
+                         api.model_info(args.repo, files_metadata=False).siblings)
+        for path in (["README.md"] if args.card else []) + files:
+            print(f"  + {path}")
+        for path in (stale_paths(present, files) if args.tensorboard else []):
+            print(f"  - {path}")
+        print(f"  dry run: nothing was uploaded or deleted on {args.repo}")
+        return
 
     if args.card:
         api.upload_file(path_or_fileobj=str(args.card), path_in_repo="README.md",

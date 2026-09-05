@@ -33,6 +33,7 @@ class FakeApi:
         self.calls: list[tuple] = []
         self.deleted: list[str] = []
         self.uploaded_folders: list[str] = []
+        self.uploaded_files: list[str] = []
 
     def model_info(self, repo, **kw):
         self.calls.append(("model_info", repo))
@@ -45,6 +46,10 @@ class FakeApi:
     def delete_file(self, **kw):
         self.calls.append(("delete_file", kw["path_in_repo"]))
         self.deleted.append(kw["path_in_repo"])
+
+    def upload_file(self, **kw):
+        self.calls.append(("upload_file", kw["path_in_repo"]))
+        self.uploaded_files.append(kw["path_in_repo"])
 
     def delete_folder(self, **kw):
         raise AssertionError("delete_folder must not be called: it can empty the tree")
@@ -140,3 +145,59 @@ def test_no_flags_refuses(monkeypatch):
     monkeypatch.setattr(sys, "argv", ["publish_docs.py"])
     with pytest.raises(SystemExit, match="nothing to publish"):
         publish_docs.main()
+
+
+# ── the dry run ───────────────────────────────────────────────────────────────
+
+def run_main(monkeypatch, api, *argv):
+    """Drive main() against the fake. huggingface_hub is imported inside the
+    function, so a stand-in module makes a network call impossible."""
+    import types
+
+    monkeypatch.setenv("HF_TOKEN", "token")
+    monkeypatch.setitem(sys.modules, "huggingface_hub",
+                        types.SimpleNamespace(HfApi=lambda token=None: api))
+    monkeypatch.setattr(sys, "argv", ["publish_docs.py", *argv])
+    publish_docs.main()
+
+
+def test_a_dry_run_shows_the_deletes_and_touches_nothing(monkeypatch, tmp_path, capsys):
+    """This is the script that calls delete_file in a loop, and it was the only
+    one of the pair with no way to see the list first."""
+    tb = tmp_path / "tensorboard"
+    (tb / "cv").mkdir(parents=True)
+    (tb / "cv" / "events.out.tfevents.1").write_text("x")
+    api = FakeApi(["README.md", "tensorboard/events.out.tfevents.old"])
+
+    run_main(monkeypatch, api, "--tensorboard", str(tb), "--card", "README.md", "--dry-run")
+
+    out = capsys.readouterr().out
+    assert "+ README.md" in out
+    assert "+ tensorboard/cv/events.out.tfevents.1" in out
+    assert "- tensorboard/events.out.tfevents.old" in out
+    assert api.deleted == []
+    assert api.uploaded_folders == []
+    assert api.uploaded_files == []
+
+
+def test_a_dry_run_refuses_an_empty_tree_the_same_way(monkeypatch, tmp_path):
+    """The dry run must not report a publish that the real run would refuse."""
+    empty = tmp_path / "tensorboard"
+    empty.mkdir()
+    api = FakeApi(["README.md"])
+
+    with pytest.raises(SystemExit, match="contains no files"):
+        run_main(monkeypatch, api, "--tensorboard", str(empty), "--dry-run")
+
+
+def test_a_card_only_dry_run_proposes_no_deletes(monkeypatch, tmp_path, capsys):
+    """Without --tensorboard nothing replaces the remote tree, so nothing in it
+    is stale -- listing it as a delete candidate would be a lie about the run."""
+    api = FakeApi(["README.md", "tensorboard/events.out.tfevents.old"])
+
+    run_main(monkeypatch, api, "--card", "README.md", "--dry-run")
+
+    out = capsys.readouterr().out
+    assert "+ README.md" in out
+    assert " - " not in out
+    assert api.deleted == []
