@@ -238,4 +238,11 @@ data/*/duration.json
 data/*/metadata.csv
 
 # Claude  
-.claude/*
+.claude/*build/
+ckpts/
+
+# Plugin skill assets live here; they are not this project.
+.claude/skills/
+.claude/plugins/
+build/
+ckpts/
