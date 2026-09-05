@@ -20,20 +20,30 @@ class FakeInfo:
 
 
 class FakeApi:
-    """Records every call so a test can assert on what was, or was not, done."""
+    """Records every call so a test can assert on what was, or was not, done.
+
+    `calls` is one ordered log across all methods, so a test can check
+    *relative* order between e.g. an upload and a later delete -- the
+    per-method lists below only ever show final membership, which can't
+    distinguish "uploaded then deleted" from "deleted then uploaded".
+    """
 
     def __init__(self, names):
         self._names = names
+        self.calls: list[tuple] = []
         self.deleted: list[str] = []
         self.uploaded_folders: list[str] = []
 
     def model_info(self, repo, **kw):
+        self.calls.append(("model_info", repo))
         return FakeInfo(self._names)
 
     def upload_folder(self, **kw):
+        self.calls.append(("upload_folder", kw["folder_path"]))
         self.uploaded_folders.append(kw["folder_path"])
 
     def delete_file(self, **kw):
+        self.calls.append(("delete_file", kw["path_in_repo"]))
         self.deleted.append(kw["path_in_repo"])
 
     def delete_folder(self, **kw):
@@ -112,6 +122,16 @@ def test_publish_tensorboard_uploads_before_deleting_stale_paths(tmp_path):
     assert files == ["tensorboard/stage1-cv/events.out.tfevents.1"]
     assert api.uploaded_folders == [str(tb)]
     assert api.deleted == ["tensorboard/events.out.tfevents.cv"]
+
+    # Membership alone (above) passes even if delete ran before upload --
+    # only a position comparison on the shared call log actually pins the
+    # order down.
+    upload_index = api.calls.index(("upload_folder", str(tb)))
+    for path in api.deleted:
+        delete_index = api.calls.index(("delete_file", path))
+        assert upload_index < delete_index, (
+            f"upload_folder must precede delete_file({path!r}): {api.calls}"
+        )
 
 
 def test_no_flags_refuses(monkeypatch):

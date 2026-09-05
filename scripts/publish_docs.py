@@ -69,7 +69,9 @@ def publish_tensorboard(api, repo: str, tensorboard_dir: Path) -> list[str]:
     present = {s.rfilename for s in api.model_info(repo, files_metadata=False).siblings}
     api.upload_folder(folder_path=str(tensorboard_dir), path_in_repo="tensorboard",
                       repo_id=repo, commit_message="Publish per-stage TensorBoard runs")
-    for path in stale_paths(list(present), files):
+    # Sorted rather than left in set order: a failed run should delete the
+    # same paths in the same order every time, so its log is reproducible.
+    for path in stale_paths(sorted(present), files):
         api.delete_file(path_in_repo=path, repo_id=repo,
                         commit_message="Remove stale TensorBoard file")
     return files
