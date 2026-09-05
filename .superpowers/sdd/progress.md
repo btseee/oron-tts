@@ -33,3 +33,12 @@ Task 6: complete (commits 68a779d..c3e39e37, review clean after two fix rounds)
   Critical fixed: main() deleted the remote tensorboard/ folder BEFORE uploading; an empty local tree left the repo with neither and printed success. Now: refuse on missing/empty local tree, upload first, then delete only stale paths.
   Important fixed: the "uploads before deleting" test asserted membership on two independent lists, so reordering passed. FakeApi now keeps one ordered call log; mutation B fails as it should.
   Step 5 (live publish) deliberately withheld from the subagent; run by the controller.
+Final whole-branch review: 6 Important + minors, all fixed (512e48a, ec5bec1, ebcba6f, 073d84c, 40dab4d, f514f43, 08db9e6, c33797c, 018233b).
+  - oron_tts/infer.py shipped use_ema=True while the card says never use EMA; the test meant to catch it asserted only that the string appeared
+  - the trainer patch's add_image rendered ~98% black (log-mel not normalised)
+  - dataset_card_meta published with no read-back verification
+  - corpus/* scalars and the per-stage add_text the spec asked for reached nothing
+  - publish_docs had no --dry-run despite doing irreversible deletes
+  - the generated card had dropped the six disclosures docs/model-card.md carries
+  - a corpora string was joined character-by-character ("m, b, s, p, e, e, c, h")
+PUBLISHED and verified from the server: model card, 4 TensorBoard runs (no flat files), 4 dataset cards.
