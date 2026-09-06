@@ -50,6 +50,34 @@ def best_checkpoint(stage_eval: dict) -> tuple[str, dict]:
     return scored[0][1], scored[0][2]
 
 
+def shipped_scores(measured: dict) -> dict:
+    """Per-gender scores measured with the reference clips that actually ship.
+
+    `eval.json` was produced with prompts `pick_reference` chose from the
+    manifest, not the clips in `voices/`. Output quality follows the prompt, so
+    those numbers describe a configuration no user runs -- and they are wrong in
+    a way that matters: they rank the male voice ahead of the female on both
+    metrics, while the shipped prompts rank it behind on both.
+
+    Shaped like a `best_checkpoint` result so the frontmatter and the body can
+    consume either without knowing which they were given.
+    """
+    label = next(iter(measured))
+    out = {}
+    for gender, r in measured[label].items():
+        # Intervals are optional: a result produced before bootstrapping landed
+        # carries a point estimate only, and a card that crashed on one would
+        # make the older measurement unpublishable rather than merely coarser.
+        out[gender] = {
+            "cer_median": r["cer_micro"],      # micro-CER, keyed for the caller
+            "cer_lo": r.get("cer_lo"), "cer_hi": r.get("cer_hi"),
+            "utmos_mean": r["utmos"],
+            "utmos_lo": r.get("utmos_lo"), "utmos_hi": r.get("utmos_hi"),
+            "n": r.get("n"),
+        }
+    return out
+
+
 def frontmatter(evals: dict, consistency: dict, best: dict | None = None) -> dict:
     if best is None:
         _, best = best_checkpoint(evals[FINAL_STAGE])
@@ -160,18 +188,18 @@ letters and punctuation all need `MongolianNormalizer`.
 
 ## Numbers
 
+{n_note}
 | | male | female |
 | --- | --- | --- |
-| CER | {cer_male:.4f} | {cer_female:.4f} |
-| UTMOS | {utmos_male:.2f} | {utmos_female:.2f} |
-| speaker similarity to its own prompt | {sim_male:.3f} | {sim_female:.3f} |
+| CER | {cer_male:.4f} {cer_male_ci} | {cer_female:.4f} {cer_female_ci} |
+| UTMOS | {utmos_male:.2f} {utmos_male_ci} | {utmos_female:.2f} {utmos_female_ci} |
+| speaker similarity to own prompt | {sim_male:.3f} | {sim_female:.3f} |
 
-The two voices score {sim_cross:.3f} against each other. On this project's own
-recordings, real same-speaker pairs score {same_low:.3f}–{same_high:.3f} and
-different-speaker pairs {diff_low:.3f}–{diff_high:.3f}.
+The voices score {sim_cross:.3f} against each other; here real same-speaker
+pairs score {same_low:.3f}–{same_high:.3f}, different speakers
+{diff_low:.3f}–{diff_high:.3f}.
 
-Per-checkpoint numbers are in `eval.json`, curves in the TensorBoard tab, the
-full run in `logs/`.
+Per-checkpoint numbers in `eval.json`, curves in TensorBoard.
 
 ## Limits
 
@@ -223,22 +251,43 @@ def calibration_range(calibration: dict, key: str) -> tuple[float, float]:
     return float("nan"), float("nan")
 
 
-def render(evals: dict, consistency: dict) -> str:
+def render(evals: dict, consistency: dict, measured_eval: dict | None = None) -> str:
     import yaml
 
     # Picked once here; frontmatter() takes it rather than re-selecting, so
     # the two panels can never disagree about which checkpoint is "best".
     _, best = best_checkpoint(evals[FINAL_STAGE])
+    # A measurement against the shipped prompts supersedes it: that is the
+    # artifact a reader downloads.
+    if measured_eval:
+        best = shipped_scores(measured_eval)
     measured = consistency.get("measured", {})
     calibration = consistency.get("calibration", {})
     same_low, same_high = calibration_range(calibration, "same_speaker_range")
     diff_low, diff_high = calibration_range(calibration, "different_speaker_range")
     meta = yaml.safe_dump(frontmatter(evals, consistency, best=best), sort_keys=False,
                           allow_unicode=True, default_flow_style=False)
+    def ci(row: dict, lo: str, hi: str, fmt: str) -> str:
+        """An interval, or nothing when the source did not carry one."""
+        if not isinstance(row.get(lo), (int, float)):
+            return ""
+        return f"[{row[lo]:{fmt}}–{row[hi]:{fmt}}]"
+
+    n = best["male"].get("n")
+    n_note = (
+        "Measured on the shipped `voices/` prompts, over held-out sentences never\n"
+        f"used to select anything: n={n} per voice. Micro-CER and mean UTMOS, 95%\n"
+        "bootstrap intervals.\n"
+    ) if n else ""
+
     body = BODY.format(
-        repo=REPO,
+        repo=REPO, n_note=n_note,
         cer_male=best["male"]["cer_median"], cer_female=best["female"]["cer_median"],
         utmos_male=best["male"]["utmos_mean"], utmos_female=best["female"]["utmos_mean"],
+        cer_male_ci=ci(best["male"], "cer_lo", "cer_hi", ".4f"),
+        cer_female_ci=ci(best["female"], "cer_lo", "cer_hi", ".4f"),
+        utmos_male_ci=ci(best["male"], "utmos_lo", "utmos_hi", ".2f"),
+        utmos_female_ci=ci(best["female"], "utmos_lo", "utmos_hi", ".2f"),
         sim_male=measured.get("male_demo_vs_male_prompt", float("nan")),
         sim_female=measured.get("female_demo_vs_female_prompt", float("nan")),
         sim_cross=measured.get("male_demo_vs_female_demo", float("nan")),
@@ -252,10 +301,16 @@ def main() -> None:
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--eval", required=True, type=Path)
     parser.add_argument("--consistency", required=True, type=Path)
+    parser.add_argument("--measured", type=Path,
+                        help="eval_n100.json: scores against the shipped "
+                             "voices/ prompts. Supersedes --eval for the "
+                             "headline numbers, which is the point.")
     parser.add_argument("--out", required=True, type=Path)
     args = parser.parse_args()
     card = render(json.loads(args.eval.read_text(encoding="utf-8")),
-                  json.loads(args.consistency.read_text(encoding="utf-8")))
+                  json.loads(args.consistency.read_text(encoding="utf-8")),
+                  json.loads(args.measured.read_text(encoding="utf-8"))
+                  if args.measured else None)
     args.out.write_text(card, encoding="utf-8")
     print(f"  wrote {args.out} ({len(card)} chars)")
 

@@ -131,12 +131,17 @@ def test_the_body_leads_with_usage_and_stays_short():
     assert "github.com/btseee/oron-tts" in body
     assert body.index("pip install") < body.index("use_ema"), \
         "installation comes before caveats; a reader wants to run it first"
-    # Raised from 3000 when `## Limits` landed: the six disclosures cost ~1,065
-    # characters and the body is 3,986. The bound stays because "short" is the
-    # requirement that keeps this card readable, not a formality -- anything
-    # much longer belongs in docs/model-card.md, which the Links section points
-    # at precisely so this one does not have to grow.
-    assert len(body) < 4000, "the body is instructions, not a paper"
+    # Raised 3000 -> 4000 when `## Limits` landed (six disclosures, ~1,065
+    # characters), then 4000 -> 4200 when the numbers gained bootstrap intervals
+    # and a line saying what they were measured on. Both times the bound moved
+    # for measurement, never for prose: an interval is what makes a number
+    # interpretable, and "n=360 on the shipped prompts" is what stops a reader
+    # assuming the figures describe the configuration they are running. The
+    # bound still exists because "short" is the requirement that keeps this card
+    # readable -- anything that is not a measurement belongs in
+    # docs/model-card.md, which the Links section points at so this one need not
+    # grow.
+    assert len(body) < 4200, "the body is instructions, not a paper"
 
 
 def test_the_published_card_carries_every_disclosure_the_long_card_makes():
@@ -223,3 +228,51 @@ def test_a_malformed_calibration_range_leaves_a_blank_rather_than_raising():
 def test_a_well_formed_range_still_reaches_the_card():
     assert model_card.calibration_range(CONSISTENCY["calibration"],
                                         "same_speaker_range") == (0.540, 0.833)
+
+
+def test_the_shipped_prompt_measurement_supersedes_eval_json():
+    """`--measured` must drive the card, not merely be accepted.
+
+    eval.json was produced with prompts `pick_reference` chose from the
+    manifest; the card has to report the `voices/` clips a caller actually gets.
+    Measured on those, the female voice leads on both metrics -- the opposite of
+    what eval.json says -- so a card that silently kept the old numbers would
+    tell every reader the wrong voice is the better one.
+    """
+    measured = {
+        "shipped-cv-12000": {
+            "male": {"cer_micro": 0.0708, "cer_lo": 0.0659, "cer_hi": 0.0753,
+                     "utmos": 2.2632, "utmos_lo": 2.2371, "utmos_hi": 2.2897,
+                     "n": 360},
+            "female": {"cer_micro": 0.0591, "cer_lo": 0.0551, "cer_hi": 0.0634,
+                       "utmos": 2.4237, "utmos_lo": 2.3981, "utmos_hi": 2.4489,
+                       "n": 360},
+        }
+    }
+    card = model_card.render(EVALS, CONSISTENCY, measured)
+    body = card[card.index("\n---\n", 3) + 5:]
+
+    assert "0.0708" in body and "2.42" in body, "the measured numbers must reach the body"
+    assert "n=360" in body, "a reader cannot weigh a number without its n"
+    assert "[0.0659–0.0753]" in body, "intervals must be rendered, not dropped"
+    assert "voices/" in body, "the body must say which prompts these describe"
+
+    # The frontmatter feeds the Hub's Eval Results panel; it must not keep
+    # showing eval.json's numbers while the body shows these.
+    import yaml
+    meta = yaml.safe_load(card.split("---")[1])
+    metrics = meta["model-index"][0]["results"][0]["metrics"]
+    by_name = {m["name"]: m["value"] for m in metrics}
+    assert by_name["UTMOS, female voice"] == 2.4237
+    assert by_name["UTMOS, male voice"] == 2.2632
+    assert by_name["UTMOS, female voice"] > by_name["UTMOS, male voice"],         "the panel must agree with the body about which voice scores higher"
+
+
+def test_a_measurement_without_intervals_still_renders():
+    """Older results carry no CI; the card must degrade, not crash."""
+    measured = {
+        "x": {"male": {"cer_micro": 0.07, "utmos": 2.3, "n": 60},
+              "female": {"cer_micro": 0.06, "utmos": 2.4, "n": 60}},
+    }
+    body = model_card.render(EVALS, CONSISTENCY, measured)
+    assert "0.0700" in body and "n=60" in body
