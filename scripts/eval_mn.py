@@ -36,6 +36,15 @@ import statistics
 import sys
 from pathlib import Path
 
+# Before F5-TTS is imported: torchaudio 2.9+ decodes through torchcodec, which
+# dlopens FFmpeg's shared libraries. Where those are missing every reference
+# clip fails to load, with an error that names a torchcodec DLL rather than the
+# cause. No-op where torchcodec works.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from oron_tts.audio_compat import install as _install_audio_compat  # noqa: E402
+
+_install_audio_compat()
+
 REPO = Path(__file__).resolve().parents[1]
 DEFAULT_VOCAB = REPO / "data" / "oron_mn_pinyin" / "vocab.txt"
 
