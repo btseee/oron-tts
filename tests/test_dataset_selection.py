@@ -212,3 +212,46 @@ def test_prepare_script_is_located_not_assumed(tmp_path):
     import pytest
     with pytest.raises(SystemExit):
         find_prepare_script(tmp_path / "empty")
+
+
+def test_the_policy_gate_accepts_a_correctly_built_corpus(tmp_path):
+    """The gate must pass a corpus this pipeline actually produces.
+
+    The first version looked for a `filter_policy` key on manifest rows. Nothing
+    has ever written one -- oron-cleaner records the version once, in
+    provenance.json -- so it refused every corpus in existence, including the
+    ones it was meant to protect. Failing closed on valid input is not caution,
+    it is a broken gate: it stops the training run and misreports the reason.
+    """
+    import json
+
+    import build_f5_dataset as b
+
+    current = "v4_testfixture01"
+
+    (tmp_path / "provenance.json").write_text(
+        json.dumps({"filter_policy_version": current}), encoding="utf-8")
+    b.require_current_policy(tmp_path, current)   # must not raise
+
+
+def test_the_policy_gate_refuses_a_stale_corpus(tmp_path):
+    import json
+
+    import build_f5_dataset as b
+
+
+    (tmp_path / "provenance.json").write_text(
+        json.dumps({"filter_policy_version": "v3_deadbeefdead"}), encoding="utf-8")
+    with pytest.raises(SystemExit) as excinfo:
+        b.require_current_policy(tmp_path, "v4_current")
+    assert "v3_deadbeefdead" in str(excinfo.value)
+
+
+def test_the_policy_gate_refuses_a_corpus_with_no_provenance(tmp_path):
+    """No provenance means no way to tell what built it. Still a refusal."""
+    import build_f5_dataset as b
+
+
+    with pytest.raises(SystemExit) as excinfo:
+        b.require_current_policy(tmp_path, "v4_current")
+    assert "provenance" in str(excinfo.value).lower()

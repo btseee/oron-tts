@@ -97,7 +97,7 @@ def select_splits(records: list[dict], splits: str) -> list[dict]:
     return [r for r in records if r["split"] in wanted]
 
 
-def require_current_policy(records: list[dict]) -> None:
+def require_current_policy(corpus: Path, current: str | None = None) -> None:
     """Refuse a corpus built under a superseded filter policy.
 
     `FILTER_POLICY_VERSION` hashes every threshold, so a change to any of them
@@ -109,25 +109,46 @@ def require_current_policy(records: list[dict]) -> None:
     half-truncated and a bandwidth column that means two different things in
     one file.
 
-    Loud, because the alternative is a training run that looks fine.
+    The version lives in `provenance.json`, which oron-cleaner writes once per
+    corpus -- not on the manifest rows. An earlier version of this check looked
+    for a `filter_policy` key on every row, found none because nothing has ever
+    written one, and refused *every* corpus the pipeline can produce. A gate
+    that fails closed on correct input is worse than no gate: it blocks the
+    training run and tells you something untrue about why.
+
+    A corpus with no provenance.json predates provenance entirely, and that is
+    still a refusal -- there is genuinely no way to tell what built it.
+
+    `current` is injectable so the tests exercise the real comparison instead of
+    skipping when oron-cleaner is not importable. A test that skips is not a
+    test, and this project has already shipped two defects behind that exact
+    pattern.
     """
-    try:
-        from pipeline.constants import FILTER_POLICY_VERSION as current
-    except Exception:
-        return                  # oron-cleaner not installed; nothing to check
-    seen = {r.get("filter_policy") for r in records if r.get("filter_policy")}
-    if not seen:
+    if current is None:
+        try:
+            from pipeline.constants import FILTER_POLICY_VERSION as current
+        except Exception:
+            return              # oron-cleaner not installed; nothing to check
+
+    prov = corpus / "provenance.json"
+    if not prov.is_file():
         raise SystemExit(
-            "No 'filter_policy' on any manifest row. This corpus predates policy "
-            "versioning, so there is no way to tell what rules built it. Re-clean "
-            f"it with the current pipeline ({current})."
+            f"{prov} not found. This corpus predates provenance, so there is no "
+            f"way to tell which thresholds built it. Re-clean with the current "
+            f"pipeline ({current}), or run:\n"
+            "    python clean_pipeline.py --finalize-only --corpus-dir <dir>"
         )
-    stale = seen - {current}
-    if stale:
+    try:
+        found = json.loads(prov.read_text(encoding="utf-8")).get("filter_policy_version")
+    except Exception as exc:
+        raise SystemExit(f"{prov} is unreadable: {exc}") from exc
+
+    if found != current:
         raise SystemExit(
-            f"Corpus was built under filter policy {sorted(stale)}, current is "
-            f"{current}. Thresholds have changed since these clips were selected, "
-            "so they were measured by different rules. Re-clean before training:\n"
+            f"Corpus was built under filter policy {found!r}, current is "
+            f"{current!r}. Thresholds have changed since these clips were "
+            "selected, so they were measured by different rules. Re-clean "
+            "before training:\n"
             "    python clean_pipeline.py --datasets <...> --corpus-dir <dir>"
         )
 
@@ -197,7 +218,7 @@ def main() -> None:
 
     # Before anything else: a corpus built under old thresholds is not this
     # corpus, and the failure is silent if it is allowed through.
-    require_current_policy(records)
+    require_current_policy(args.corpus)
 
     records = select_splits(records, args.splits)
     if args.splits.strip():
