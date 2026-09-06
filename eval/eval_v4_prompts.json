@@ -1,0 +1,22 @@
+{
+  "shipped-v4": {
+    "male": {
+      "cer_micro": 0.0508,
+      "cer_lo": 0.0466,
+      "cer_hi": 0.0552,
+      "utmos": 2.949,
+      "utmos_lo": 2.913,
+      "utmos_hi": 2.987,
+      "n": 201
+    },
+    "female": {
+      "cer_micro": 0.063,
+      "cer_lo": 0.0585,
+      "cer_hi": 0.0676,
+      "utmos": 2.951,
+      "utmos_lo": 2.923,
+      "utmos_hi": 2.979,
+      "n": 360
+    }
+  }
+}

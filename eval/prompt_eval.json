@@ -1,0 +1,132 @@
+{
+  "male": {
+    "screen": {
+      "SHIPPED": {
+        "utmos": 2.233378227551778,
+        "cer": 0.06423413150893197,
+        "wav": "/workspace/.cache/huggingface/hub/models--btsee--oron-tts/snapshots/32111e19751b612fc3779d3c73a3eb7468ad3786/voices/male.wav"
+      },
+      "v4_male_0_bw15562": {
+        "utmos": 2.8340156892935435,
+        "cer": 0.05409856835170404,
+        "wav": "/workspace/cv/wavs/cv_common_voice_mn_18579596.wav"
+      },
+      "v4_male_1_bw14883": {
+        "utmos": 2.7418357034524283,
+        "cer": 0.057139237298872415,
+        "wav": "/workspace/cv/wavs/cv_common_voice_mn_18577348.wav"
+      },
+      "v4_male_2_bw15539": {
+        "utmos": 2.27771757543087,
+        "cer": 0.0668947168377043,
+        "wav": "/workspace/cv/wavs/cv_common_voice_mn_18583476.wav"
+      },
+      "v4_male_3_bw15539": {
+        "utmos": 2.3028333097696305,
+        "cer": 0.07842391992905105,
+        "wav": "/workspace/cv/wavs/cv_common_voice_mn_18578870.wav"
+      },
+      "v4_male_4_bw14742": {
+        "utmos": 2.918363243341446,
+        "cer": 0.04738375776004054,
+        "wav": "/workspace/cv/wavs/cv_common_voice_mn_18578225.wav"
+      }
+    },
+    "confirm": {
+      "v4_male_4_bw14742": {
+        "utmos": 2.948935378250198,
+        "utmos_lo": 2.913444674430202,
+        "utmos_hi": 2.986759062430159,
+        "cer": 0.050817160367722165,
+        "cer_lo": 0.045749912188268356,
+        "cer_hi": 0.05609122159805483,
+        "n": 201,
+        "wav": "/workspace/cv/wavs/cv_common_voice_mn_18578225.wav"
+      },
+      "SHIPPED": {
+        "utmos": 2.2209076958509226,
+        "utmos_lo": 2.1823517647548694,
+        "utmos_hi": 2.2594054706061066,
+        "cer": 0.06630915900578822,
+        "cer_lo": 0.060968163977322284,
+        "cer_hi": 0.07190389767522254,
+        "n": 201,
+        "wav": "/workspace/.cache/huggingface/hub/models--btsee--oron-tts/snapshots/32111e19751b612fc3779d3c73a3eb7468ad3786/voices/male.wav"
+      },
+      "_vs_shipped": {
+        "diff": 0.7280276823992753,
+        "lo": 0.6906729557027864,
+        "hi": 0.7669908514070274,
+        "separated": true,
+        "n": 201,
+        "winner": "v4_male_4_bw14742",
+        "verdict": "BETTER"
+      }
+    }
+  },
+  "female": {
+    "screen": {
+      "SHIPPED": {
+        "utmos": 2.406698582569758,
+        "cer": 0.04979095400988218,
+        "wav": "/workspace/.cache/huggingface/hub/models--btsee--oron-tts/snapshots/32111e19751b612fc3779d3c73a3eb7468ad3786/voices/female.wav"
+      },
+      "v4_female_0_bw13336": {
+        "utmos": 2.8961020986239117,
+        "cer": 0.05574559736475358,
+        "wav": "/workspace/cv/wavs/cv_common_voice_mn_20957127.wav"
+      },
+      "v4_female_1_bw14859": {
+        "utmos": 2.7984890818595884,
+        "cer": 0.057265931838337766,
+        "wav": "/workspace/cv/wavs/cv_common_voice_mn_18578294.wav"
+      },
+      "v4_female_2_bw14672": {
+        "utmos": 3.0656518638134003,
+        "cer": 0.07601672367920942,
+        "wav": "/workspace/cv/wavs/cv_common_voice_mn_18578895.wav"
+      },
+      "v4_female_3_bw11344": {
+        "utmos": 2.3379184861977893,
+        "cer": 0.126314455846953,
+        "wav": "/workspace/cv/wavs/cv_common_voice_mn_19371164.wav"
+      },
+      "v4_female_4_bw13125": {
+        "utmos": 2.757005153099696,
+        "cer": 0.05637907006208032,
+        "wav": "/workspace/cv/wavs/cv_common_voice_mn_18585437.wav"
+      }
+    },
+    "confirm": {
+      "SHIPPED": {
+        "utmos": 2.4181940923282754,
+        "utmos_lo": 2.381617172440486,
+        "utmos_hi": 2.453104647830944,
+        "cer": 0.04937010554988083,
+        "cer_lo": 0.04379751209398756,
+        "cer_hi": 0.054972048111129934,
+        "n": 201,
+        "wav": "/workspace/.cache/huggingface/hub/models--btsee--oron-tts/snapshots/32111e19751b612fc3779d3c73a3eb7468ad3786/voices/female.wav"
+      },
+      "v4_female_2_bw14672": {
+        "utmos": 3.106462835672483,
+        "utmos_lo": 3.059004109890307,
+        "utmos_hi": 3.150007527859057,
+        "cer": 0.07745999319033027,
+        "cer_lo": 0.07136011152740263,
+        "cer_hi": 0.08385093167701864,
+        "n": 201,
+        "wav": "/workspace/cv/wavs/cv_common_voice_mn_18578895.wav"
+      },
+      "_vs_shipped": {
+        "diff": 0.6882687433442074,
+        "lo": 0.6456380952056961,
+        "hi": 0.732108235952273,
+        "separated": true,
+        "n": 201,
+        "winner": "v4_female_2_bw14672",
+        "verdict": "BETTER"
+      }
+    }
+  }
+}
