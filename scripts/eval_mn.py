@@ -23,8 +23,9 @@ Reported per checkpoint:
   SIM-o    speaker similarity to the reference prompt, WavLM-large ECAPA-TDNN,
            the same model the paper uses so the number is on its scale
   UTMOS    naturalness, language-agnostic
-  bandwidth of the output -- follows the reference clip, and no Mongolian source
-           is full-band, so this is how you catch a dull voice
+  bandwidth of the output -- follows the reference clip, so this is how you catch
+           a dull voice. Pre-v4 corpora report a censored value: the cleaner
+           decoded to 16 kHz before measuring, capping every source at 8 kHz.
   RTF      with --rtf: wall-clock seconds per second of audio, plus latency and
            peak memory, at each of --rtf-nfe
 """
@@ -104,8 +105,10 @@ def load_test_sentences(corpus: Path, limit: int, mode: str = "report") -> list[
 def pick_reference(corpus: Path, gender: str, split: str = "test") -> tuple[Path, str]:
     """Best reference clip for a gender, drawn from a held-out split.
 
-    Ranked by bandwidth first: output bandwidth follows the prompt, and the
-    ≥10 kHz tail exists only in Common Voice.
+    Ranked by bandwidth first: output bandwidth follows the prompt. On a corpus
+    built before filter policy v4 this column is capped at 8 kHz by the cleaner's
+    own 16 kHz decode rather than by the source, so it ranks but does not
+    measure. Natively, raw Common Voice reaches 11.6 kHz median.
 
     The `split` restriction is the zero-shot condition. Previously this scanned
     the entire manifest, so the prompt was a *training* clip with ~90%

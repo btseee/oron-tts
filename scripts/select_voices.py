@@ -7,10 +7,15 @@ would be a worse answer than choosing good prompts.
 
 What makes a clip a good prompt, in rough order of impact:
 
-* **Bandwidth.** Output bandwidth follows the prompt. No Mongolian source is
-  full-band -- Common Voice's median cutoff is 7.1 kHz and FLEURS/MBSpeech are
-  hard-capped at 7.7 kHz -- so the ≥10 kHz tail, which exists only in Common
-  Voice, is the difference between a dull voice and a bright one.
+* **Bandwidth.** Output bandwidth follows the prompt, so a dull prompt gives a
+  dull voice. Read this column with care: under filter policy v3 and earlier the
+  cleaner decoded every source to 16 kHz before measuring, so `bandwidth_hz`
+  could not report above 8 kHz for any corpus and the "7.1 kHz Common Voice,
+  7.7 kHz FLEURS/MBSpeech" medians this file used to quote were the truncation,
+  not the sources. Re-measured at native rate (-50 dB, n=120): raw Common Voice
+  is 11.6 kHz median, WorldSpeech 12.0 kHz, FLEURS a genuine 8 kHz because it is
+  16 kHz native. Ranking on a v3 corpus still works -- the column is monotone
+  within its range -- but the numbers are not source bandwidth.
 * **Duration 6-10 s.** Upstream clips anything over 12 s in three escalating
   stages, and wants ~1 s of trailing silence or the last word gets truncated.
 * **Clean recording.** DNSMOS, and a high alignment score, which also confirms
@@ -135,7 +140,8 @@ def main() -> None:
         bw = float(picks[0].get("bandwidth_hz") or 0)
         if bw < 9000:
             print(f"  [!] best available bandwidth is {bw:.0f} Hz. Output will "
-                  "inherit that dullness; no Mongolian source is full-band.")
+                  "inherit that dullness. On a pre-v4 corpus this column is "
+                  "capped at 8 kHz by the cleaner, not by the source.")
 
     if args.write:
         if len(chosen) < 2:

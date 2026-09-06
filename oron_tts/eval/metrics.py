@@ -178,9 +178,9 @@ def paired_bootstrap(
 def bandwidth_hz(audio, sr: int, drop_db: float = 40.0) -> float:
     """Highest frequency within `drop_db` of the spectral peak.
 
-    Reported because output bandwidth follows the reference clip, and no
-    Mongolian source is full-band: this is how you tell whether a voice came out
-    as dull as its prompt.
+    Reported because output bandwidth follows the reference clip: if the prompt
+    is band-limited so is the output, and this is how you tell whether a voice
+    came out as dull as the clip it was cloned from.
     """
     import librosa
     import numpy as np

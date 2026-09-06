@@ -207,7 +207,7 @@ oron-tts-infer --ref-audio mine.wav --ref-text "..." --text "..." --checkpoint <
 ```
 
 Candidates are ranked by bandwidth first — output bandwidth follows the prompt,
-and the ≥10 kHz tail exists only in Common Voice — then DNSMOS, alignment score
+and a band-limited prompt yields a band-limited voice — then DNSMOS, alignment score
 and SNR, restricted to 6–10 s and one clip per speaker. The ranking is objective;
 which voice is *pleasant* is not, so listen before shipping.
 

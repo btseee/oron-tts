@@ -132,7 +132,7 @@ def test_the_body_leads_with_usage_and_stays_short():
     assert body.index("pip install") < body.index("use_ema"), \
         "installation comes before caveats; a reader wants to run it first"
     # Raised from 3000 when `## Limits` landed: the six disclosures cost ~1,065
-    # characters and the body is 3,954. The bound stays because "short" is the
+    # characters and the body is 3,986. The bound stays because "short" is the
     # requirement that keeps this card readable, not a formality -- anything
     # much longer belongs in docs/model-card.md, which the Links section points
     # at precisely so this one does not have to grow.

@@ -175,8 +175,9 @@ full run in `logs/`.
 
 ## Limits
 
-* **The output is wideband, roughly 8 kHz -- not full-band**, because no
-  Mongolian training source is, and no amount of training changes that.
+* **The output is wideband, roughly 8 kHz -- not full-band**: the corpus pipeline
+  decoded to 16 kHz before measuring. Not a limit of Mongolian audio; fixed
+  after this model.
 * **The CER above is optimistic**: its scorer is fine-tuned on Common Voice,
   which is most of this model's training data, so read every CER against the
   ground-truth human floor, never against zero.
