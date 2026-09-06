@@ -24,8 +24,10 @@ Three things this module is careful about:
 from __future__ import annotations
 
 import os
+import random
 import re
 import unicodedata
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -54,15 +56,20 @@ def normalize_for_scoring(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
-def cer(reference: str, hypothesis: str) -> float:
-    """Character error rate: edit distance over reference length.
+def cer_counts(reference: str, hypothesis: str) -> tuple[int, int]:
+    """Edit distance and reference length, unreduced.
 
-    Implemented directly rather than via jiwer so the eval layer has no
-    dependency beyond the recogniser itself.
+    The counts rather than the ratio, because the two aggregate differently and
+    the difference is not cosmetic. Averaging per-utterance ratios (macro-CER)
+    weights a four-character utterance the same as a sixty-character one, so a
+    single short line the recogniser fumbles moves the headline number more than
+    a long line it gets mostly right. Micro-CER -- total errors over total
+    reference characters -- is the rate an actual listener would experience, and
+    it is the only form a bootstrap over utterances can resample honestly.
     """
     ref, hyp = list(reference), list(hypothesis)
     if not ref:
-        return 0.0 if not hyp else 1.0
+        return (0, 0) if not hyp else (len(hyp), 0)
     previous = list(range(len(hyp) + 1))
     for i, rc in enumerate(ref, 1):
         current = [i]
@@ -73,7 +80,99 @@ def cer(reference: str, hypothesis: str) -> float:
                 previous[j - 1] + (rc != hc),  # substitution
             ))
         previous = current
-    return previous[-1] / len(ref)
+    return previous[-1], len(ref)
+
+
+def cer(reference: str, hypothesis: str) -> float:
+    """Character error rate: edit distance over reference length.
+
+    Implemented directly rather than via jiwer so the eval layer has no
+    dependency beyond the recogniser itself.
+    """
+    errors, length = cer_counts(reference, hypothesis)
+    if not length:
+        return 0.0 if not errors else 1.0
+    return errors / length
+
+
+def micro_cer(counts: Sequence[tuple[int, int]]) -> float:
+    """Total errors over total reference characters."""
+    errors = sum(e for e, _ in counts)
+    length = sum(n for _, n in counts)
+    return errors / length if length else 0.0
+
+
+def bootstrap_ci(
+    values: Sequence,
+    statistic: Callable[[Sequence], float],
+    *,
+    resamples: int = 1000,
+    alpha: float = 0.05,
+    seed: int = 0,
+) -> tuple[float, float, float]:
+    """Point estimate and a percentile bootstrap interval over utterances.
+
+    Resampling utterances rather than assuming normality: CER is a bounded ratio
+    with a long right tail and UTMOS is bounded on both sides, so the
+    `1.96 * sd / sqrt(n)` interval this replaces was reporting symmetric bounds
+    for distributions that are not, and could put the lower bound below zero.
+
+    Returns `(estimate, lo, hi)`.
+    """
+    items = list(values)
+    if not items:
+        return float("nan"), float("nan"), float("nan")
+    point = statistic(items)
+    if len(items) == 1:
+        return point, point, point
+    rng = random.Random(seed)
+    n = len(items)
+    draws = []
+    for _ in range(resamples):
+        draws.append(statistic([items[rng.randrange(n)] for _ in range(n)]))
+    draws.sort()
+    lo = draws[int((alpha / 2) * resamples)]
+    hi = draws[min(resamples - 1, int((1 - alpha / 2) * resamples))]
+    return point, lo, hi
+
+
+def paired_bootstrap(
+    a: Sequence,
+    b: Sequence,
+    statistic: Callable[[Sequence], float],
+    *,
+    resamples: int = 1000,
+    alpha: float = 0.05,
+    seed: int = 0,
+) -> dict:
+    """Is `a` different from `b`, resampling the same utterance indices for both.
+
+    Paired, because the two conditions are scored on the same sentences: an
+    unpaired interval would carry the between-sentence variance twice and hide a
+    difference the pairing removes. Used for male-vs-female and for one
+    checkpoint against another.
+
+    `separated` is True when the interval on the difference excludes zero. That
+    is the whole point of running it: a checkpoint sweep that reports a "best"
+    without it is ranking noise.
+    """
+    xs, ys = list(a), list(b)
+    n = min(len(xs), len(ys))
+    if n < 2:
+        return {"difference": float("nan"), "lo": float("nan"),
+                "hi": float("nan"), "separated": False, "n": n}
+    xs, ys = xs[:n], ys[:n]
+    point = statistic(xs) - statistic(ys)
+    rng = random.Random(seed)
+    draws = []
+    for _ in range(resamples):
+        idx = [rng.randrange(n) for _ in range(n)]
+        draws.append(statistic([xs[i] for i in idx]) - statistic([ys[i] for i in idx]))
+    draws.sort()
+    lo = draws[int((alpha / 2) * resamples)]
+    hi = draws[min(resamples - 1, int((1 - alpha / 2) * resamples))]
+    return {"difference": point, "lo": lo, "hi": hi,
+            "separated": lo > 0 or hi < 0, "n": n}
 
 
 def bandwidth_hz(audio, sr: int, drop_db: float = 40.0) -> float:
@@ -141,7 +240,21 @@ class MongolianASR:
         return self._processor.batch_decode(logits.argmax(-1))[0]
 
     def score(self, audio, reference: str, sr: int = SAMPLE_RATE) -> float:
-        return cer(
+        errors, length = self.score_counts(audio, reference, sr)
+        if not length:
+            return 0.0 if not errors else 1.0
+        return errors / length
+
+    def score_counts(
+        self, audio, reference: str, sr: int = SAMPLE_RATE
+    ) -> tuple[int, int]:
+        """Edit distance and reference length, for micro-CER and bootstrapping.
+
+        The caller needs the counts, not the ratio: a mean of per-utterance
+        ratios weights every utterance equally regardless of length, which is
+        not the error rate a listener hears.
+        """
+        return cer_counts(
             normalize_for_scoring(reference),
             normalize_for_scoring(self.transcribe(audio, sr)),
         )

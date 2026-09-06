@@ -251,6 +251,7 @@ def ground_truth_topline(corpus: Path, args) -> dict:
     import soundfile as sf
 
     from oron_tts.eval import MongolianASR, bandwidth_hz, sim_o, utmos
+    from oron_tts.eval.metrics import bootstrap_ci, micro_cer
 
     rows: list[dict] = []
     with open(corpus / "manifest.jsonl", encoding="utf-8") as f:
@@ -269,6 +270,10 @@ def ground_truth_topline(corpus: Path, args) -> dict:
         if not clips:
             continue
         cers, moses, bws, sims = [], [], [], []
+        # (errors, reference_length) per utterance, for micro-CER: a mean of
+        # per-utterance ratios weights a four-character line the same as a
+        # sixty-character one, which is not the rate a listener hears.
+        counts: list[tuple[int, int]] = []
         # SIM-o against a *different* clip of the same speaker: that is the
         # ceiling for speaker similarity, since even real audio of one person
         # does not score 1.0 against itself across utterances.
@@ -279,7 +284,9 @@ def ground_truth_topline(corpus: Path, args) -> dict:
         for r in clips:
             wav, sr = sf.read(corpus / r["audio_path"], dtype="float32")
             wav = np.asarray(wav, dtype="float32")
-            cers.append(asr.score(wav, r["text"], sr))
+            errors, length = asr.score_counts(wav, r["text"], sr)
+            counts.append((errors, length))
+            cers.append(errors / length if length else float(bool(errors)))
             bws.append(bandwidth_hz(wav, sr))
             if not args.no_utmos:
                 with contextlib.suppress(Exception):
@@ -299,7 +306,6 @@ def ground_truth_topline(corpus: Path, args) -> dict:
             "cer_ci95": (1.96 * statistics.stdev(cers) / len(cers) ** 0.5)
             if len(cers) > 1 else float("inf"),
             "bandwidth_median": statistics.median(bws),
-            "utmos_mean": statistics.fmean(moses) if moses else None,
             "utmos_n": len(moses),
             "sim_o_mean": statistics.fmean(sims) if sims else None,
             "sim_o_n": len(sims),
@@ -317,6 +323,7 @@ def evaluate(checkpoint: Path, corpus: Path, args) -> dict:
     from f5_tts.api import F5TTS  # noqa: I001 - optional heavy dependency
 
     from oron_tts.eval import MongolianASR, bandwidth_hz, sim_o, utmos
+    from oron_tts.eval.metrics import bootstrap_ci, micro_cer
 
     sentences = load_test_sentences(corpus, args.n_sentences, args.mode)
     asr = MongolianASR(device=args.device, model_name=args.asr_model)
@@ -336,6 +343,10 @@ def evaluate(checkpoint: Path, corpus: Path, args) -> dict:
         )
         ref_wav, ref_sr = sf.read(ref_audio, dtype="float32")
         cers, moses, bws, sims = [], [], [], []
+        # (errors, reference_length) per utterance, for micro-CER: a mean of
+        # per-utterance ratios weights a four-character line the same as a
+        # sixty-character one, which is not the rate a listener hears.
+        counts: list[tuple[int, int]] = []
         for text in sentences:
             # The paper averages over three random seeds (§5.1). One draw makes
             # adjacent checkpoints indistinguishable from sampler noise.
@@ -346,7 +357,9 @@ def evaluate(checkpoint: Path, corpus: Path, args) -> dict:
                     print(f"  [{gender}] synthesis failed (seed {seed}): {exc}")
                     continue
                 wav = np.asarray(wav, dtype="float32")
-                cers.append(asr.score(wav, text, sr))
+                errors, length = asr.score_counts(wav, text, sr)
+                counts.append((errors, length))
+                cers.append(errors / length if length else float(bool(errors)))
                 bws.append(bandwidth_hz(wav, sr))
                 if not args.no_sim:
                     # The whole proposition is that voice identity transfers
@@ -368,7 +381,20 @@ def evaluate(checkpoint: Path, corpus: Path, args) -> dict:
                         moses.append(utmos(wav, sr))
         if not cers:
             continue
+        # Micro-CER with a percentile bootstrap over utterances, replacing the
+        # median and the normal-approximation interval. Two reasons: the median
+        # of per-utterance ratios is not an error rate anyone experiences, and
+        # `1.96 * sd / sqrt(n)` assumes a symmetric distribution that a bounded
+        # ratio with a long right tail does not have.
+        cer_point, cer_lo, cer_hi = bootstrap_ci(counts, micro_cer, seed=0)
+        utmos_point, utmos_lo, utmos_hi = (
+            bootstrap_ci(moses, statistics.fmean, seed=0)
+            if moses else (None, None, None)
+        )
         results[gender] = {
+            "cer_micro": cer_point,
+            "cer_ci95_lo": cer_lo,
+            "cer_ci95_hi": cer_hi,
             "cer_median": statistics.median(cers),
             "cer_mean": statistics.fmean(cers),
             # Reported so a reader can tell whether two checkpoints differ at all.
@@ -376,7 +402,13 @@ def evaluate(checkpoint: Path, corpus: Path, args) -> dict:
             "cer_ci95": (1.96 * statistics.stdev(cers) / len(cers) ** 0.5)
             if len(cers) > 1 else float("inf"),
             "bandwidth_median": statistics.median(bws),
-            "utmos_mean": statistics.fmean(moses) if moses else None,
+            "utmos_mean": utmos_point,
+            "utmos_ci95_lo": utmos_lo,
+            "utmos_ci95_hi": utmos_hi,
+            # Kept so a paired bootstrap can be recomputed from the artifact
+            # without re-synthesising anything.
+            "utmos_values": list(moses),
+            "cer_counts": [list(c) for c in counts],
             "sim_o_mean": statistics.fmean(sims) if sims else None,
             "sim_o_n": len(sims),
             # n for UTMOS is tracked separately: exceptions are suppressed above,
@@ -412,17 +444,51 @@ def sort_checkpoints(paths: list[Path]) -> list[Path]:
 
 
 def report(name: str, results: dict, baseline: float) -> None:
+    """Print the scores, leading with the one that can still move.
+
+    UTMOS first, not CER. Both voices already score at or below the 0.123 human
+    floor -- the recogniser's own error rate on real human speech with human
+    transcripts -- so CER is saturated, and a tighter interval on a saturated
+    number reports "no difference" whether or not one exists. CER stays as a
+    guardrail, because the failure it catches (fluent non-words, as EMA weights
+    produce at CER 0.921) is catastrophic and invisible to a naturalness score.
+    """
     print(f"\n=== {name}")
     for gender, r in results.items():
-        line = (f"  {gender:<7} CER {r['cer_median']:.3f} +/-{r['cer_ci95']:.3f} "
-                f"({r['cer_median'] / baseline:.2f}x the human floor)  "
-                f"BW {r['bandwidth_median']:.0f} Hz  n={r['n']}")
+        if gender == "rtf":
+            continue
+        at_floor = " [AT THE FLOOR]" if r["cer_micro"] <= baseline else ""
         if r["utmos_mean"] is not None:
-            line += f"  UTMOS {r['utmos_mean']:.2f} (n={r['utmos_n']})"
+            print(f"  {gender:<7} UTMOS {r['utmos_mean']:.3f} "
+                  f"[{r['utmos_ci95_lo']:.3f}, {r['utmos_ci95_hi']:.3f}]  "
+                  f"n={r['utmos_n']}")
+        else:
+            print(f"  {gender:<7} UTMOS unavailable")
+        print(f"          CER (micro) {r['cer_micro']:.4f} "
+              f"[{r['cer_ci95_lo']:.4f}, {r['cer_ci95_hi']:.4f}]  "
+              f"{r['cer_micro'] / baseline:.2f}x the human floor{at_floor}")
+        extra = f"          BW {r['bandwidth_median']:.0f} Hz  n={r['n']}"
         if r.get("sim_o_mean") is not None:
-            line += f"  SIM-o {r['sim_o_mean']:.3f} (n={r['sim_o_n']})"
-        print(line)
+            extra += f"  SIM-o {r['sim_o_mean']:.3f} (n={r['sim_o_n']})"
+        print(extra)
         print(f"          ref: {r['reference']}")
+
+    # The comparison the retrain decision turns on. Paired, because both voices
+    # are scored on the same sentences: an unpaired interval carries the
+    # between-sentence variance twice and hides a real difference.
+    from oron_tts.eval.metrics import paired_bootstrap
+
+    voices = [g for g in ("male", "female")
+              if g in results and results[g].get("utmos_values")]
+    if len(voices) == 2:
+        a, b = voices
+        d = paired_bootstrap(results[a]["utmos_values"],
+                             results[b]["utmos_values"],
+                             statistics.fmean, seed=0)
+        verdict = ("separated" if d["separated"]
+                   else "NOT separated -- the interval spans zero")
+        print(f"\n  UTMOS {a} - {b}: {d['difference']:+.3f} "
+              f"[{d['lo']:+.3f}, {d['hi']:+.3f}]  n={d['n']}  {verdict}")
 
 
 def main() -> None:
