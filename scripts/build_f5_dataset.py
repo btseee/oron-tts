@@ -97,6 +97,41 @@ def select_splits(records: list[dict], splits: str) -> list[dict]:
     return [r for r in records if r["split"] in wanted]
 
 
+def require_current_policy(records: list[dict]) -> None:
+    """Refuse a corpus built under a superseded filter policy.
+
+    `FILTER_POLICY_VERSION` hashes every threshold, so a change to any of them
+    means these clips were selected -- and measured -- by different rules. The
+    case this exists for is concrete: every corpus built before v4 was decoded
+    to 16 kHz before measurement, so its `bandwidth_hz` column is censored at
+    8 kHz and its audio is band-limited to the same place. Pooling those rows
+    with natively-decoded ones produces a corpus that is silently
+    half-truncated and a bandwidth column that means two different things in
+    one file.
+
+    Loud, because the alternative is a training run that looks fine.
+    """
+    try:
+        from pipeline.constants import FILTER_POLICY_VERSION as current
+    except Exception:
+        return                  # oron-cleaner not installed; nothing to check
+    seen = {r.get("filter_policy") for r in records if r.get("filter_policy")}
+    if not seen:
+        raise SystemExit(
+            "No 'filter_policy' on any manifest row. This corpus predates policy "
+            "versioning, so there is no way to tell what rules built it. Re-clean "
+            f"it with the current pipeline ({current})."
+        )
+    stale = seen - {current}
+    if stale:
+        raise SystemExit(
+            f"Corpus was built under filter policy {sorted(stale)}, current is "
+            f"{current}. Thresholds have changed since these clips were selected, "
+            "so they were measured by different rules. Re-clean before training:\n"
+            "    python clean_pipeline.py --datasets <...> --corpus-dir <dir>"
+        )
+
+
 def write_metadata_csv(corpus: Path, records: list[dict], out: Path) -> int:
     """Write the `audio_file|text` CSV, with the absolute paths F5-TTS requires."""
     corpus = corpus.resolve()
@@ -159,6 +194,10 @@ def main() -> None:
 
     records = load_manifest(args.corpus)
     print(f"manifest: {len(records)} clips")
+
+    # Before anything else: a corpus built under old thresholds is not this
+    # corpus, and the failure is silent if it is allowed through.
+    require_current_policy(records)
 
     records = select_splits(records, args.splits)
     if args.splits.strip():
