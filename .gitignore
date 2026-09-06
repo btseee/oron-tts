@@ -240,3 +240,6 @@ data/*/metadata.csv
 # Claude. Covers the plugin skill and plugin assets that land under here; they
 # are not this project. `build/` and `ckpts/` are already ignored above.
 .claude/*
+
+# Browser-automation scratch: written by the Playwright MCP tool, not source.
+.playwright-mcp/
