@@ -58,3 +58,10 @@ Task 3: complete (oron-cleaner commits 07b2ef7..af4d817, review clean after one 
   it. Root cause was mine: I corrected the AGENTS.md body in the plan but not the
   commit-message block. Plan corrected in a24ba73.
   Minor (fixed): unused `import subprocess` in the new test file.
+Task 4: complete (oron-tts a24ba73..cc77fb5, oron-cleaner af4d817..2c98a4e, review clean)
+  Reviewer empirically stripped each README pointer and confirmed the new test fails.
+  Minor (deferred): task-4 report under-listed a file it changed (progress.md).
+  Minor (deferred): brief said "after the first paragraph"; both READMEs have two
+  intro paragraphs and the blockquote went after the second. Reads better; wording
+  in the plan was imprecise.
+All four tasks complete. Final whole-branch review next.
