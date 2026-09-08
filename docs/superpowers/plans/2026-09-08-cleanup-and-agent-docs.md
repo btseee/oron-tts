@@ -612,7 +612,7 @@ In `d:/Off work/oron-cleaner/README.md`, after the opening paragraph, insert:
 - [ ] **Step 4: Run the tests in both repositories**
 
 Run: `python -m pytest tests/ -q`
-Expected: oron-tts `443 passed`; oron-cleaner `290 passed, 2 skipped`.
+Expected: oron-tts `445 passed` (440 + 2 from Task 1 + 2 from Task 2 + 1 here); oron-cleaner `290 passed, 2 skipped`.
 
 - [ ] **Step 5: Verify every documented link resolves**
 
