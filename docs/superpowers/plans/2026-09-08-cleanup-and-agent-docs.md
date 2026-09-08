@@ -547,8 +547,8 @@ This repository had no agent-facing document at all. The four failure modes
 worth stating are the ones that look like working code: a bandwidth column that
 cannot be read without native_sr, a filter policy recorded in provenance.json
 rather than on manifest rows, single-threading that is deliberate and was once
-'fixed' into a twelve-fold slowdown, and a pyproject python floor that makes
-pip install -e . impossible on the deployment image.
+'fixed' into a twelve-fold slowdown, and a pip install -e . that cannot resolve
+oron-tts from an index because it is not published to PyPI.
 
 CLAUDE.md points at it rather than restating it. Tests assert each trap is
 named and that requirements.txt has not drifted behind pyproject -- it was
