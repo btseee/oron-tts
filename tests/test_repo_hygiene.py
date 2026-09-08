@@ -30,3 +30,37 @@ def test_eval_is_ignored_so_it_cannot_come_back():
     result = subprocess.run(["git", "check-ignore", "-q", "eval/scratch.json"],
                             cwd=ROOT)
     assert result.returncode == 0, "eval/ must be gitignored"
+
+
+AGENT_DOC = ROOT / "AGENTS.md"
+
+
+def test_agents_md_is_the_canonical_brief():
+    assert AGENT_DOC.is_file(), "AGENTS.md is the single source of truth"
+    text = AGENT_DOC.read_text(encoding="utf-8")
+    # Each of these has cost a real run. If one is missing, the doc is not
+    # doing its job.
+    for trap in [
+        "use_ema=False",          # EMA weights synthesise fluent non-words
+        "index 0 is the space",   # OOV characters vanish silently
+        "0.123",                  # the CER floor; CER below it means nothing
+        "bandwidth_hz",           # censored before filter policy v4
+        "provenance.json",        # where the filter policy version lives
+    ]:
+        assert trap in text, f"AGENTS.md does not warn about {trap!r}"
+
+
+def test_the_other_agent_files_point_at_it_rather_than_copying_it():
+    """Duplicated guidance is how the two model cards diverged.
+
+    The published card and docs/model-card.md drifted, and the copy that
+    shipped was the one missing its caveats. These files must delegate.
+    """
+    for name in (".github/copilot-instructions.md", "CLAUDE.md"):
+        p = ROOT / name
+        assert p.is_file(), f"{name} missing"
+        text = p.read_text(encoding="utf-8")
+        assert "AGENTS.md" in text, f"{name} must point at AGENTS.md"
+        assert len(text) < 1200, (
+            f"{name} is {len(text)} chars -- it should delegate, not restate"
+        )
