@@ -4,13 +4,15 @@ Text-to-speech for Mongolian (Khalkha Cyrillic), built as a finetune of
 [F5-TTS](https://arxiv.org/abs/2410.06885) `F5TTS_v1_Base`.
 
 Training itself runs in upstream [F5-TTS](https://github.com/SWivid/F5-TTS).
-This repository owns the Mongolian-specific layer:
 
 > Changing anything here? Read **[AGENTS.md](AGENTS.md)** first. It lists the
-> five failure modes in this repository that do not raise — silent
+> six failure modes in this repository that do not raise — silent
 > out-of-vocabulary substitution, EMA weights that produce fluent non-words, a
-> position-addressed vocabulary, a CER floor of 0.123, and a bandwidth column
-> that was censored before filter policy v4.
+> position-addressed vocabulary, a CER floor of 0.123, a bandwidth column that
+> was censored before filter policy v4, and a publish call that reports success
+> when nothing shipped.
+
+This repository owns the Mongolian-specific layer:
 
 | | |
 | --- | --- |

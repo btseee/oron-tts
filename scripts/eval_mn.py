@@ -263,7 +263,6 @@ def ground_truth_topline(corpus: Path, args) -> dict:
     import soundfile as sf
 
     from oron_tts.eval import MongolianASR, bandwidth_hz, sim_o, utmos
-    from oron_tts.eval.metrics import bootstrap_ci, micro_cer
 
     rows: list[dict] = []
     with open(corpus / "manifest.jsonl", encoding="utf-8") as f:
