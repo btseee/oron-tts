@@ -276,3 +276,37 @@ def test_a_measurement_without_intervals_still_renders():
     }
     body = model_card.render(EVALS, CONSISTENCY, measured)
     assert "0.0700" in body and "n=60" in body
+
+
+def test_the_card_reports_n_per_voice_not_one_voices_n_for_both():
+    """`n=201 per voice` was published while female was n=360.
+
+    The note took the male count and labelled it "per voice". Different n means
+    the two voices were scored on different material, which the side-by-side
+    table otherwise invites a reader to ignore.
+    """
+    measured = {"x": {
+        "male":   {"cer_micro": 0.05, "utmos": 2.9, "n": 201},
+        "female": {"cer_micro": 0.06, "utmos": 2.9, "n": 360}}}
+    body = model_card.render(EVALS, CONSISTENCY, measured)
+    assert "n=201 per voice" not in body, "one voice's n must not stand for both"
+    assert "male n=201" in body and "female n=360" in body
+    assert "different sentence sets" in body.lower(), \
+        "a reader comparing the two columns must be told they are not comparable"
+    assert "not against each other" in body.lower(), \
+        "the note must say what not to do, not merely that the sets differ"
+    # The length bound applies to this path too. It was only ever checked
+    # against the equal-n note, so rendering the real numbers produced a 4,269
+    # character body and the card was published past its own guard.
+    text = body[body.index("\n---\n", 3) + 5:]
+    assert len(text) < 4200, f"unequal-n body is {len(text)} chars"
+
+
+def test_equal_n_still_reads_as_one_number():
+    """When both voices really were scored on the same material, say so simply."""
+    measured = {"x": {
+        "male":   {"cer_micro": 0.05, "utmos": 2.9, "n": 360},
+        "female": {"cer_micro": 0.06, "utmos": 2.9, "n": 360}}}
+    body = model_card.render(EVALS, CONSISTENCY, measured)
+    assert "n=360 per voice" in body
+    assert "different sentence sets" not in body

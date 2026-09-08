@@ -273,12 +273,29 @@ def render(evals: dict, consistency: dict, measured_eval: dict | None = None) ->
             return ""
         return f"[{row[lo]:{fmt}}–{row[hi]:{fmt}}]"
 
-    n = best["male"].get("n")
-    n_note = (
-        "Measured on the shipped `voices/` prompts, over held-out sentences never\n"
-        f"used to select anything: n={n} per voice. Micro-CER and mean UTMOS, 95%\n"
-        "bootstrap intervals.\n"
-    ) if n else ""
+    # Per voice, not one voice's n labelled "per voice". They can differ -- and
+    # did: the two prompts were confirmed in separate runs against different
+    # held-out sets, and the card published the male count for both.
+    ns = {g: best[g].get("n") for g in ("male", "female") if g in best}
+    counts = sorted({v for v in ns.values() if v})
+    if not counts:
+        n_note = ""
+    elif len(counts) == 1:
+        n_note = (
+            "Measured on the shipped `voices/` prompts, over held-out sentences\n"
+            f"never used to select anything: n={counts[0]} per voice. Micro-CER and\n"
+            "mean UTMOS, 95% bootstrap intervals.\n"
+        )
+    else:
+        # Different n means different material. Say so, rather than let a
+        # side-by-side table imply the two voices were scored on one set.
+        detail = ", ".join(f"{g} n={ns[g]}" for g in ("male", "female") if ns.get(g))
+        n_note = (
+            f"Measured on the shipped `voices/` prompts, held-out ({detail}).\n"
+            "Different sentence sets per voice: compare each against its own\n"
+            "previous prompt, not against each other. Micro-CER, mean UTMOS, 95%\n"
+            "bootstrap intervals.\n"
+        )
 
     body = BODY.format(
         repo=REPO, n_note=n_note,

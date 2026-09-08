@@ -116,8 +116,9 @@ letters and punctuation all need `MongolianNormalizer`.
 
 ## Numbers
 
-Measured on the shipped `voices/` prompts, over held-out sentences never
-used to select anything: n=201 per voice. Micro-CER and mean UTMOS, 95%
+Measured on the shipped `voices/` prompts, held-out (male n=201, female n=360).
+Different sentence sets per voice: compare each against its own
+previous prompt, not against each other. Micro-CER, mean UTMOS, 95%
 bootstrap intervals.
 
 | | male | female |
