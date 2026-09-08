@@ -6,6 +6,12 @@ Text-to-speech for Mongolian (Khalkha Cyrillic), built as a finetune of
 Training itself runs in upstream [F5-TTS](https://github.com/SWivid/F5-TTS).
 This repository owns the Mongolian-specific layer:
 
+> Changing anything here? Read **[AGENTS.md](AGENTS.md)** first. It lists the
+> five failure modes in this repository that do not raise — silent
+> out-of-vocabulary substitution, EMA weights that produce fluent non-words, a
+> position-addressed vocabulary, a CER floor of 0.123, and a bandwidth column
+> that was censored before filter policy v4.
+
 | | |
 | --- | --- |
 | `oron_tts/text/` | Text normalization, number expansion, the vocabulary contract. Pure stdlib. |

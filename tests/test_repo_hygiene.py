@@ -64,3 +64,9 @@ def test_the_other_agent_files_point_at_it_rather_than_copying_it():
         assert len(text) < 1200, (
             f"{name} is {len(text)} chars -- it should delegate, not restate"
         )
+
+
+def test_the_readme_points_at_the_agent_brief():
+    """An agent that reads only README.md must still find the traps."""
+    text = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert "AGENTS.md" in text, "README.md must link the agent brief"

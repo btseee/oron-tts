@@ -52,3 +52,9 @@ Task 2: complete (commits c641f9b..faf9dcc, review clean)
   Minor (deferred to final review): the trap assertions are substring matches, so a
   reworded-but-misleading doc keeping the substrings would still pass. Inherited from
   the plan's own test code, not introduced by the implementer.
+Task 3: complete (oron-cleaner commits 07b2ef7..af4d817, review clean after one fix pass)
+  Important (fixed): the commit message repeated the false "pyproject python floor"
+  claim -- copied verbatim from the plan's Step 7, one commit after 07b2ef7 debunked
+  it. Root cause was mine: I corrected the AGENTS.md body in the plan but not the
+  commit-message block. Plan corrected in a24ba73.
+  Minor (fixed): unused `import subprocess` in the new test file.
