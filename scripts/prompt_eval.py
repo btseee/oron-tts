@@ -18,6 +18,7 @@ matters -- a prompt that makes the model fluent and wrong.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import pathlib
 import random
@@ -96,9 +97,9 @@ def rank_candidates(gender: str, top: int = 5) -> list[dict]:
     per speaker so the comparison is across voices rather than across takes of
     one voice.
     """
-    rows = [json.loads(l) for l in
+    rows = [json.loads(line) for line in
             (CORPUS / "manifest.jsonl").read_text(encoding="utf-8").splitlines()
-            if l.strip()]
+            if line.strip()]
 
     def score(r: dict) -> float:
         return (float(r.get("bandwidth_hz") or 0) / 1000.0
@@ -151,10 +152,8 @@ def score(f5, sents, ref_wav, ref_text, asr, utmos, normalize):
                 print(f"      synth failed: {str(exc)[:80]}")
                 continue
             counts.append(cer_counts(normalize(text), normalize(asr.transcribe(wav, sr))))
-            try:
+            with contextlib.suppress(Exception):
                 moses.append(utmos(wav, sr))
-            except Exception:
-                pass
     return counts, moses
 
 
