@@ -36,16 +36,16 @@ model-index:
       split: withheld
     metrics:
     - type: cer
-      value: 0.0508
+      value: 0.05636070853462158
       name: CER, male voice
     - type: cer
-      value: 0.063
+      value: 0.06303197607545434
       name: CER, female voice
     - type: utmos
-      value: 2.949
+      value: 2.980105823940701
       name: UTMOS, male voice
     - type: utmos
-      value: 2.951
+      value: 2.9508730901612177
       name: UTMOS, female voice
     - type: cosine_similarity
       value: 0.741
@@ -116,15 +116,14 @@ letters and punctuation all need `MongolianNormalizer`.
 
 ## Numbers
 
-Measured on the shipped `voices/` prompts, held-out (male n=201, female n=360).
-Different sentence sets per voice: compare each against its own
-previous prompt, not against each other. Micro-CER, mean UTMOS, 95%
-bootstrap intervals.
+Measured on the shipped `voices/` prompts, over held-out sentences
+never used to select anything: n=360 per voice. Micro-CER and
+mean UTMOS, 95% bootstrap intervals.
 
 | | male | female |
 | --- | --- | --- |
-| CER | 0.0508 [0.0466–0.0552] | 0.0630 [0.0585–0.0676] |
-| UTMOS | 2.95 [2.91–2.99] | 2.95 [2.92–2.98] |
+| CER | 0.0564 [0.0520–0.0605] | 0.0630 [0.0585–0.0676] |
+| UTMOS | 2.98 [2.95–3.01] | 2.95 [2.92–2.98] |
 | speaker similarity to own prompt | 0.741 | 0.717 |
 
 The voices score 0.105 against each other; here real same-speaker
